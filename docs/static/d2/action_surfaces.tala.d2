@@ -1,0 +1,30 @@
+# https://d2lang.com diagram. Use make update-diagrams to generate SVG; the layout engine is the suffix in the file name.
+direction: right
+
+clients: {
+  label: "Ways to run an action"
+  form: "Form UI\n/app_path"
+  rest: "REST API\n/app_path/api"
+  cli: "CLI\nopenrun action run"
+  mcp: "MCP tools\n/app_path/mcp\n/_openrun/app_mcp"
+}
+
+openrun: {
+  label: "OpenRun server"
+  style: {stroke-width: 2}
+
+  checks: "Same checks on every path\napp auth login\nRBAC app:access\naction permit list"
+  handler: "Action handler\nrun(dry_run, args)"
+  audit: "Audit log\nexecute, api_execute,\ncli_execute, mcp_execute"
+
+  checks -> handler: "args"
+  handler -> audit: {style.stroke-dash: 3}
+}
+
+result: "Result\nTEXT, TABLE, JSON,\nDOWNLOAD, IMAGE\nor streamed output"
+
+clients.form -> openrun.checks
+clients.rest -> openrun.checks
+clients.cli -> openrun.checks
+clients.mcp -> openrun.checks
+openrun.handler -> result

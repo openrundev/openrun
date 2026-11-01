@@ -24,9 +24,14 @@ keywords:
 
 OpenRun is an open-source web app deployment platform with built-in PostgreSQL, MySQL, SQLite and Redis/Valkey service bindings, plus installable binding providers for SQL Server, Oracle, MongoDB (including Atlas), Snowflake and ClickHouse. A service binding automatically provisions isolated database access for an application and injects the generated connection information into its environment.
 
-For PostgreSQL, OpenRun creates an application-specific schema and login role. For MySQL, it creates a database and user. For Redis and Valkey, it creates a server-enforced ACL user restricted to an app-specific key prefix. SQLite bindings provide a persistent volume for database files, with optional [continuous SQLite replication to S3 with Litestream]({{< ref "/docs/applications/litestream" >}}). Applications never need the administrator credentials of any bound service.
+Teams configure a managed or self-hosted database once, with its backups, monitoring, fault tolerance and capacity management, and safely share that installation across multiple apps. Production and staging environments get separate accounts, and derived bindings let multiple apps share a schema or database with distinct least-privilege credentials. SQLite bindings provide a persistent volume for database files, with optional [continuous SQLite replication to S3 with Litestream]({{< ref "/docs/applications/litestream" >}}).
 
-Service bindings let teams configure a managed or self-hosted database once—with its backups, monitoring, fault tolerance and capacity management—and safely share that installation across multiple apps. Production and staging environments get separate accounts, while derived bindings allow multiple apps to share a schema or database with distinct least-privilege credentials.
+This page covers:
+
+- [Concepts](#concepts): services, base bindings, derived bindings, staging and prod accounts.
+- Managing [services](#create-services), [bindings](#create-base-bindings), [grants](#update-and-promote-grants) and [attaching bindings to apps](#attach-bindings-to-apps).
+- Per-backend behavior for [PostgreSQL](#postgresql-postgres-service-bindings), [MySQL](#mysql-service-bindings), [Redis/Valkey](#redis-and-valkey-service-bindings) and [SQLite](#sqlite-config-and-behavior).
+- [Binding providers](#binding-providers-sql-server-oracle-mongodb-snowflake-clickhouse) for additional databases.
 
 The service types compiled into the server are:
 
@@ -61,17 +66,22 @@ OpenRun automates the database provisioning work normally performed for each web
 - Maintain separate production and staging database accounts.
 - Create derived accounts with read-only, scoped or full-access grants.
 
-The database server remains under the operator's control and can be self-hosted or provided by a managed database service. OpenRun connects with the configured administrator URL only when it needs to create accounts, apply grants or inspect a binding.
+The database server remains under the operator's control and can be self-hosted or provided by a managed database service. OpenRun connects with the configured administrator URL only when it needs to create accounts, apply grants or inspect a binding. Applications never need the administrator credentials of any bound service.
 
 ## Concepts
 
-A **Service** is an admin connection to an endpoint (database). Apps do not use this connection directly. OpenRun uses the service connection to create database users and apply grants.
+| Term                | Meaning                                                                                                                                                                 |
+| :------------------ | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Service**         | An admin connection to an endpoint (database). Apps do not use this connection directly; OpenRun uses it to create database users and apply grants                      |
+| **Base Binding**    | Created from a service. It creates the main database account for an app: a schema and role for Postgres, a database and user for MySQL                                  |
+| **Derived Binding** | Created from a base binding. It uses the same schema or database as the base binding but gets a separate account. Grants on the derived binding control what that account can do |
 
-A **Base Binding** is created from a service. It creates the main database account for an app. For Postgres, this creates a schema and role. For MySQL, this creates a database and user.
+{{< theme-image light="/d2/bindings_overview_light.svg" dark="/d2/bindings_overview_dark.svg" alt="A Postgres service with admin credentials creates a base binding with a new schema and role; derived bindings share the schema with their own roles and grants, and each app gets its binding credentials in its environment" >}}
 
-A **Derived Binding** is created from a base binding. It uses the same schema or database as the base binding, but gets a separate account. Grants on the derived binding control what that derived account can do.
+Bindings always have a staging and a prod environment:
 
-Bindings always have a staging and a prod environment. Grant related binding changes are applied to the staged binding first. Use `binding update --promote` to promote the staged grants to prod. Staging apps are bound to the stage binding env and prod apps are bound to the prod env. This gives an easy way to ensure that the staging app has access to an isolated test environment which is very similar to the prod env.
+- Staging apps are bound to the stage binding env, prod apps to the prod env. The staging app gets an isolated test environment that closely matches prod.
+- Grant related binding changes are applied to the staged binding first. `binding update --promote` promotes the staged grants to prod.
 
 ## Create Services
 
@@ -87,7 +97,13 @@ openrun service create mysql/main \
   --config url=mysql://admin:secret@db.example.com:3306/
 ```
 
-The first service of a type is automatically marked as default. Use `--is-default` to explicitly mark a service as the default. When creating a binding, the source can be the full service id like `postgres/main`, or just the service type like `postgres`. If only the service type is specified, OpenRun uses the default service for that type.
+The first service of a type is automatically marked as default; `--is-default` marks a service as the default explicitly. A binding source can be the full service id like `postgres/main`, or just the service type like `postgres`, which uses the default service for that type:
+
+```shell
+openrun binding create postgres /apps/reporting-db
+```
+
+### Secret references in service config
 
 Service config values can reference [secrets](/docs/configuration/secrets/) with `{{secret ...}}` or `{{secret_from ...}}` template references, so credentials do not have to be stored in the metadata database:
 
@@ -96,13 +112,11 @@ openrun service create postgres/main \
   --config 'url={{secret_from "asm" "prod_db_admin_url"}}'
 ```
 
-The reference is stored as is and resolved through the secret provider each time the service connection is used, so a rotated secret value takes effect on the next operation without a service update.
+The reference is stored as is and resolved through the secret provider each time the service connection is used. A rotated secret value takes effect on the next operation without a service update.
 
-Under [RBAC]({{< ref "/docs/configuration/rbac" >}}), creating or updating a service whose config references a secret additionally requires the `secret:read` permission: the referenced value flows resolved to the service's binding provider, so selecting which secrets a service uses is restricted to users allowed to use the secret store, rather than implied by `service:manage` alone.
+Under [RBAC]({{< ref "/docs/configuration/rbac" >}}), creating or updating a service whose config references a secret additionally requires the `secret:read` permission. The referenced value flows resolved to the service's binding provider, so selecting which secrets a service uses is restricted to users allowed to use the secret store, rather than implied by `service:manage` alone.
 
-```shell
-openrun binding create postgres /apps/reporting-db
-```
+### List, update and delete services
 
 List services with:
 
@@ -130,19 +144,28 @@ Delete a service with:
 openrun service delete postgres/main
 ```
 
-A service cannot be deleted while bindings created from it exist; delete the bindings first. A service that is linked as the staging service of another service is likewise blocked while that other service has bindings, since their staged accounts are provisioned on the staging service. Deleting a service removes only OpenRun's record of the admin connection — nothing is changed on the backend database itself.
+- A service cannot be deleted while bindings created from it exist; delete the bindings first.
+- A service linked as the staging service of another service is likewise blocked while that other service has bindings, since their staged accounts are provisioned on the staging service.
+- Deleting a service removes only OpenRun's record of the admin connection. Nothing is changed on the backend database itself.
 
 ## Hostname Mapping Basics
 
-Service connection URLs are used in two different places: OpenRun uses the admin URL to create and manage binding accounts, and app containers use generated account URLs to connect at runtime. These hostnames can be different.
+Service connection URLs are used in two places, and the hostnames can differ: OpenRun uses the admin URL to create and manage binding accounts, and app containers use generated account URLs to connect at runtime. Generated binding accounts therefore include two URLs:
 
-Generated binding accounts include both `url` and `url_direct`. `url` is intended for app containers and can replace the service URL hostname using the service config key `binding_hostname`. `url_direct` keeps the original service URL hostname and is used by OpenRun commands such as `binding run-command`.
+| Account field | Hostname                                                                                     | Used by                                               |
+| :------------ | :------------------------------------------------------------------------------------------- | :---------------------------------------------------- |
+| `url`         | Service URL hostname, replaced by the service config key `binding_hostname` when it is set    | App containers                                        |
+| `url_direct`  | Original service URL hostname                                                                | OpenRun commands such as `binding run-command`        |
 
-This matters for local database services. If a Postgres, MySQL or Redis service URL points at `localhost`, `127.0.0.1` or `::1`, app containers usually cannot use that hostname to reach the host database. Outside Kubernetes, OpenRun automatically maps those local hostnames to a container-reachable hostname. Docker uses `host.docker.internal`; other local container runtimes use `host.containers.internal`. Set `binding_hostname` explicitly to override that value, or set `binding_hostname=disable` to keep the service URL hostname unchanged.
+This matters for local database services. If a Postgres, MySQL or Redis service URL points at `localhost`, `127.0.0.1` or `::1`, app containers usually cannot use that hostname to reach the host database:
+
+- Outside Kubernetes, OpenRun automatically maps those local hostnames to a container-reachable hostname: `host.docker.internal` for Docker, `host.containers.internal` for other local container runtimes.
+- Set `binding_hostname` explicitly to override that value.
+- Set `binding_hostname=disable` to keep the service URL hostname unchanged and skip automatic mapping.
 
 ## Staging Services
 
-A service can specify a separate staging service. The staging service has to be of the same service type. When a binding is created, OpenRun creates the staged account using the staging service and the prod account using the main service. Create the staging service first, then reference it from the main service:
+A service can specify a separate staging service of the same service type. When a binding is created, OpenRun creates the staged account using the staging service and the prod account using the main service. Create the staging service first, then reference it from the main service:
 
 ```shell
 openrun service create postgres/stage \
@@ -161,7 +184,7 @@ openrun service update postgres/main --stage stage
 openrun service update postgres/main --stage ""
 ```
 
-The staging service cannot refer to itself. If no staging service is linked, then stage bindings are created on the same endpoint as the prod, just a separate schema/database. Stage performance issues can impact prod in that case.
+The staging service cannot refer to itself. If no staging service is linked, stage bindings are created on the same endpoint as prod, just in a separate schema/database. Stage performance issues can impact prod in that case.
 
 ## Create Base Bindings
 
@@ -172,22 +195,18 @@ openrun binding create postgres/main /apps/reporting-db
 openrun binding create mysql/main /apps/inventory-db
 ```
 
-Base bindings cannot have grants. The generated account owns the bindings schema or database.
+Base bindings cannot have grants. The generated account owns the binding's schema or database.
 
-The account information is not shown by `binding get` or `binding list`
-(`binding list --source postgres/main` lists the bindings created from a service
-or base binding). Use `binding show-account` to view the generated connection
-information. With RBAC
-enabled, `show-account` needs the `binding:reveal` permission, which requires
-an explicit grant (it is not implied by `binding:manage` and binding owners do
-not hold it by default).
+The account information is not shown by `binding get` or `binding list` (`binding list --source postgres/main` lists the bindings created from a service or base binding). Use `binding show-account` to view the generated connection information:
 
 ```shell
 openrun binding show-account /apps/reporting-db
 openrun binding show-account --stage /apps/reporting-db
 ```
 
-For testing, SQL can be run as the binding account. Output can be truncated for large results sets.
+With RBAC enabled, `show-account` needs the `binding:reveal` permission, which requires an explicit grant: it is not implied by `binding:manage` and binding owners do not hold it by default.
+
+For testing, SQL can be run as the binding account. Output can be truncated for large result sets.
 
 ```shell
 openrun binding run-command /apps/reporting-db "select current_user"
@@ -218,7 +237,7 @@ Grants are supported only on derived bindings. A grant is specified as `type:tar
 
 `create:<table>` is not supported. Create access applies to the schema or database.
 
-If a table-specific grant references a table which does not exist yet, the grant is kept in the metadata and will be applied later on next update call or using `--reapply-all`.
+If a table-specific grant references a table which does not exist yet, OpenRun skips the grant for that run. The grant is kept in the metadata and applied on the next update/apply call or with `--reapply-all`. The backend-specific effect of each grant is listed in the [PostgreSQL](#postgresql-postgres-service-bindings), [MySQL](#mysql-service-bindings) and [Redis](#redis-and-valkey-service-bindings) sections.
 
 ## Update and Promote Grants
 
@@ -245,17 +264,19 @@ openrun binding update \
   /apps/reporting-read
 ```
 
-Use `--reapply-all` to apply all grants again. This is useful after creating a table for which a table-specific grant was previously deferred, or after manual database changes.
+Use `--reapply-all` to apply all grants again, after creating a table for which a table-specific grant was previously deferred, or after manual database changes.
 
 ```shell
 openrun binding update --reapply-all --promote /apps/reporting-read
 ```
 
+{{< callout type="info" >}}
 Binding promotion is separate from app promotion. `app promote` promotes the app version and app metadata, including the list of binding paths attached to the app. It does not promote staged grant changes inside a binding. Use `binding update --promote` or `apply --promote` for that.
+{{< /callout >}}
 
 ## Health Checks
 
-Verify a service or a binding account end to end — the server actually connects to the backend and runs a no-op operation (`select 1` / ping), so the checks catch unreachable endpoints, rotated or expired admin credentials, and binding accounts dropped or disabled outside OpenRun:
+Health checks verify a service or a binding account end to end. The server actually connects to the backend and runs a no-op operation (`select 1` / ping), so the checks catch unreachable endpoints, rotated or expired admin credentials, and binding accounts dropped or disabled outside OpenRun:
 
 ```shell
 openrun service health postgres/main
@@ -263,11 +284,12 @@ openrun binding health /apps/reporting-db
 openrun binding health --stage /apps/reporting-db
 ```
 
-`service health` connects with the service's admin credentials (secret references resolved the same way as other operations). `binding health` connects **as** the binding's generated account — the production account by default, the staged account (against the linked staging service, when one is configured) with `--stage`. A healthy check exits 0; any failure exits non-zero with the backend error.
-
-The checks work uniformly for the built-in service types and installed provider service types (a provider built with an SDK that predates health checks reports that the provider needs an update). SQLite bindings have no endpoint or accounts to probe; their checks validate the binding configuration and otherwise always report healthy.
-
-Under [RBAC]({{< ref "/docs/configuration/rbac" >}}), `service health` requires `service:read` on the service and `binding health` requires `binding:read` on the binding path.
+- **`service health`** connects with the service's admin credentials (secret references resolved the same way as other operations).
+- **`binding health`** connects **as** the binding's generated account: the production account by default, the staged account (against the linked staging service, when one is configured) with `--stage`.
+- **Exit status:** a healthy check exits 0; any failure exits non-zero with the backend error.
+- **Providers:** the checks work uniformly for the built-in service types and installed provider service types. A provider built with an SDK that predates health checks reports that the provider needs an update.
+- **SQLite:** SQLite bindings have no endpoint or accounts to probe; their checks validate the binding configuration and otherwise always report healthy.
+- **RBAC:** under [RBAC]({{< ref "/docs/configuration/rbac" >}}), `service health` requires `service:read` on the service and `binding health` requires `binding:read` on the binding path.
 
 ## Delete Bindings
 
@@ -278,17 +300,27 @@ openrun binding delete --dry-run /apps/reporting-db
 
 Deleting a binding also deletes the account objects that were created for it on the backend service, for both the production and staging accounts (using the linked staging service when one is configured). The objects recorded when the binding account was generated are dropped in reverse creation order:
 
-- **Postgres**: the binding's role and schema are dropped, including everything in the schema (`CASCADE`) and any objects the role still owns elsewhere.
-- **MySQL**: the binding's user and database are dropped, including the database contents.
-- **Redis/Valkey**: the binding's ACL users are removed. Keys under the binding's prefix are not touched.
-- **SQLite**: the volume and any replicated data are kept ([details]({{< ref "/docs/applications/servicebindings/#sqlite-config-and-behavior" >}})).
-- **Providers**: provider service types drop the users/schemas/databases the binding created, per the provider's documentation.
+| Backend          | Base binding delete                                                                                                   | Derived binding delete                                                                                     |
+| :--------------- | :-------------------------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------- |
+| **Postgres**     | The binding's role and schema are dropped, including everything in the schema (`CASCADE`) and any objects the role still owns elsewhere | Only that binding's role is dropped (plus objects it still owns, such as tables it created in the shared schema) |
+| **MySQL**        | The binding's user and database are dropped, including the database contents                                           | Only that binding's user is dropped (plus objects it still owns)                                           |
+| **Redis/Valkey** | The binding's ACL users (production and staging) are removed. Keys under the binding's prefix are not touched; have the app clear its keys first if the data should go too | The derived ACL users are removed                                                        |
+| **SQLite**       | The volume and any replicated data are kept ([details]({{< ref "/docs/applications/servicebindings/#sqlite-config-and-behavior" >}})) | Not applicable                                                                                   |
+| **Providers**    | Provider service types drop the users/schemas/databases the binding created, per the provider's documentation          | Per the provider's documentation                                                                           |
 
-For Postgres and MySQL this means deleting a base binding deletes the schema or database **data**; there is no separate confirmation, so treat `binding delete` of a base binding like a `DROP` statement. Deleting a derived binding drops only that binding's role or user (plus objects it still owns, such as tables it created in the shared schema); the base binding's schema/database and data are untouched.
+{{< callout type="warning" >}}
+For Postgres and MySQL, deleting a base binding deletes the schema or database **data**. There is no separate confirmation, so treat `binding delete` of a base binding like a `DROP` statement. Deleting a derived binding leaves the base binding's schema/database and data untouched.
+{{< /callout >}}
 
-A base binding cannot be deleted while bindings derived from it exist — their accounts live in the base binding's schema/database — so the derived bindings must be deleted first.
+A base binding cannot be deleted while bindings derived from it exist, since their accounts live in the base binding's schema/database. Delete the derived bindings first.
 
-`--dry-run` validates the delete without removing anything, on the backend or in the metadata. If dropping a backend object fails, the whole delete is rolled back and can be retried; the drops are idempotent, so a partially completed delete retries cleanly. Bindings created by OpenRun versions that did not record their created objects are deleted from the metadata only: a warning is logged and the backend objects are left in place for manual cleanup.
+{{% details title="Dry runs, failures and older bindings" closed="true" %}}
+
+- `--dry-run` validates the delete without removing anything, on the backend or in the metadata.
+- If dropping a backend object fails, the whole delete is rolled back and can be retried. The drops are idempotent, so a partially completed delete retries cleanly.
+- Bindings created by OpenRun versions that did not record their created objects are deleted from the metadata only: a warning is logged and the backend objects are left in place for manual cleanup.
+
+{{% /details %}}
 
 ## Attach Bindings to Apps
 
@@ -320,11 +352,25 @@ Each attached binding's account is injected into the app container as environmen
 | `redis`/`valkey` | `url`, `url_direct`, `username`, `password`, `key_prefix` | `REDIS_URL`, `REDIS_KEY_PREFIX` (`VALKEY_URL`, ... for the `valkey` type) |
 | `sqlite`         | `url`, `db_path`, `dir`                               | `SQLITE_URL`, `SQLITE_DB_PATH`, `SQLITE_DIR`                      |
 
-When an app has several bindings of the same service type, the second and later ones get a numeric suffix on the type, in binding order: `POSTGRES_URL`, `POSTGRES2_URL`, `POSTGRES3_URL`. Production apps receive the prod account; staging, preview and dev apps receive the staged account. Provider service types follow the same scheme with the account fields the provider defines.
+- **Several bindings of one type:** the second and later ones get a numeric suffix on the type, in binding order: `POSTGRES_URL`, `POSTGRES2_URL`, `POSTGRES3_URL`.
+- **Which account:** production apps receive the prod account; staging, preview and dev apps receive the staged account.
+- **Providers:** provider service types follow the same scheme with the account fields the provider defines.
 
 ## Binding Access Control
 
-Access to services and bindings is controlled through [RBAC]({{< ref "/docs/configuration/rbac" >}}). The `service:*` and `binding:*` permissions are scoped by the grant's `service:<glob>` / `binding:<glob>` target entries. Attaching a binding to an app requires the `binding:use` permission on that binding path (or `service:bind` on the service — and on its linked staging service, when one is configured — for auto bindings created from a service source), in addition to the app permission for the update itself. Creating a base binding likewise needs `service:bind` on the service. `binding run-command` requires `binding:run_command`, `binding show-account` requires `binding:reveal`, and the health checks require `service:read` / `binding:read`. Making a service the default of its type also requires `service:update` on the service it displaces. The creator of a service or binding holds the owner permissions (`service:manage` / `binding:manage` by default) on their own entries.
+Access to services and bindings is controlled through [RBAC]({{< ref "/docs/configuration/rbac" >}}). The `service:*` and `binding:*` permissions are scoped by the grant's `service:<glob>` / `binding:<glob>` target entries.
+
+| Operation                                       | Permission required                                                                                                                                                             |
+| :---------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Attach a binding to an app                      | `binding:use` on that binding path, in addition to the app permission for the update itself                                                                                      |
+| Attach an auto binding created from a service source | `service:bind` on the service (and on its linked staging service, when one is configured), in addition to the app permission for the update itself                          |
+| Create a base binding                           | `service:bind` on the service                                                                                                                                                    |
+| `binding run-command`                           | `binding:run_command`                                                                                                                                                            |
+| `binding show-account`                          | `binding:reveal`                                                                                                                                                                 |
+| `service health` / `binding health`             | `service:read` / `binding:read`                                                                                                                                                  |
+| Make a service the default of its type          | `service:update` on the service it displaces                                                                                                                                     |
+
+The creator of a service or binding holds the owner permissions (`service:manage` / `binding:manage` by default) on their own entries.
 
 When RBAC is not enabled, management operations are restricted to the admin user, so no separate approval step applies to binding access.
 
@@ -348,9 +394,9 @@ The generated binding is stored under:
 
 For example, a Postgres auto binding is stored as `/auto/app_prd_.../postgres`. Duplicate service references in the same command resolve to one auto binding.
 
-The `/auto` path is reserved for auto bindings. Users cannot create bindings under that path directly. Auto bindings are owned by their app and cannot be shared: they cannot be used as the source for a derived binding, and another app cannot attach them with `--bind`. Use a regular base binding when multiple apps or derived accounts need to share a schema or database.
-
-Deleting the app deletes its auto bindings along with it, dropping their backend account objects the same way as [`binding delete`]({{< ref "/docs/applications/servicebindings/#delete-bindings" >}}) — for Postgres/MySQL auto bindings this drops the schema or database including its data. An auto binding that (from an older OpenRun version) still has derived bindings blocks the app delete until the derived bindings are deleted.
+- **Reserved path:** the `/auto` path is reserved for auto bindings. Users cannot create bindings under that path directly.
+- **Owned by the app:** auto bindings cannot be shared. They cannot be used as the source for a derived binding, and another app cannot attach them with `--bind`. Use a regular base binding when multiple apps or derived accounts need to share a schema or database.
+- **Deleted with the app:** deleting the app deletes its auto bindings along with it, dropping their backend account objects the same way as [`binding delete`]({{< ref "/docs/applications/servicebindings/#delete-bindings" >}}). For Postgres/MySQL auto bindings this drops the schema or database including its data. An auto binding that (from an older OpenRun version) still has derived bindings blocks the app delete until the derived bindings are deleted.
 
 Binding config can be passed through the service source using `;` followed by comma separated `key=value` entries. The params become the auto binding's config, exactly like `binding create --config`:
 
@@ -381,12 +427,12 @@ The builtin format is:
 binding(path, source, grants=[], config={})
 ```
 
-| Property | Optional |     Type     | Default |                         Notes                         |
-| :------: | :------: | :----------: | :-----: | :---------------------------------------------------: |
-|   path   |  False   |    string    |         |            The unique path for the binding            |
-|  source  |  False   |    string    |         | The source for binding, service or based binding path |
-|  grants  |   true   | string array |         |      The permission grants for a derived binding      |
-|  config  |   true   |     dict     |         |                    The config map                     |
+| Property | Optional | Type         | Default | Notes                                                 |
+| :------- | :------- | :----------- | :------ | :---------------------------------------------------- |
+| path     | False    | string       |         | The unique path for the binding                       |
+| source   | False    | string       |         | The source for binding, service or based binding path |
+| grants   | true     | string array |         | The permission grants for a derived binding           |
+| config   | true     | dict         |         | The config map                                        |
 
 The source rules are the same as the CLI:
 
@@ -410,12 +456,12 @@ With `--promote`, apply promotes binding metadata after updating staged metadata
 
 ## PostgreSQL (Postgres) Service Bindings
 
-PostgreSQL service bindings automatically create a schema and login role for each base binding. PostgreSQL services require an administrator `url` and also support `binding_hostname`.
+PostgreSQL service bindings automatically create a schema and login role for each base binding.
 
-| Key                | Required | Description                                                                                                                                                                                                                                                                                                                 |
-| :----------------- | :------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `url`              | Yes      | Admin Postgres connection URL                                                                                                                                                                                                                                                                                               |
-| `binding_hostname` | No       | Hostname to substitute into generated `url` account URLs. `url_direct` keeps the original service URL hostname. If omitted for a `localhost` or `127.0.0.1` service URL outside Kubernetes, OpenRun automatically uses a container-reachable host name. Set to `disable` to keep `url` unchanged and skip automatic mapping |
+| Key                | Required | Description                                                                                                                             |
+| :----------------- | :------- | :-------------------------------------------------------------------------------------------------------------------------------------- |
+| `url`              | Yes      | Admin Postgres connection URL. The admin user must be able to create roles, create schemas, grant privileges and alter default privileges |
+| `binding_hostname` | No       | Hostname to substitute into generated `url` account URLs; `disable` keeps `url` unchanged and skips automatic mapping. See [Hostname Mapping Basics](#hostname-mapping-basics) |
 
 For example:
 
@@ -423,8 +469,6 @@ For example:
 openrun service create postgres/main \
   --config url=postgres://admin:secret@localhost:5432/appdb
 ```
-
-The admin user in the URL must be able to create roles, create schemas, grant privileges and alter default privileges.
 
 Postgres bindings support one create-time binding config key:
 
@@ -443,34 +487,28 @@ openrun binding create \
 
 If `inherit_default` is set to `false`, the generated role is created with `NOINHERIT`. This does not remove privileges granted to `PUBLIC`, which apply to every role. Review database-wide `PUBLIC` grants separately when configuring isolation; see the [PostgreSQL GRANT documentation](https://www.postgresql.org/docs/current/sql-grant.html).
 
-For a base binding, OpenRun creates a schema and a login role. The generated account includes `url` and `url_direct`. `url` uses the service URL with the generated username and password, replacing the hostname with `binding_hostname` when that service option is set. If `binding_hostname` is omitted, the service URL hostname is `localhost` or `127.0.0.1`, and OpenRun is not running in Kubernetes mode, OpenRun automatically uses `host.docker.internal` for Docker and `host.containers.internal` for other local container runtimes. Set `binding_hostname=disable` to opt out of both explicit hostname substitution and automatic mapping. `url_direct` uses the original service URL hostname. Containers receive both values as environment variables, for example `POSTGRES_URL` and `POSTGRES_URL_DIRECT`. `binding run-command` uses `url_direct`. OpenRun sets the generated role's default `search_path` to the binding schema.
+**Base binding:** OpenRun creates a schema and a login role, and sets the role's default `search_path` to the binding schema. The generated account includes `url` (service URL with the generated username and password, hostname substituted as described in [Hostname Mapping Basics](#hostname-mapping-basics)) and `url_direct` (original service URL hostname). Containers receive both as `POSTGRES_URL` and `POSTGRES_URL_DIRECT`; `binding run-command` uses `url_direct`.
 
-For a derived binding, OpenRun creates a separate login role and uses the base binding schema. The derived role gets `USAGE` on the schema before grants are applied.
+**Derived binding:** OpenRun creates a separate login role and uses the base binding schema. The derived role gets `USAGE` on the schema before grants are applied.
 
-Postgres grants work as follows:
-
-- `read:*` grants `SELECT` on all current tables and changes default privileges
-  so future tables created by the base role are readable by the derived role.
-- `create:*` grants `CREATE` on the schema.
-- `full:*` grants all table privileges, all sequence privileges and `CREATE` on
-  the schema. Default privileges are also updated for future tables and
-  sequences.
-- `read:<table>` and `full:<table>` apply only to the specified table.
-
-If a table-specific grant references a table which does not exist, OpenRun skips
-the grant for that run. Skipped grants are applied on the next update/apply run.
+| Grant                           | Postgres effect                                                                                                                                                  |
+| :------------------------------ | :--------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `read:*`                        | `SELECT` on all current tables; default privileges are changed so future tables created by the base role are readable by the derived role                        |
+| `create:*`                      | `CREATE` on the schema                                                                                                                                           |
+| `full:*`                        | All table privileges, all sequence privileges and `CREATE` on the schema. Default privileges are also updated for future tables and sequences                     |
+| `read:<table>`, `full:<table>`  | Apply only to the specified table. If the table does not exist, the grant is skipped for that run and applied on the next update/apply run                        |
 
 <span id="mysql-config-and-behavior"></span>
 
 ## MySQL Service Bindings
 
-MySQL service bindings automatically create a database and user for each base binding. MySQL services require an administrator `url` and also support `host_pattern` and `binding_hostname`.
+MySQL service bindings automatically create a database and user for each base binding.
 
-| Key                | Required | Description                                                                                                                                                                                                                                                                                                                 |
-| :----------------- | :------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `url`              | Yes      | Admin MySQL URL                                                                                                                                                                                                                                                                                                             |
-| `host_pattern`     | No       | Host part for generated MySQL users. Defaults to `%`                                                                                                                                                                                                                                                                        |
-| `binding_hostname` | No       | Hostname to substitute into generated `url` account URLs. `url_direct` keeps the original service URL hostname. If omitted for a `localhost` or `127.0.0.1` service URL outside Kubernetes, OpenRun automatically uses a container-reachable host name. Set to `disable` to keep `url` unchanged and skip automatic mapping |
+| Key                | Required | Description                                                                                                                             |
+| :----------------- | :------- | :-------------------------------------------------------------------------------------------------------------------------------------- |
+| `url`              | Yes      | Admin MySQL URL. The admin user must be able to create users, create databases, and grant and revoke privileges                           |
+| `host_pattern`     | No       | Host part for generated MySQL users. Defaults to `%`                                                                                     |
+| `binding_hostname` | No       | Hostname to substitute into generated `url` account URLs; `disable` keeps `url` unchanged and skips automatic mapping. See [Hostname Mapping Basics](#hostname-mapping-basics) |
 
 For example:
 
@@ -480,22 +518,16 @@ openrun service create mysql/main \
   --config host_pattern=10.0.%
 ```
 
-The admin user in the URL must be able to create users, create databases, and grant and revoke privileges.
+**Base binding:** OpenRun creates a database and user. The base user gets `ALL PRIVILEGES` on the generated database. The generated account includes `url` (hostname substituted as described in [Hostname Mapping Basics](#hostname-mapping-basics)) and `url_direct` (original service URL hostname). Containers receive both as `MYSQL_URL` and `MYSQL_URL_DIRECT`; `binding run-command` uses `url_direct`.
 
-For a base binding, OpenRun creates a database and user. The base user gets `ALL PRIVILEGES` on the generated database. The generated account includes `url` and `url_direct`; `url` uses `binding_hostname` when that service option is set. If `binding_hostname` is omitted, the service URL hostname is `localhost` or `127.0.0.1`, and OpenRun is not running in Kubernetes mode, OpenRun automatically uses `host.docker.internal` for Docker and `host.containers.internal` for other local container runtimes. Set `binding_hostname=disable` to opt out of both explicit hostname substitution and automatic mapping. `url_direct` keeps the original service URL hostname. Containers receive both values as environment variables, for example `MYSQL_URL` and `MYSQL_URL_DIRECT`. `binding run-command` uses `url_direct`.
+**Derived binding:** OpenRun creates a separate user and uses the base binding database. The derived user gets a minimal database-level `SHOW VIEW` grant so it can connect using the generated database as the default database.
 
-For a derived binding, OpenRun creates a separate user and uses the base binding database. The derived user gets a minimal database-level `SHOW VIEW` grant so it can connect using the generated database as the default database.
-
-MySQL grants work as follows:
-
-- `read:*` grants `SELECT` on the database. This applies to current and future tables.
-- `create:*` grants `CREATE`, `ALTER`, `INDEX`, `DROP`, and `REFERENCES` on the
-  database.
-- `full:*` grants read, write, create, alter, index, drop, references, trigger,
-  create view, temporary table and lock privileges on the database.
-- `read:<table>` and `full:<table>` apply only to the specified table.
-
-If a table-specific grant references a table which does not exist, OpenRun skips the grant for that run. Skipped grants are applied on the next update/apply run.
+| Grant                           | MySQL effect                                                                                                                                                     |
+| :------------------------------ | :--------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `read:*`                        | `SELECT` on the database. This applies to current and future tables                                                                                              |
+| `create:*`                      | `CREATE`, `ALTER`, `INDEX`, `DROP`, and `REFERENCES` on the database                                                                                             |
+| `full:*`                        | Read, write, create, alter, index, drop, references, trigger, create view, temporary table and lock privileges on the database                                    |
+| `read:<table>`, `full:<table>`  | Apply only to the specified table. If the table does not exist, the grant is skipped for that run and applied on the next update/apply run                        |
 
 MySQL DDL statements auto-commit. If binding creation fails part way through, OpenRun does best-effort cleanup for users and databases created during that operation.
 
@@ -503,10 +535,10 @@ MySQL DDL statements auto-commit. If binding creation fails part way through, Op
 
 Redis service bindings automatically create a dedicated ACL user for each base binding, restricted to a unique key prefix with server-enforced ACLs. The same implementation serves the `valkey` service type; `valkey://` and `valkeys://` service URLs are normalized to `redis://`/`rediss://` in generated account URLs. Redis 7 or newer (or any Valkey release) is required, running as a standalone server (cluster mode is not supported).
 
-| Key                | Required | Description                                                                                                                                                                                                                                                                                                                 |
-| :----------------- | :------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `url`              | Yes      | Admin Redis/Valkey connection URL (`redis://`, `rediss://`, `valkey://` or `valkeys://`)                                                                                                                                                                                                                                    |
-| `binding_hostname` | No       | Hostname to substitute into generated `url` account URLs. `url_direct` keeps the original service URL hostname. If omitted for a `localhost` or `127.0.0.1` service URL outside Kubernetes, OpenRun automatically uses a container-reachable host name. Set to `disable` to keep `url` unchanged and skip automatic mapping |
+| Key                | Required | Description                                                                                                                             |
+| :----------------- | :------- | :-------------------------------------------------------------------------------------------------------------------------------------- |
+| `url`              | Yes      | Admin Redis/Valkey connection URL (`redis://`, `rediss://`, `valkey://` or `valkeys://`)                                                 |
+| `binding_hostname` | No       | Hostname to substitute into generated `url` account URLs; `disable` keeps `url` unchanged and skips automatic mapping. See [Hostname Mapping Basics](#hostname-mapping-basics) |
 
 For example:
 
@@ -517,21 +549,22 @@ openrun service create redis/main \
 
 Unlike SQL databases, Redis has no schema to scope: isolation comes from a generated key prefix. The account exposes `url`, `url_direct`, `username`, `password` and `key_prefix` (as `REDIS_URL`, `REDIS_KEY_PREFIX` and so on in the app environment). Apps must prepend `key_prefix` to every key they use; access outside the prefix fails with a Redis `NOPERM` error, so a misconfigured app fails loudly instead of silently reading or clobbering another app's keys. Production and staging accounts get separate ACL users and separate key prefixes.
 
-The base binding user gets full access to its key prefix and to pub/sub channels under the same prefix. Administrative and cross-keyspace commands (`CONFIG`, `ACL`, `FLUSHALL`, `KEYS`, `RANDOMKEY`, `PUBSUB` introspection and similar) are denied for binding accounts; `SCAN` is allowed so apps can enumerate and clear their own keys.
+**Base binding:** the user gets full access to its key prefix and to pub/sub channels under the same prefix. Administrative and cross-keyspace commands (`CONFIG`, `ACL`, `FLUSHALL`, `KEYS`, `RANDOMKEY`, `PUBSUB` introspection and similar) are denied for binding accounts; `SCAN` is allowed so apps can enumerate and clear their own keys.
 
-For a derived binding, OpenRun creates a separate ACL user that shares the base binding's key prefix, with no access until grants are applied. Redis grants work as follows:
+**Derived binding:** OpenRun creates a separate ACL user that shares the base binding's key prefix, with no access until grants are applied.
 
-- `read:*` grants server-enforced read-only access to all keys under the base
-  prefix. Writes fail with `NOPERM`. Read grants include no pub/sub access.
-- `full:*` grants read-write access to all keys under the base prefix, plus
-  pub/sub channels under the prefix.
-- `read:<target>` and `full:<target>` scope the grant to keys starting with
-  `<key_prefix><target>`. Targets may use letters, digits and `_ . : -`; glob
-  characters are rejected. `create` grants are not supported.
+| Grant                             | Redis effect                                                                                                                                                     |
+| :-------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `read:*`                          | Server-enforced read-only access to all keys under the base prefix. Writes fail with `NOPERM`. Read grants include no pub/sub access                            |
+| `full:*`                          | Read-write access to all keys under the base prefix, plus pub/sub channels under the prefix                                                                      |
+| `read:<target>`, `full:<target>`  | Scope the grant to keys starting with `<key_prefix><target>`. Targets may use letters, digits and `_ . : -`; glob characters are rejected                        |
+| `create:*`                        | Not supported                                                                                                                                                    |
 
+{{< callout type="warning" >}}
 ACL changes only modify the server's in-memory state. Configure an `aclfile` on the Redis/Valkey server so binding users survive a server restart (OpenRun runs `ACL SAVE` after every change when an aclfile is configured, and logs a warning at service creation when none is). Without an aclfile, a derived user lost to a restart can be recreated with `binding update --reapply-all`; base users need the aclfile.
+{{< /callout >}}
 
-Deleting a binding deletes its ACL users (production and staging). Keys under the binding's prefix are not touched — unlike Postgres/MySQL, where deleting a base binding drops the schema or database with its data — so have the app clear its keys first if the data should go too.
+Deleting a binding deletes its ACL users (production and staging) but leaves keys under the binding's prefix in place, unlike Postgres/MySQL where deleting a base binding drops the data. See [Delete Bindings](#delete-bindings).
 
 ## SQLite Config and Behavior
 
@@ -550,9 +583,9 @@ SQLITE_DB_PATH=/data/data.db
 SQLITE_DIR=/data
 ```
 
-The volume is created automatically when the app first starts and is reused across app updates and redeploys. The volume identity follows the binding, so attaching the binding to a different app later does not carry over another binding's data. On Kubernetes, apps with a SQLite binding automatically run as a single replica with the `Recreate` deploy strategy, matching SQLite's single-writer model.
-
-For disaster recovery, enable [continuous SQLite replication to S3 with Litestream]({{< ref "/docs/applications/litestream" >}}). OpenRun continuously replicates the binding's database files to S3-compatible storage and automatically restores them before the app starts after volume or node loss.
+- **Volume lifecycle:** the volume is created automatically when the app first starts and is reused across app updates and redeploys. The volume identity follows the binding, so attaching the binding to a different app later does not carry over another binding's data.
+- **Kubernetes:** apps with a SQLite binding automatically run as a single replica with the `Recreate` deploy strategy, matching SQLite's single-writer model.
+- **Disaster recovery:** enable [continuous SQLite replication to S3 with Litestream]({{< ref "/docs/applications/litestream" >}}). OpenRun continuously replicates the binding's database files to S3-compatible storage and automatically restores them before the app starts after volume or node loss.
 
 SQLite services support these config keys (all optional):
 
@@ -587,13 +620,24 @@ Differences from Postgres/MySQL bindings:
 
 A [staging service]({{< ref "/docs/applications/servicebindings/#staging-services" >}}) can be linked like any other service type. Staged apps then follow the staging service's config: its own `litestream_config` (or none), `path_prefix` and `volume_size`, so staged data can replicate to a separate location or skip replication entirely.
 
-For best results the app should open the database in WAL mode with a busy timeout, for example `file:...?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)` (driver dependent). With replication enabled, WAL mode is required, but litestream enables it automatically if the app has not.
+{{% details title="WAL mode and volume permissions" %}}
 
-OpenRun makes the volume writable for non-root app users automatically. With replication enabled, the `chmod` runs using the Litestream image, so any app image works. For local-only SQLite bindings (no `litestream_config`), the `chmod` runs with the app's own image, so the app image must not be distroless. On Kubernetes, pods with a SQLite binding additionally get `fsGroup: 65532`, which makes the volume group-writable at mount time on storage classes with ownership management.
+- **WAL mode:** for best results the app should open the database in WAL mode with a busy timeout, for example `file:...?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)` (driver dependent). With replication enabled, WAL mode is required, but litestream enables it automatically if the app has not.
+- **Volume permissions:** OpenRun makes the volume writable for non-root app users automatically. With replication enabled, the `chmod` runs using the Litestream image, so any app image works. For local-only SQLite bindings (no `litestream_config`), the `chmod` runs with the app's own image, so the app image must not be distroless.
+- **Kubernetes:** pods with a SQLite binding additionally get `fsGroup: 65532`, which makes the volume group-writable at mount time on storage classes with ownership management.
+
+{{% /details %}}
 
 ## Binding Providers (SQL Server, Oracle, MongoDB, Snowflake, ClickHouse)
 
-Beyond the built-in service types, OpenRun supports out-of-process binding providers: standalone executables from the [openrundev/bindings](https://github.com/openrundev/bindings) repository that add more service types. Providers exist for Microsoft SQL Server (schema-based isolation, SQL Server 2019+), Oracle Database (pure-Go driver, no Oracle client needed), MongoDB (self-hosted servers and MongoDB Atlas, via the `mongodb` and `atlas` service types), Snowflake (role/schema isolation with key-pair authentication), ClickHouse (self-hosted and ClickHouse Cloud) and Databricks (SQL warehouses with Unity Catalog schema isolation; Databricks Lakebase needs no provider — it speaks the Postgres protocol and works with the built-in `postgres` binding).
+Beyond the built-in service types, OpenRun supports out-of-process binding providers: standalone executables from the [openrundev/bindings](https://github.com/openrundev/bindings) repository that add more service types.
+
+- **Microsoft SQL Server:** schema-based isolation, SQL Server 2019+.
+- **Oracle Database:** pure-Go driver, no Oracle client needed.
+- **MongoDB:** self-hosted servers and MongoDB Atlas, via the `mongodb` and `atlas` service types.
+- **Snowflake:** role/schema isolation with key-pair authentication.
+- **ClickHouse:** self-hosted and ClickHouse Cloud.
+- **Databricks:** SQL warehouses with Unity Catalog schema isolation. Databricks Lakebase needs no provider: it speaks the Postgres protocol and works with the built-in `postgres` binding.
 
 Install a provider by name and version; the binary is downloaded from the provider releases (or a configured mirror), checksum-verified and registered:
 
@@ -602,7 +646,11 @@ openrun provider install sqlserver --version v0.1.0
 openrun provider list
 ```
 
-`--sha256 <hex>[,<hex>]` pins the accepted binary digests (one per platform for mixed-architecture deployments) and fails the install on a mismatch. `--source-url` installs from another URL (with `{version}`, `{os}` and `{arch}` placeholders) or from a server-local file path; `--version` is required when no `--source-url` is given.
+| Flag                    | Effect                                                                                                                              |
+| :---------------------- | :---------------------------------------------------------------------------------------------------------------------------------- |
+| `--version`             | Provider version to install; required when no `--source-url` is given                                                               |
+| `--sha256 <hex>[,<hex>]` | Pins the accepted binary digests (one per platform for mixed-architecture deployments) and fails the install on a mismatch          |
+| `--source-url`          | Installs from another URL (with `{version}`, `{os}` and `{arch}` placeholders) or from a server-local file path                      |
 
 The provider's service types then work exactly like the built-in ones:
 
@@ -612,7 +660,10 @@ openrun service create sqlserver/main \
 openrun binding create sqlserver/main /apps/reporting-db
 ```
 
-Provider processes are launched on demand when a service connection is needed and stopped when it is closed. `openrun provider uninstall <name>` removes a provider once no services of its types exist (`--force` removes it regardless). For declarative, config-managed deployments, providers can instead be declared in the `[bindings.install]` server config section (or the equivalent [Helm values / Terraform variables for Kubernetes]({{< ref "/docs/container/kubernetes/#binding-providers" >}})), with optional `@sha256:<hex>` digest pinning. Per-provider configuration details (service config keys, grant semantics) are documented in the [bindings repository](https://github.com/openrundev/bindings).
+- **Lifecycle:** provider processes are launched on demand when a service connection is needed and stopped when it is closed.
+- **Uninstall:** `openrun provider uninstall <name>` removes a provider once no services of its types exist (`--force` removes it regardless).
+- **Declarative installs:** for config-managed deployments, providers can instead be declared in the `[bindings.install]` server config section (or the equivalent [Helm values / Terraform variables for Kubernetes]({{< ref "/docs/container/kubernetes/#binding-providers" >}})), with optional `@sha256:<hex>` digest pinning.
+- **Provider details:** per-provider configuration (service config keys, grant semantics) is documented in the [bindings repository](https://github.com/openrundev/bindings).
 
 The `[bindings]` server config section controls how providers are installed:
 

@@ -4,13 +4,20 @@ weight: 450
 summary: "Scheduled, manual and before-deploy jobs: finite work run from the app's image or as a Starlark function"
 ---
 
-An app serves requests; a **job** is finite work that belongs to the app: a nightly report, a cache rebuild, a backup, a database migration that must run before a new version takes traffic, or an operator one-off like a reindex. A job runs either as a **command** in a fresh container from the app's deployed image (or from another image), or as a **Starlark function** called inside OpenRun, with the app's params, secrets and service binding credentials. Every run is recorded, with its status and its output available while the run's container exists.
+An app serves requests; a **job** is finite work that belongs to the app: a nightly report, a cache rebuild, a backup, a database migration that must run before a new version takes traffic, or an operator one-off like a reindex. Every run is recorded, with its status and its output available while the run's container exists.
 
-A job has one executor and one trigger:
+A job has one executor and one trigger. Executors:
 
-- `manual` (the default): started from the CLI, the console or through API.
-- `cron`: started on a schedule by the OpenRun server, on the app's prod and stage instances.
-- `before_deploy`: run as a deploy gate before a new version of the app is written, from the image just built and against the instance being deployed to. A failing gate stops the deploy.
+- **Command**: runs in a fresh container from the app's deployed image (or from another image).
+- **Starlark function**: called inside OpenRun, with the app's params, secrets and service binding credentials.
+
+Triggers:
+
+| Trigger         | Started by                                                                                                                                                  |
+| :-------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `manual`        | The default. Started from the CLI, the console or through API                                                                                               |
+| `cron`          | A schedule run by the OpenRun server, on the app's prod and stage instances                                                                                 |
+| `before_deploy` | A deploy gate: runs before a new version of the app is written, from the image just built and against the instance being deployed to. A failing gate stops the deploy |
 
 Every job, whatever its trigger, can also be run manually.
 
@@ -53,28 +60,34 @@ param("region", default="us", description="Report region")
 
 The `db-backup` job uses a local named volume on Docker/Podman. Copy those backups off the host separately. Using `pg_dump` directly preserves its exit status so a failed dump fails the job.
 
+### Job fields
+
 `ace.job(name, command=[], args=[], shell=False, image="", run=None, env={}, inherit_env=None, volumes=[], options={}, trigger=ace.manual(), timeout="1h", enabled=True, params=[], description="")`:
 
-- `name`: lower case letters, digits and dashes, up to 20 characters, starting with a letter or digit; unique across the app's jobs and sidecars.
-- `command` and `args`: the command line, run in place of the image entrypoint. `shell=True` runs it through `sh -c`.
-- `image`: `image:<ref>` (or a bare reference) to run another image instead of the app's own. Foreign images must be allowed by the `security.allowed_job_images` server config (exact references or `regex:` entries; the default `["*"]` allows any image).
-- `run`: a Starlark function `fn(dry_run, args)` with the [action handler](/docs/actions/) shape, called in the OpenRun process instead of running a container. `dry_run` is always `False`; `args` carries the `params.star` values with the run arguments applied. Use `run` for Starlark apps, and for anything that touches an app's SQLite data: a job container must never open the database of a running app. Only `app.star` can declare `run` jobs.
-- `env`: the job's own env. `inherit_env` copies the app env (params, binding env vars, `CL_APP_PATH`, `CL_APP_URL`) into the job container first; it defaults to true for app image jobs and false for foreign images, which get no credentials unless asked (a backup job must ask).
-- `volumes` (Docker/Podman): named volumes, `name:/path`; a named volume also used by the app is the same volume. The managed SQLite volume cannot be mounted by a job.
-- `options`: container options for the job, same keys as `--copt`. Defaults to the app's container options.
-- `trigger`: `ace.manual()`, `ace.cron(schedule, timezone="UTC")` or `ace.before_deploy()`. The schedule is a five field cron expression or a descriptor like `@daily` or `@hourly`, in the given IANA timezone; interval schedules (`@every`) are not supported, use an expression like `*/15 * * * *`.
-- `timeout`: a Go duration; the run is killed at the deadline and recorded as `timed_out`.
-- `enabled`: a disabled job keeps its history and is never scheduled or gated; `openrun job run --force` still runs it.
-- `params`: the `params.star` params a manual run may set with `--arg name=value`; values are checked against the param type. A command job receives every declared param as a `CL_JOB_ARG_<NAME>` env var (the argument when given, the app's configured param value otherwise); a `run` job gets them as `args.<name>`, typed by the param definition.
+| Field              | Default                                   | Meaning                                                                                                                                                                                                                                                                                                                                                              |
+| :----------------- | :---------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`             |                                           | Lower case letters, digits and dashes, up to 20 characters, starting with a letter or digit; unique across the app's jobs and sidecars                                                                                                                                                                                                                             |
+| `command`, `args`  | `[]`                                      | The command line, run in place of the image entrypoint. `shell=True` runs it through `sh -c`                                                                                                                                                                                                                                                                         |
+| `image`            | the app's own image                       | `image:<ref>` (or a bare reference) to run another image. Foreign images must be allowed by the `security.allowed_job_images` server config (exact references or `regex:` entries; the default `["*"]` allows any image)                                                                                                                                              |
+| `run`              | `None`                                    | A Starlark function `fn(dry_run, args)` with the [action handler](/docs/actions/) shape, called in the OpenRun process instead of running a container. `dry_run` is always `False`; `args` carries the `params.star` values with the run arguments applied. Use `run` for Starlark apps, and for anything that touches an app's SQLite data: a job container must never open the database of a running app. Only `app.star` can declare `run` jobs |
+| `env`              | `{}`                                      | The job's own env                                                                                                                                                                                                                                                                                                                                                    |
+| `inherit_env`      | `True` for app image jobs, `False` for foreign images | Copies the app env (params, binding env vars, `CL_APP_PATH`, `CL_APP_URL`) into the job container first. Foreign images get no credentials unless asked (a backup job must ask)                                                                                                                                                                     |
+| `volumes`          | `[]`                                      | Docker/Podman only: named volumes, `name:/path`. A named volume also used by the app is the same volume. The managed SQLite volume cannot be mounted by a job                                                                                                                                                                                                        |
+| `options`          | the app's container options               | Container options for the job, same keys as `--copt`                                                                                                                                                                                                                                                                                                                 |
+| `trigger`          | `ace.manual()`                            | `ace.manual()`, `ace.cron(schedule, timezone="UTC")` or `ace.before_deploy()`. The schedule is a five field cron expression or a descriptor like `@daily` or `@hourly`, in the given IANA timezone. Interval schedules (`@every`) are not supported; use an expression like `*/15 * * * *`                                                                            |
+| `timeout`          | `"1h"`                                    | A Go duration; the run is killed at the deadline and recorded as `timed_out`                                                                                                                                                                                                                                                                                         |
+| `enabled`          | `True`                                    | A disabled job keeps its history and is never scheduled or gated; `openrun job run --force` still runs it                                                                                                                                                                                                                                                            |
+| `params`           | `[]`                                      | The `params.star` params a manual run may set with `--arg name=value`; values are checked against the param type. A command job receives every declared param as a `CL_JOB_ARG_<NAME>` env var (the argument when given, the app's configured param value otherwise); a `run` job gets them as `args.<name>`, typed by the param definition                           |
+| `description`      | `""`                                      | Free-text description of the job                                                                                                                                                                                                                                                                                                                                      |
 
 The job definitions are part of the app version: they are stored when the app loads, and `openrun job list` reads them from the app metadata.
 
 ## Job containers
 
-A command job runs in a new container from the image the app instance last deployed (the built image, or for `image:` apps the upstream image at the digest recorded by the last reload, so a moved tag does not change what a job runs), so `job run` on an app that has never been deployed fails with "deploy the app first". The container gets the app env when `inherit_env` is set, the job's `env`, and:
+A command job runs in a new container from the image the app instance last deployed: the built image, or for `image:` apps the upstream image at the digest recorded by the last reload, so a moved tag does not change what a job runs. `job run` on an app that has never been deployed fails with "deploy the app first". The container gets the app env when `inherit_env` is set, the job's `env`, and:
 
 | Env var                                   | Value                                                                                       |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------- |
+| :---------------------------------------- | :------------------------------------------------------------------------------------------ |
 | `CL_APP_STAGE`                            | `prod`, `stage`, `preview` or `dev`                                                         |
 | `CL_APP_VERSION`                          | the app version                                                                             |
 | `CL_JOB_NAME`, `CL_JOB_RUN_ID`            | the job and run identity, for logs and idempotency keys                                     |
@@ -83,19 +96,35 @@ A command job runs in a new container from the image the app instance last deplo
 | `CL_DEPLOY_REASON`, `CL_PREVIOUS_VERSION` | deploy gates only: `reload`, `apply`, `create` or `promote`, and the version being replaced |
 | `CL_JOB_ARG_<NAME>`                       | the run arguments                                                                           |
 
-`PORT` is not set and no health check runs; exit code 0 is success. On Docker/Podman the run is a labeled container; on Kubernetes it is a `batch/v1 Job` in the apps namespace with `restartPolicy: Never` and no service account token. The container is left in place when it exits so its output can be read with `openrun job logs`, and is removed when its run record is retired by retention (`jobs.retain_runs` in `[app_config]`, default 50 runs per job, overridable per app with `openrun app update conf jobs.retain_runs=N`). Output is read from the container runtime and is not copied or redacted: a job that prints a credential shows it to anyone with `app:read_detail` on the app.
+- **Success:** exit code 0 is success. `PORT` is not set and no health check runs.
+- **Runtime:** on Docker/Podman the run is a labeled container; on Kubernetes it is a `batch/v1 Job` in the apps namespace with `restartPolicy: Never` and no service account token.
+- **Retention:** the container is left in place when it exits so its output can be read with `openrun job logs`. It is removed when its run record is retired by retention (`jobs.retain_runs` in `[app_config]`, default 50 runs per job, overridable per app with `openrun app update conf jobs.retain_runs=N`).
+- **Output:** read from the container runtime and not copied or redacted. A job that prints a credential shows it to anyone with `app:read_detail` on the app.
 
 ## Scheduled runs
 
-The server checks the cron jobs of every prod and stage app once a minute, on the leader. A tick starts a run unless the job already has an active run, in which case the tick is skipped; there are no retries, and ticks that pass while no server is running are not replayed. Stage schedules run against the stage instance and its staging binding accounts, so a staged job change is exercised before it is promoted; preview and dev apps run no schedules. A job that must not run on stage can check `CL_APP_STAGE` and exit.
-
-A run executes on the node that started it. If that node stops, the run is marked `lost` after a minute and can be started again by hand. Jobs should therefore be idempotent.
+- **Ticks:** the server checks the cron jobs of every prod and stage app once a minute, on the leader. A tick starts a run unless the job already has an active run, in which case the tick is skipped. There are no retries, and ticks that pass while no server is running are not replayed.
+- **Stage:** stage schedules run against the stage instance and its staging binding accounts, so a staged job change is exercised before it is promoted. Preview and dev apps run no schedules. A job that must not run on stage can check `CL_APP_STAGE` and exit.
+- **Node failure:** a run executes on the node that started it. If that node stops, the run is marked `lost` after a minute and can be started again by hand. Jobs should therefore be idempotent.
 
 ## Deploy gates
 
-A `before_deploy` job runs when a new version deploys to an app instance: on the stage instance for `app reload`, `apply` and sync runs (before the reload transaction opens, from the image just built), and on the prod instance for `app promote` (from the stage code, with the prod binding accounts). With `--promote` on a reload or apply, the stage gate and then the prod gate run before the operation writes anything. On `app create` the gate runs on the stage instance before the create transaction opens, so a failure stops the create before anything is written; when the gate needs a binding the same operation creates (an auto binding, or a binding declared in the same apply file), it runs inside the create instead and a failure rolls the create back. Gates run in declaration order, and the first failure stops the operation with the run id and the tail of its output. Dry runs skip gates: they have real side effects. The previous version keeps serving during a gate, so migrations must be backward compatible with it (expand/contract). Preview and dev apps run no gates; a gate job can still be run manually on them.
+A `before_deploy` job runs when a new version deploys to an app instance:
 
-`openrun version switch` and metadata-only updates like `param update --promote` run no gates.
+| Operation                                      | Where the gate runs                                                                                                                                            |
+| :--------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `app reload`, `apply`, sync runs               | On the stage instance, before the reload transaction opens, from the image just built                                                                          |
+| `app promote`                                  | On the prod instance, from the stage code, with the prod binding accounts                                                                                      |
+| `--promote` on a reload or apply               | The stage gate and then the prod gate run before the operation writes anything                                                                                 |
+| `app create`                                   | On the stage instance before the create transaction opens, so a failure stops the create before anything is written. When the gate needs a binding the same operation creates (an auto binding, or a binding declared in the same apply file), it runs inside the create instead and a failure rolls the create back |
+| `openrun version switch`, metadata-only updates like `param update --promote` | No gates                                                                                                                                        |
+
+{{< theme-image light="/d2/jobs_deploy_gate_light.svg" dark="/d2/jobs_deploy_gate_dark.svg" alt="A reload, apply or sync builds the new image and runs the before_deploy jobs on the stage instance; when all pass the version is written, and with promote the prod gates run next. The first failure stops the operation while the previous version keeps serving" >}}
+
+- **Order:** gates run in declaration order, and the first failure stops the operation with the run id and the tail of its output.
+- **Dry runs** skip gates: they have real side effects.
+- **Backward compatibility:** the previous version keeps serving during a gate, so migrations must be backward compatible with it (expand/contract).
+- **Preview and dev apps** run no gates; a gate job can still be run manually on them.
 
 ## Declaring jobs in apps.ace and on the CLI
 
@@ -143,4 +172,15 @@ openrun job logs <run-id>                                     # output, while th
 openrun job cancel <run-id>                                   # stop an active run (on the node executing it)
 ```
 
-Run statuses are `running`, `succeeded`, `failed`, `timed_out`, `canceled` and `lost`. Every job timestamp is UTC: schedules evaluate in the job's `timezone` (default UTC), and run times, `CL_JOB_SCHEDULED_AT` and the CLI output are RFC 3339 UTC. Listing jobs needs `app:read` on the app (without `app:read_detail` the listing is the basic view: name, trigger, enabled, timeout and the last run's status, with the command, env, run definition and arguments blanked), run history and logs need `app:read_detail`; running and canceling needs `app:update`. The same operations are available as REST APIs (`/_openrun/jobs`, `/_openrun/jobs/run`, `/_openrun/jobs/runs`, `/_openrun/jobs/logs`, `/_openrun/jobs/cancel`) and as MCP tools. Every finished run writes a `job` audit event with the run id and status.
+- **Run statuses:** `running`, `succeeded`, `failed`, `timed_out`, `canceled` and `lost`.
+- **Timestamps:** every job timestamp is UTC. Schedules evaluate in the job's `timezone` (default UTC); run times, `CL_JOB_SCHEDULED_AT` and the CLI output are RFC 3339 UTC.
+- **APIs:** the same operations are available as REST APIs (`/_openrun/jobs`, `/_openrun/jobs/run`, `/_openrun/jobs/runs`, `/_openrun/jobs/logs`, `/_openrun/jobs/cancel`) and as MCP tools.
+- **Audit:** every finished run writes a `job` audit event with the run id and status.
+
+Permissions:
+
+| Operation              | Permission                                                                                                                                                                       |
+| :--------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| List jobs              | `app:read` on the app. Without `app:read_detail` the listing is the basic view: name, trigger, enabled, timeout and the last run's status, with the command, env, run definition and arguments blanked |
+| Run history and logs   | `app:read_detail`                                                                                                                                                                |
+| Run and cancel         | `app:update`                                                                                                                                                                     |

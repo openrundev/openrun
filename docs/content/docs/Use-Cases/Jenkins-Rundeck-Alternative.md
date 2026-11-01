@@ -20,6 +20,16 @@ keywords:
 
 Most teams have a set of small operational tasks: restart a service, rotate a key, re-run a job, look up a record. Their usual home is a job runner, a Jenkins parameterized job or a Rundeck job. OpenRun [actions]({{< ref "docs/actions/" >}}) are an alternative to both: each task is one function in an app kept in git and deployed with GitOps. The same function is then a web form, a CLI command and an MCP tool for AI agents, with the same access checks and the same audit trail on every path.
 
+{{< theme-image light="/d2/action_surfaces_light.svg" dark="/d2/action_surfaces_dark.svg" alt="The form UI, REST API, CLI and MCP tools all pass the same checks (app auth login, RBAC app:access and the action permit list) before calling the action handler, which returns a result and writes an audit event" >}}
+
+What you will set up on this page:
+
+- An [action app](#an-action-app) with a read only status action and a destructive, RBAC-guarded restart
+- The app [deployed from git](#ops-tools-in-git-deployed-with-gitops) with a scheduled sync
+- The same actions run from the [CLI](#the-cli-interface) and as [MCP tools](#the-same-actions-as-mcp-tools) with a confirmation step
+- One declaration serving staging and production through [per-server config](#customizing-actions-across-environments)
+- The [audit rows](#what-is-recorded) every path leaves
+
 ## Scenario
 
 This use case covers the scenario where you want to:
@@ -33,35 +43,44 @@ This use case covers the scenario where you want to:
 
 ## Why Ops Tools End Up as Jenkins and Rundeck Jobs
 
-The usual home for these tasks has been a job runner. A parameterized Jenkins or Rundeck job gives the task a form, an access policy and a run history, which is why ops teams kept using CI servers for things that are not builds. The cost is that each job is glued together (with lots of security holes) from shell steps and plugin configuration and is reachable only through that server's UI and API.
-
-AI agents change what the invocation surface needs to be. An agent working an incident needs a typed tool: a name, a schema for the arguments, a description, and a signal for whether the call changes anything. A job runner has none of that. The practical options have been to give the agent a shell or a cluster credential, which is all or nothing, or to hand write a tool wrapper per task. Neither gets you a tool the agent can be trusted with.
+- **What a job runner gives:** a parameterized Jenkins or Rundeck job gives the task a form, an access policy and a run history. That is why ops teams kept using CI servers for things that are not builds.
+- **What it costs:** each job is glued together (with lots of security holes) from shell steps and plugin configuration, and is reachable only through that server's UI and API.
+- **What AI agents need:** an agent working an incident needs a typed tool: a name, a schema for the arguments, a description, and a signal for whether the call changes anything. A job runner has none of that.
+- **The options so far:** give the agent a shell or a cluster credential, which is all or nothing, or hand write a tool wrapper per task. Neither gets you a tool the agent can be trusted with.
 
 ## OpenRun Actions as a Jenkins and Rundeck Alternative
 
 A parameterized Jenkins build or a Rundeck job is the closest existing shape for these tasks. The table is about the job as an operations tool, not about Jenkins as a CI server, which is a different job it does well.
 
-|                           | Jenkins parameterized job                                                                                             | Rundeck job                                                 | OpenRun action                                                                                                                   |
-| ------------------------- | --------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| Definition                | Jenkinsfile or UI-configured build, shell steps and plugins                                                           | YAML or UI-defined job with steps, options and node filters | One Starlark function next to its params, in the app's source                                                                    |
-| Input form                | Generated from build parameters                                                                                       | Generated from job options                                  | Generated from `param` declarations, with dropdowns, validation and a dry run                                                    |
-| Validation before running | None built in; the build fails part way                                                                               | Option regex and allowed values                             | The handler itself runs with `dry_run=True` and returns per-param errors                                                         |
-| Access control            | Per-job matrix or Role Strategy plugin, Jenkins users                                                                 | Project ACL policies, Rundeck users and roles               | `permit` on the action plus server RBAC, with the same SSO users and groups as every other app                                   |
-| Command line              | Jenkins CLI or `curl` against the build API, job specific scripting                                                   | `rd` CLI                                                    | `openrun action` with the same list, validate, run, follow and runs operations for every action                                  |
-| AI agent access           | None native; a shell credential or a hand-written wrapper per job                                                     | None native                                                 | Every action is an MCP tool with a schema, enums, a description and side-effect annotations, from one endpoint                   |
-| Guarding destructive runs | A confirmation step added to the pipeline by hand                                                                     | Job-level "require confirmation" in the UI                  | `destructive=True` asks the MCP client to confirm after a server-side dry run, refuses clients which cannot, and badges the form |
-| Change management         | Jenkinsfile in git for pipelines; job and controller configuration on the controller or through configuration plugins | Job YAML export and import, or the SCM plugin               | The app and its declaration live in git; a sync deploys merged changes, staged first, with `openrun version revert` to roll back |
-| History                   | Build records on the controller                                                                                       | Execution history                                           | Run records with arguments, streamed output and who ran it, plus an `action` audit event on every path                           |
-| Operating it              | A controller and agents to patch, back up and keep plugins compatible on                                              | A Rundeck server with its database                          | The OpenRun server which already runs the team's apps; nothing extra per tool                                                    |
-| Environments              | Job copies or folders per environment                                                                                 | Projects per environment                                    | One declaration applied per server, with `config()` reading each server's `[node_config]`                                        |
+| | Jenkins parameterized job | Rundeck job | OpenRun action |
+| :--- | :--- | :--- | :--- |
+| Definition | Jenkinsfile or UI-configured build, shell steps and plugins | YAML or UI-defined job with steps, options and node filters | One Starlark function next to its params, in the app's source |
+| Input form | Generated from build parameters | Generated from job options | Generated from `param` declarations, with dropdowns, validation and a dry run |
+| Validation before running | None built in; the build fails part way | Option regex and allowed values | The handler itself runs with `dry_run=True` and returns per-param errors |
+| Access control | Per-job matrix or Role Strategy plugin, Jenkins users | Project ACL policies, Rundeck users and roles | `permit` on the action plus server RBAC, with the same SSO users and groups as every other app |
+| Command line | Jenkins CLI or `curl` against the build API, job specific scripting | `rd` CLI | `openrun action` with the same list, validate, run, follow and runs operations for every action |
+| AI agent access | None native; a shell credential or a hand-written wrapper per job | None native | Every action is an MCP tool with a schema, enums, a description and side-effect annotations, from one endpoint |
+| Guarding destructive runs | A confirmation step added to the pipeline by hand | Job-level "require confirmation" in the UI | `destructive=True` asks the MCP client to confirm after a server-side dry run, refuses clients which cannot, and badges the form |
+| Change management | Jenkinsfile in git for pipelines; job and controller configuration on the controller or through configuration plugins | Job YAML export and import, or the SCM plugin | The app and its declaration live in git; a sync deploys merged changes, staged first, with `openrun version revert` to roll back |
+| History | Build records on the controller | Execution history | Run records with arguments, streamed output and who ran it, plus an `action` audit event on every path |
+| Operating it | A controller and agents to patch, back up and keep plugins compatible on | A Rundeck server with its database | The OpenRun server which already runs the team's apps; nothing extra per tool |
+| Environments | Job copies or folders per environment | Projects per environment | One declaration applied per server, with `config()` reading each server's `[node_config]` |
 
-Three differences carry most of the weight. The first is cost per tool: an action is a function, so adding a tool is a few lines in an app that already exists, not a new job to configure and maintain. The second is that the CLI and the MCP tool are the same code path as the form, with the same user, the same `permit` check and the same audit row, rather than extra integrations with their own access rules. The third is the dry run: the validation an agent or a person sees before a destructive run comes from the handler's own logic, so the message says what the app is about to do, not just that a regex matched.
+Three differences carry most of the weight:
+
+- **Cost per tool:** an action is a function, so adding a tool is a few lines in an app that already exists, not a new job to configure and maintain.
+- **One code path:** the CLI and the MCP tool are the same code path as the form, with the same user, the same `permit` check and the same audit row, rather than extra integrations with their own access rules.
+- **The dry run:** the validation an agent or a person sees before a destructive run comes from the handler's own logic, so the message says what the app is about to do, not just that a regex matched.
 
 Jobs are still the better choice when the task is a build or a long multi-stage pipeline with artifacts, fan-out across many nodes with node filters, or a workflow which a team has already automated and audited there. Actions are for the small, frequent, person-or-agent-triggered tasks which end up as jobs because nothing lighter had a form, an access policy and a history.
 
 ## An Action App
 
-The example below is a service restart, with a read only status action next to it. The restart script is a stand-in which logs what a rolling restart would do. The params are declared once:
+The example below is a service restart, with a read only status action next to it. The restart script is a stand-in which logs what a rolling restart would do.
+
+{{% steps %}}
+
+### Declare the params once
 
 ```python {filename="params.star"}
 param("service", description="Service to operate on", default="api")
@@ -72,6 +91,8 @@ param("options_env", type=LIST, default=["staging", "prod"])
 
 param("replicas", type=INT, description="Instances to restart, one at a time", default=2)
 ```
+
+### Write the handlers and the action definitions
 
 The handlers get the submitted values as `args`. The restart validates first, answers the dry run, then streams the output of the script:
 
@@ -103,7 +124,15 @@ app = ace.app("Service Ops",
 )
 ```
 
-Three things on the action definitions matter for what follows. `permit=["svc_restart"]` means only users holding that [RBAC]({{< ref "docs/configuration/rbac/" >}}) permission see or run the restart. `destructive=True` and `read_only=True` are [side-effect hints]({{< ref "docs/actions/#side-effect-hints" >}}). `is_async=True` makes the restart a background [run]({{< ref "docs/actions/#async-actions" >}}) with a record, so a ten minute restart does not depend on a browser tab staying open.
+Three options on the action definitions matter for what follows:
+
+| Option | Effect |
+| :--- | :--- |
+| `permit=["svc_restart"]` | Only users holding that [RBAC]({{< ref "docs/configuration/rbac/" >}}) permission see or run the restart |
+| `destructive=True`, `read_only=True` | [Side-effect hints]({{< ref "docs/actions/#side-effect-hints" >}}) for the form, the CLI and MCP clients |
+| `is_async=True` | Makes the restart a background [run]({{< ref "docs/actions/#async-actions" >}}) with a record, so a ten minute restart does not depend on a browser tab staying open |
+
+### Deploy the app and grant the permission
 
 The app is deployed with one command, and the permission is granted through a role. Here `test1` has the `ops` role and `test2` does not:
 
@@ -119,6 +148,8 @@ openrun app create --approve --auth builtin ./svcapp /ops/svc
 ]
 ```
 
+{{% /steps %}}
+
 That gives a form UI at `/ops/svc` with a dropdown for the service and the environment, a Validate button, a **Destructive** badge on the restart and a run history page. No templates were written.
 
 ## Ops Tools in Git, Deployed with GitOps
@@ -133,9 +164,20 @@ app("/ops/svc", "github.com/myorg/ops-apps/svcapp", auth="builtin")
 openrun sync schedule --approve --promote github.com/myorg/ops-apps/apps.star
 ```
 
-The [sync]({{< ref "docs/applications/overview/#automated-sync" >}}) checks the repository on a schedule (or on a webhook) and applies what changed: a new app in the declaration is created, a commit to the app source is deployed, and a param or config change in the declaration is applied to the existing app. Each change is staged first and promoted by the sync, with `openrun version revert` to go back.
+The [sync]({{< ref "docs/applications/overview/#automated-sync" >}}) checks the repository on a schedule (or on a webhook) and applies what changed:
 
-That is the difference from a job runner's change process. Adding a tool, changing a validation rule or tightening who may run the restart is a pull request to the `ops-apps` repository, reviewed and merged like any other code, and the history of every tool is the git history. Nobody edits a job in a UI on the server, and a rebuilt server comes back with the same tools from the same declaration. The [environments section]({{< ref "#customizing-actions-across-environments" >}}) below extends the declaration so that one file serves staging and production.
+- A new app in the declaration is created
+- A commit to the app source is deployed
+- A param or config change in the declaration is applied to the existing app
+- Each change is staged first and promoted by the sync, with `openrun version revert` to go back
+
+That is the difference from a job runner's change process:
+
+- Adding a tool, changing a validation rule or tightening who may run the restart is a pull request to the `ops-apps` repository, reviewed and merged like any other code
+- The history of every tool is the git history
+- Nobody edits a job in a UI on the server, and a rebuilt server comes back with the same tools from the same declaration
+
+The [environments section]({{< ref "#customizing-actions-across-environments" >}}) below extends the declaration so that one file serves staging and production.
 
 ## The CLI Interface
 
@@ -176,7 +218,8 @@ Run                          App       Action   Status     Started (UTC)        
 3knua9eqjev1zohoeqsrpwviiax  /ops/svc  Restart  succeeded  2026-10-17T02:55:13Z  4s        builtin:test1
 ```
 
-Result values go to stdout and the status line to stderr, so `--format json` output pipes into `jq`. On the server machine the CLI runs as the admin over the unix socket. From a laptop, `openrun login` gives the CLI the user's own identity and the same checks as the form.
+- **Output streams:** result values go to stdout and the status line to stderr, so `--format json` output pipes into `jq`.
+- **Identity:** on the server machine the CLI runs as the admin over the unix socket. From a laptop, `openrun login` gives the CLI the user's own identity and the same checks as the form.
 
 ## The Same Actions as MCP Tools
 
@@ -204,7 +247,10 @@ The rolling restart was declined at the permission prompt, so no changes
 were made to prod. I stopped there rather than retrying.
 ```
 
-The status call ran at once. The restart did not. Because the action is declared destructive, the server validated the arguments and asked the client to confirm before running anything. This session ran headless, so nobody was there to answer and the confirmation came back declined. The agent reported that and stopped. In an interactive session the user sees the prompt the server sent:
+- **The status call ran at once.** The restart did not: because the action is declared destructive, the server validated the arguments and asked the client to confirm before running anything.
+- **This session ran headless**, so nobody was there to answer and the confirmation came back declined. The agent reported that and stopped.
+
+In an interactive session the user sees the prompt the server sent:
 
 ```text
 Confirm Restart on /ops/svc: Rolling restart of a service, one instance at a time
@@ -218,11 +264,21 @@ Accept to run the action, decline to leave everything unchanged.
 
 On accept, the run starts and the tool returns the run id, its status and the output, the same output the CLI tailed above. The validation status line in the prompt comes from the handler's own dry run, so the person confirming sees what the app thinks is about to happen, not just the arguments.
 
-The confirmation is one layer. The `permit` list is the one that holds regardless of the client: an agent connected as `test2` does not get a restart tool at all. A client that cannot confirm, such as a script posting to the endpoint directly, is refused by default rather than let through, and the error says what the request declared and what it needs:
+The confirmation is one layer:
+
+- **`permit` holds regardless of the client:** an agent connected as `test2` does not get a restart tool at all.
+- **Clients that cannot confirm are refused** by default rather than let through, for example a script posting to the endpoint directly. The error says what the request declared and what it needs:
+
+```text
+Restart on /ops/svc is destructive and this request cannot confirm it: it declared no MCP request metadata; confirmation needs the MCP 2026-07-28 per-request metadata (_meta io.modelcontextprotocol/protocolVersion and io.modelcontextprotocol/clientCapabilities) with a form elicitation capability. The server will not run it (destructive_confirm=require). Pass dry_run=true to validate the arguments, use a client which can confirm, or run it from the CLI or the UI.
+```
 
 ## Customizing Actions Across Environments
 
-The same action app usually runs in more than one place: a dev or staging server and production, and on each server as a stage instance and a production instance. The source, the action definitions and the declaration in git stay identical everywhere. What differs is set in the declaration itself, where `config()` reads per-server values from the server config, and in the `[app_config]` settings which decide how runs behave.
+The same action app usually runs in more than one place: a dev or staging server and production, and on each server as a stage instance and a production instance. The source, the action definitions and the declaration in git stay identical everywhere. What differs is set in two places:
+
+- The declaration itself, where `config()` reads per-server values from the server config
+- The `[app_config]` settings which decide how runs behave
 
 ### One Declaration, Per-Server Values with `config()`
 
@@ -248,11 +304,18 @@ action_retain_runs = 500
 destructive_confirm = "require"
 ```
 
-The staging server has no `[node_config]` entries, so it takes the defaults: the environment dropdown and the MCP enum of the restart action list only `staging`, and an agent connected to that server cannot even name `prod`. The production server offers both environments, keeps more run history and pins the confirmation mode regardless of what its `[api.mcp]` default says. The special key `_branch` resolves to the git branch the declaration was loaded from, so a sync of the `staging` branch deploys the action app from `staging` and a sync of `main` deploys it from `main`, with no edit to the file.
+- **Staging server:** no `[node_config]` entries, so it takes the defaults. The environment dropdown and the MCP enum of the restart action list only `staging`, and an agent connected to that server cannot even name `prod`.
+- **Production server:** offers both environments, keeps more run history and pins the confirmation mode regardless of what its `[api.mcp]` default says.
+- **`_branch`:** this special key resolves to the git branch the declaration was loaded from, so a sync of the `staging` branch deploys the action app from `staging` and a sync of `main` deploys it from `main`, with no edit to the file.
 
-Values from `[node_config]` can be any TOML type and lists are passed to params as JSON. String values expand the environment variables listed in `system.allowed_env`, so a path like `"$OPENRUN_HOME/ops"` is valid. Params and app config set through the CLI or the console after the apply are kept on the next apply unless the declaration changes the same key or `--clobber` is passed, so a one-off adjustment on a server does not fight the declaration.
+{{% details title="How config() values are resolved" closed="true" %}}
 
-The same builtin is available in the app code as `ace.config`, if the value belongs in the app code rather than to the app declaration, such as the directory the restart script lives in: `exec.run("./restart.sh", ..., cwd=ace.config("ops_dir", "/opt/ops"))`. Prefer the declaration when a value can be a param or an app config setting, since those show in `openrun app list` and the console and can be changed without a code read.
+- Values from `[node_config]` can be any TOML type, and lists are passed to params as JSON.
+- String values expand the environment variables listed in `system.allowed_env`, so a path like `"$OPENRUN_HOME/ops"` is valid.
+- Params and app config set through the CLI or the console after the apply are kept on the next apply unless the declaration changes the same key or `--clobber` is passed, so a one-off adjustment on a server does not fight the declaration.
+- The same builtin is available in the app code as `ace.config`, if the value belongs in the app code rather than to the app declaration, such as the directory the restart script lives in: `exec.run("./restart.sh", ..., cwd=ace.config("ops_dir", "/opt/ops"))`. Prefer the declaration when a value can be a param or an app config setting, since those show in `openrun app list` and the console and can be changed without a code read.
+
+{{% /details %}}
 
 ### Stage and Production Instances on One Server
 
@@ -269,7 +332,7 @@ Both instances share the source version and the action definitions. The stage in
 
 ### `[app_config]` Settings for How Actions Run
 
-How runs are kept, how long they may take, how long an MCP client may cache the tool list and whether a destructive action needs confirmation are `[app_config]` settings. The server's `openrun.toml` sets the defaults for all apps on that server; the declaration above or `openrun app update conf` overrides them for one app:
+These `[app_config]` settings decide how runs behave. The server's `openrun.toml` sets the defaults for all apps on that server; the declaration above or `openrun app update conf` overrides them for one app:
 
 ```toml {filename="openrun.toml"}
 [app_config]
@@ -285,9 +348,22 @@ action.destructive_confirm = ""     # require, ask or skip; "" inherits [api.mcp
 openrun app update conf --promote 'action.mcp_list_ttl="30s"' /ops/svc
 ```
 
-`destructive_confirm` layers in the same direction as the rest: the `[api.mcp]` server setting is the default, `action.destructive_confirm` on the app overrides it, and an API key created with `openrun apikey create --confirm skip` can bypass the prompt for one deliberately trusted automation. A pipeline on the staging server can hold such a key while the production server keeps `require` and no such key exists there.
+`destructive_confirm` layers in the same direction as the rest:
 
-Taken together: the source is identical in every environment, the declaration with `config()` decides what each server's app exposes and how its runs behave, stage and promote separate the two instances on a server, and `[node_config]` is the only file that differs between servers.
+| Level | Setting | Role |
+| :--- | :--- | :--- |
+| Server | `[api.mcp]` `destructive_confirm` | The default |
+| App | `action.destructive_confirm` | Overrides the server default for one app |
+| API key | `openrun apikey create --confirm skip` | Bypasses the prompt for one deliberately trusted automation |
+
+A pipeline on the staging server can hold such a key while the production server keeps `require` and no such key exists there.
+
+Taken together:
+
+- The source is identical in every environment
+- The declaration with `config()` decides what each server's app exposes and how its runs behave
+- Stage and promote separate the two instances on a server
+- `[node_config]` is the only file that differs between servers
 
 ## What Is Recorded
 
@@ -303,7 +379,9 @@ action  run_finish    builtin:test1  Success  3knuh3uihoiwrt2kvgvu8oaksps succee
 action  mcp_execute   builtin:test1  Failed   confirm=refused
 ```
 
-The first row is the read only status call. Every destructive call says how it got past the prompt, or that it did not, so that is a query, not a guess. The run record keeps the arguments, the output and who started it, and is what `openrun action runs` and the Run History page show.
+- The first row is the read only status call.
+- Every destructive call says how it got past the prompt, or that it did not, so that is a query, not a guess.
+- The run record keeps the arguments, the output and who started it, and is what `openrun action runs` and the Run History page show.
 
 ## Where This Fits
 
@@ -313,7 +391,7 @@ An action is one function next to the app it operates, kept in git and deployed 
 
 ### Is OpenRun an alternative to Jenkins?
 
-For Jenkins used as an operations tool, yes: a parameterized job which restarts, rotates, re-runs or looks something up becomes an OpenRun action with a generated form, a CLI command and an MCP tool, kept in git and deployed with GitOps. OpenRun does not replace Jenkins as a CI server for builds and multi-stage pipelines. For deploying iternal tools which are containerized apps, OpenRun handles the container build, no Jenkins is required.
+For Jenkins used as an operations tool, yes: a parameterized job which restarts, rotates, re-runs or looks something up becomes an OpenRun action with a generated form, a CLI command and an MCP tool, kept in git and deployed with GitOps. OpenRun does not replace Jenkins as a CI server for builds and multi-stage pipelines. For deploying internal tools which are containerized apps, OpenRun handles the container build, no Jenkins is required.
 
 ### Is OpenRun an open source Rundeck alternative?
 

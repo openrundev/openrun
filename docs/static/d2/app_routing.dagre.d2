@@ -1,0 +1,35 @@
+# https://d2lang.com diagram. Use make update-diagrams to generate SVG; the layout engine is the suffix in the file name.
+direction: right
+
+requests: {
+  label: "Requests\nhost + path"
+  r1: "localhost/utils/appA/report"
+  r2: "localhost/appB"
+  r3: "example.com/any/path"
+  r4: "localhost/_openrun/..."
+  r5: "unknown.host/appB"
+}
+
+openrun: {
+  label: "OpenRun server\n1. match the domain  2. match the app path"
+  style: {stroke-width: 2}
+
+  default: {
+    label: "Default domain\nlocalhost"
+    a: "App A\n/utils/appA"
+    b: "App B\n/appB"
+  }
+  example: {
+    label: "Domain\nexample.com"
+    c: "App C\nexample.com:/\nowns every path"
+  }
+  internal: "OpenRun internal APIs\n/_openrun/ reserved\non every domain" {style.stroke-dash: 3}
+}
+
+notfound: "404 not found\nunknown hostname, unless\nsystem.fallback_unknown_domains = true" {style.stroke-dash: 3}
+
+requests.r1 -> openrun.default.a
+requests.r2 -> openrun.default.b
+requests.r3 -> openrun.example.c
+requests.r4 -> openrun.internal
+requests.r5 -> notfound

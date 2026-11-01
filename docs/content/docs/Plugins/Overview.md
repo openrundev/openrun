@@ -8,6 +8,13 @@ Plugins provide an API for OpenRun Starlark code to call out to external systems
 
 Each plugin is identified by a unique name, like `store.in` or `exec.in`. Apps always load plugins with the `.in` suffix: resolution prefers a plugin compiled into the OpenRun binary and falls back to an installed [external plugin provider]({{< ref "docs/plugins/external-plugins" >}}) serving that module, so apps do not change when a plugin moves between the two. The `.ex` suffix explicitly requires the external build. Both run the same plugin implementation, built with the OpenRun plugin SDK.
 
+This page covers:
+
+- [Plugin Usage](#plugin-usage): loading a plugin and declaring permissions
+- [Response Handling](#response-handling) and [Automatic Error Handling](#automatic-error-handling)
+- [Returning Errors from Functions](#returning-errors-from-functions) with `ace.output`
+- [Plugin Accounts](#plugin-accounts): per-plugin config, account linking and named accounts
+
 ## Plugin Usage
 
 To use a plugin, load it using
@@ -29,14 +36,14 @@ Run `openrun app approve /myapp` to authorize the app to call the `get` and `pos
 
 The `ace.permission` arguments are:
 
-|  Property   | Optional |      Type       |             Notes             |
-| :---------: | :------: | :-------------: | :---------------------------: |
-|   plugin    |  false   |     string      | The plugin name, like `http.in` |
-|   method    |  false   |     string      | The plugin function name |
-|  arguments  |   true   | list of strings | Approved values for the leading positional arguments, exact or `regex:` patterns. A call passing more positional arguments than listed is allowed; arguments which are checked cannot be passed as kwargs |
-|    type     |   true   |     string      | `READ` or `WRITE`, overrides the read/write type defined by the plugin. Write calls are blocked for staging and preview apps when [write access]({{< ref "docs/applications/lifecycle/#write-mode-access" >}}) is disabled |
-|   secrets   |   true   | list of lists   | The [secrets]({{< ref "docs/configuration/secrets" >}}) the call is allowed to resolve, each entry a list of name patterns |
-|   permit    |   true   | list of strings | Custom [RBAC permissions]({{< ref "docs/configuration/rbac" >}}), the call is allowed only if the user has any one of them |
+| Property | Optional | Type | Notes |
+| :--- | :--- | :--- | :--- |
+| plugin | false | string | The plugin name, like `http.in` |
+| method | false | string | The plugin function name |
+| arguments | true | list of strings | Approved values for the leading positional arguments, exact or `regex:` patterns. A call passing more positional arguments than listed is allowed; arguments which are checked cannot be passed as kwargs |
+| type | true | string | `READ` or `WRITE`, overrides the read/write type defined by the plugin. Write calls are blocked for staging and preview apps when [write access]({{< ref "docs/applications/lifecycle/#write-mode-access" >}}) is disabled |
+| secrets | true | list of lists | The [secrets]({{< ref "docs/configuration/secrets" >}}) the call is allowed to resolve, each entry a list of name patterns |
+| permit | true | list of strings | Custom [RBAC permissions]({{< ref "docs/configuration/rbac" >}}), the call is allowed only if the user has any one of them |
 
 Server config `[[permissions.allow]]` entries use the same fields and approve a call for all apps without an explicit approval; `[[permissions.disallow]]` entries block a call for all apps. See [default plugin permissions]({{< ref "docs/configuration/security/#default-plugin-permissions" >}}) for the defaults.
 
@@ -48,21 +55,23 @@ if not ret:
     return ace.response(ret.error, "invalid_challenge_id", code=404)
 ```
 
-At runtime, OpenRun will check if the `get` call is authorized. If so, the call to the plugin will be performed.
+At runtime, OpenRun checks if the `get` call is authorized. If so, the call to the plugin is performed.
 
 ## Response Handling
 
-All plugin API calls return a `plugin_response` structure. The fields in this are
+All plugin API calls return a `plugin_response` structure with these fields:
 
-- `error` The error message string, empty string if no error
-- `error_code` The error code integer, zero if no error
-- `value` The actual return value for the plugin API call. The datatype for this depends on the API, check the API documentation for details.
-- `is_stream` Boolean, true when the value is a stream (like `exec.run(stream=True)`) which has to be returned from the handler instead of being read in the handler code.
+| Field | Type | Notes |
+| :--- | :--- | :--- |
+| `error` | string | The error message, empty string if no error |
+| `error_code` | int | The error code, zero if no error |
+| `value` | any | The actual return value for the plugin API call. The datatype depends on the API, check the API documentation for details |
+| `is_stream` | bool | True when the value is a stream (like `exec.run(stream=True)`) which has to be returned from the handler instead of being read in the handler code |
 
 To check the error status of an API call:
 
-- Check boolean value for the return. If false, that indicates an error which can be returned.
-- If no error, get the `value` property and continue with processing
+- Check the boolean value of the return. If false, that indicates an error which can be returned.
+- If no error, get the `value` property and continue with processing.
 
 For example,
 
@@ -90,9 +99,9 @@ print(ret.value.json())
 
 ## Automatic Error Handling
 
-OpenRun supports automatic error handling, so that the handler functions do not have to check the error status of every plugin API call. The way this is implemented is such that if no explicit error handling is done, then the automatic error handling kicks in. If explicit error handling is done, then automatic error handling is not done. See [bookmarks app](https://github.com/openrundev/apps/blob/main/utils/bookmarks/app.star) for an example of how the automatic error handling can be used.
+OpenRun supports automatic error handling, so that handler functions do not have to check the error status of every plugin API call. If a handler does no explicit error handling for a call, automatic error handling kicks in; if explicit error handling is done, it is not. See [bookmarks app](https://github.com/openrundev/apps/blob/main/utils/bookmarks/app.star) for an example of how the automatic error handling can be used.
 
-If the `error_handler` function is defined, then that is called with the error. The manual error checking works the same as mentioned above. But if no manual error checking is done, then the OpenRun platform will automatically call the `error_handler` function in case of an error. The `error_handler` could be defined as:
+If the `error_handler` function is defined, the OpenRun platform calls it with the error when no manual error checking is done. The `error_handler` could be defined as:
 
 ```python {filename="app.star"}
 def error_handler(req, ret):
@@ -104,9 +113,11 @@ def error_handler(req, ret):
 
 When no explicit error checks are done, the automatic error handling happens in these three cases:
 
-- **Value Access** When the response `value` is accessed
-- **Next API call** When the next plugin API call happens (to any plugin function)
-- **Handler Return** When the handler function returns
+| Case | When the error is raised |
+| :--- | :--- |
+| [Value Access](#value-access) | When the response `value` is accessed |
+| [Next API call](#next-api-call) | When the next plugin API call happens (to any plugin function) |
+| [Handler Return](#handler-return) | When the handler function returns |
 
 ### Value Access
 
@@ -117,18 +128,18 @@ ret = http.get("https://localhost:9999/test")
 print(ret.value.json())
 ```
 
-If the `get` API had succeeded, then the `value` property access will work as usual. But if the `get` API had failed, then the `value` access will fail and the `error_handler` will be called with the original request and the error response.
+If the `get` API had succeeded, the `value` property access works as usual. If the `get` API had failed, the `value` access fails and the `error_handler` is called with the original request and the error response.
 
 ### Next API Call
 
-If the `value` is not being accessed, then the next plugin call will raise the error. For example, if the handler code is
+If the `value` is not being accessed, then the next plugin call raises the error. For example, if the handler code is
 
 ```python {filename="app.star"}
 store.begin()
 bookmark = store.select_one(table.bookmark, {"url": url}).value
 ```
 
-The response of the `begin` API is not checked. When the next `select_one` API is called, if the previous `begin` had failed, the `select_one` API will raise the previous API call's error, the `select_one` will not run.
+The response of the `begin` API is not checked. When the next `select_one` API is called, if the previous `begin` had failed, the `select_one` API raises the previous API call's error; the `select_one` does not run.
 
 ### Handler Return
 
@@ -142,11 +153,11 @@ def insert(req):
     store.commit()
 ```
 
-Assume all the API calls had succeeded and then the `commit` fails. Since the `value` is not accessed and there is no plugin API call after the `commit` call, the OpenRun platform will raise the error after the handler completes since the `commit` had failed.
+Assume all the API calls had succeeded and then the `commit` fails. Since the `value` is not accessed and there is no plugin API call after the `commit` call, the OpenRun platform raises the error after the handler completes.
 
 ### Overriding Automatic Error Handling
 
-The automatic error handling is great for handling the unusual error scenarios. For the error scenarios which are common, like a database uniqueness check failure, the error handing can be done explicitly in the handler code. If the handler code is
+Automatic error handling is for the unusual error scenarios. For error scenarios which are common, like a database uniqueness check failure, handle the error explicitly in the handler code. Checking `ret.error` disables the automatic error handling for that call:
 
 ```python {filename="app.star"}
 ret = store.insert(table.bookmark, new_bookmark)
@@ -154,7 +165,7 @@ if ret.error:
     return ace.response(ret, "error.go.html")
 ```
 
-The automatic error handling will not be invoked in this case since the `ret.error` is being checked. Checking the truth status of `ret` also will disable the automatic error handling:
+Checking the truth status of `ret` also disables the automatic error handling:
 
 ```python {filename="app.star"}
 ret = store.insert(table.bookmark, new_bookmark)
@@ -163,7 +174,7 @@ if not ret:
 ```
 
 {{<callout type="info" >}}
-**Note:** When developing a new app, first define the `error_handler` and test it for the partial and full page scenarios. All subsequent handler code does not need to handle errors unless specific handling is required. If no `error_handler` is defined, a generic error message screen is returned. If is recommended to define a custom `error_handler`.
+**Note:** When developing a new app, first define the `error_handler` and test it for the partial and full page scenarios. All subsequent handler code does not need to handle errors unless specific handling is required. If no `error_handler` is defined, a generic error message screen is returned. It is recommended to define a custom `error_handler`.
 {{</callout>}}
 
 ## Returning Errors from Functions
@@ -172,10 +183,10 @@ For returning error values within Starlark code, a convenience `ace.output` stru
 
 The fields in the `ace.output` structure are:
 
-| Property | Optional |  Type  | Default |       Notes       |
-| :------: | :------: | :----: | :-----: | :---------------: |
-|  value   |   true   |  any   |         | The return value  |
-|  error   |   true   | string |         | The error message |
+| Property | Optional | Type | Default | Notes |
+| :--- | :--- | :--- | :--- | :--- |
+| value | true | any | | The return value |
+| error | true | string | | The error message |
 
 If a function `f1` returns an error value, using `return ace.output(error="mymessage")`, the caller will automatically fail when it tries to access the return value using `f1().value`. To do custom error handling, do
 
@@ -194,7 +205,7 @@ Some plugins like `exec.in` do not require any account information. Others like 
 db_connection = "sqlite:$OPENRUN_HOME/metadata/clace_app_store.db"
 ```
 
-Any application using the `store.in` plugin will by default use the `$OPENRUN_HOME/metadata/clace_app_store.db` sqlite database. To change the default account config used by apps, update `openrun.toml` and restart the OpenRun server. For example, adding the below will overwrite the default `store.in` config for all apps.
+Any application using the `store.in` plugin will by default use the `$OPENRUN_HOME/metadata/clace_app_store.db` sqlite database. To change the default account config used by apps, update `openrun.toml` and restart the OpenRun server. For example, adding the below overwrites the default `store.in` config for all apps.
 
 ```toml {filename="openrun.toml"}
 [plugin."store.in"]
@@ -205,16 +216,30 @@ String values in the plugin config can be [secret references]({{< ref "docs/conf
 
 ### Account Linking
 
-If specific account config is required for an app, then the app can be linked to a specific account config. First add a new account config by adding in `openrun.toml`
+If specific account config is required for an app, the app can be linked to a specific account config.
+
+{{% steps %}}
+
+### Add the account config
+
+Add a new account config in `openrun.toml`:
 
 ```toml {filename="openrun.toml"}
 [plugin."store.in#tmpaccount"]
 db_connection = "sqlite:/tmp/openrun_app.db"
 ```
 
+### Link the app to the account
+
 For an app `/myapp` using `store.in`, run `openrun account link --promote store.in tmpaccount /myapp`
 
-This links the `myapp` app to use the `tmpaccount` account. The link is staged like other metadata changes, `--promote` applies it to the prod app. Use `-` as the account name to remove the link, and `openrun account list /myapp` to list the links of an app.
+This links the `myapp` app to use the `tmpaccount` account.
+
+{{% /steps %}}
+
+- The link is staged like other metadata changes, `--promote` applies it to the prod app.
+- Use `-` as the account name to remove the link.
+- Use `openrun account list /myapp` to list the links of an app.
 
 ### Named Account
 

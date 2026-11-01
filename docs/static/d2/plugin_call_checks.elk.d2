@@ -1,0 +1,23 @@
+# https://d2lang.com diagram. Use make update-diagrams to generate SVG; the layout engine is the suffix in the file name.
+direction: down
+
+call: "App calls a plugin\nhttp.get(url)" {shape: oval}
+
+checks: {
+  label: "Checks on every plugin call, in order"
+  style: {stroke-width: 2}
+  grid-rows: 3
+  grid-gap: 24
+  approve: "1. Approved?\napp permission approved with\nopenrun app approve, or a\nserver permissions.allow entry"
+  disallow: "2. Not disallowed?\nserver permissions.disallow\nblocks for every app"
+  rbac: "3. Permitted?\npermit list against the\nuser's custom permissions"
+  write: "4. Write allowed?\nstage and preview apps\nwrite access settings"
+  secrets: "5. Secrets granted?\n{{secret ...}} values resolved,\nargument patterns checked again"
+}
+
+plugin: "Plugin runs\nhttp, exec, store, fs, ..."
+denied: "Call fails\npermission error" {style.stroke-dash: 3}
+
+call -> checks
+checks -> plugin: "all pass"
+checks -> denied: "any check fails"

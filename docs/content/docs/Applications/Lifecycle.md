@@ -4,25 +4,31 @@ weight: 200
 summary: "Lifecycle for OpenRun applications, pushing changes live safely"
 ---
 
+This page describes the four app types, the dev to staging to prod workflow with and without Git, how to promote and verify changes, and the write access rules for staging and preview apps.
+
 ## Application Types
 
 An OpenRun application can be one of four types:
 
-- **Development Apps** : Used for developing apps, supports live reload from code changes on disk.
-- **Production Apps** : For production use. Can be created from Git-hosted source or from sources on local disk.
-- **Staging Apps** : For reviewing code and config changes before they are pushed to prod. Every prod app has one staging app.
-- **Preview Apps** : For creating a review environment for code changes, useful as part of code review.
+| Type | Purpose |
+| :--- | :--- |
+| **Development Apps** | Used for developing apps, supports live reload from code changes on disk. |
+| **Production Apps** | For production use. Can be created from Git-hosted source or from sources on local disk. |
+| **Staging Apps** | For reviewing code and config changes before they are pushed to prod. Every prod app has one staging app. |
+| **Preview Apps** | For creating a review environment for code changes, useful as part of code review. |
+
+{{< theme-image light="/d2/app_lifecycle_light.svg" dark="/d2/app_lifecycle_dark.svg" alt="Dev apps run from local disk with live reload. Reloads from disk or git update the staging app, which is promoted to the production app. Preview apps are created from a git commit" >}}
 
 ## Lifecycle without Git
 
 If not using git, a workflow would be:
 
-- Create a dev mode app, like `openrun app create --dev --approve ~/myappcode /myapp_dev`
-- Create a prod mode app, like `openrun app create --approve ~/myappcode /myapp`
-- As code changes are saved to disk, the changes are immediately live at `https://localhost:25223/myapp_dev`
-- When code is in a stable state, run `openrun app reload /myapp`. This will update the staging app with the most recent code from `~/myappcode` folder.
-- The staging app is available at `https://stage.localhost:25223/myapp` for verification.
-- To promote the code to prod, run `openrun app promote /myapp`. The staged code is promoted to prod, live at `https://localhost:25223/myapp`.
+1. Create a dev mode app, like `openrun app create --dev --approve ~/myappcode /myapp_dev`
+2. Create a prod mode app, like `openrun app create --approve ~/myappcode /myapp`
+3. As code changes are saved to disk, the changes are immediately live at `https://localhost:25223/myapp_dev`
+4. When code is in a stable state, run `openrun app reload /myapp`. This updates the staging app with the most recent code from the `~/myappcode` folder.
+5. The staging app is available at `https://stage.localhost:25223/myapp` for verification.
+6. To promote the code to prod, run `openrun app promote /myapp`. The staged code is promoted to prod, live at `https://localhost:25223/myapp`.
 
 Having a staging environment helps catch code and config issues before the changes are live on prod. OpenRun implements versioning for prod apps, even when source is not from git.
 
@@ -30,15 +36,15 @@ Having a staging environment helps catch code and config issues before the chang
 
 If using git, a workflow would be:
 
-- Create a dev mode app on dev machine, like `openrun app create --dev --approve ~/myappcode /myapp_dev`
-- Create a prod mode app on prod server, like `openrun app create --approve github.com/myorg/repo /myapp`
-- As code changes are saved to disk, the changes are immediately live at `https://localhost:25223/myapp_dev`
-- When code is in a stable state, check in the dev code to git.
-- Run `openrun app reload /myapp`. This will update the staging app with the most recent code from `main` branch in git.
-- The staging app is live at `https://stage.localhost:25223/myapp`. Verify the functionality of the staging app.
-- To promote the code to prod, run `openrun app promote /myapp`. The staged code is promoted to prod, live at `https://localhost:25223/myapp`.
+1. Create a dev mode app on the dev machine, like `openrun app create --dev --approve ~/myappcode /myapp_dev`
+2. Create a prod mode app on the prod server, like `openrun app create --approve github.com/myorg/repo /myapp`
+3. As code changes are saved to disk, the changes are immediately live at `https://localhost:25223/myapp_dev`
+4. When code is in a stable state, check in the dev code to git.
+5. Run `openrun app reload /myapp`. This updates the staging app with the most recent code from the `main` branch in git.
+6. The staging app is live at `https://stage.localhost:25223/myapp`. Verify the functionality of the staging app.
+7. To promote the code to prod, run `openrun app promote /myapp`. The staged code is promoted to prod, live at `https://localhost:25223/myapp`.
 
-To avoid need to manually reload, setup a [sync]({{< ref "/docs/applications/overview/#automated-sync" >}}) job which will automatically update existing apps and create new apps.
+To avoid the need to manually reload, set up a [sync]({{< ref "/docs/applications/overview/#automated-sync" >}}) job which automatically updates existing apps and creates new apps.
 
 ## Development Apps
 
@@ -56,11 +62,15 @@ Without the `--dev` option, apps are created as production apps by default. Prod
 openrun app create --approve /home/user/mycode example.com:/
 ```
 
-creates a production app. After app creation, the original source location is not read, until a `app reload` operation is done to update the sources. The source folder `/home/user/mycode` can be deleted if reload is not required, since the sources are present in the OpenRun metadata database. Every production app automatically has one staging app associated with it.
+creates a production app.
+
+- After app creation, the original source location is not read until an `app reload` operation is done to update the sources.
+- The source folder `/home/user/mycode` can be deleted if reload is not required, since the sources are present in the OpenRun metadata database.
+- Every production app automatically has one staging app associated with it.
 
 ## Staging Apps
 
-Staging apps are created for each production app. The purpose of the staging app is to be able to verify config and code changes before they are made live in the prod app. For example, after the previous `app create` command, a call to `app list` with the `--internal` option will show two apps:
+Staging apps are created for each production app, to verify config and code changes before they are made live in the prod app. For example, after the previous `app create` command, a call to `app list` with the `--internal` option will show two apps:
 
 ```sh
 openrun app list --internal
@@ -73,7 +83,12 @@ The second app is the staging app for the first. `app list` shows only the main 
 
 By default, the staging app uses a staging subdomain (`system.default_stage_domain`, default `stage`) and the same path as the production app. So for an app at `https://example.com/`, the staging URL is `https://stage.example.com/`. For an app at `https://example.com/utils/app1`, the staging app URL is `https://stage.example.com/utils/app1`.
 
-The staging location can be changed when creating the app. Use `openrun app create --stage-at path ...` to use the older path based location, where `_cl_stage` is suffixed to the production path. Use `--stage-at <domain>` to put the staging app on a specific domain. The server default is configured with `system.stage_at`.
+The staging location can be changed when creating the app. The server default is configured with `system.stage_at`.
+
+| `app create` option | Staging location |
+| :--- | :--- |
+| `--stage-at path` | The older path based location, where `_cl_stage` is suffixed to the production path |
+| `--stage-at <domain>` | The staging app is put on the specified domain |
 
 ## Promoting Changes
 
@@ -117,17 +132,22 @@ mycode                         PROD     2 NONE    example.com:/
 mycode                         STG      2 NONE    stage.example.com:/
 ```
 
-If the application code change requires new permissions, the reload operation will fail unless `--approve` is added.
+| `app reload` option | Effect |
+| :--- | :--- |
+| `--approve` | Approve new permissions required by the code change. Without it, the reload fails if new permissions are required |
+| `--promote` | Promote the staged changes to prod in the same step |
+| `--verify` | Check that the reloaded app container starts successfully before promotion |
 
-To reload, approve and promote in one step, run `openrun app reload --approve --promote example.com:/`.
-
-Add `--verify` to check that the reloaded app container starts successfully before promotion:
+To reload, approve and promote in one step, run `openrun app reload --approve --promote example.com:/`. To verify before promoting:
 
 ```sh
 openrun app reload --verify --promote example.com:/
 ```
 
-For production apps, reload updates the staging app first. With `--verify`, OpenRun reloads the staging container during verification. If `--promote` is also set, the prod container is verified before promotion completes. If verification fails for any matched app, the reload operation fails and the staged changes are not promoted. `--dry-run` does not start containers, so verification is skipped in dry-run mode.
+- For production apps, reload updates the staging app first. With `--verify`, OpenRun reloads the staging container during verification.
+- If `--promote` is also set, the prod container is verified before promotion completes.
+- If verification fails for any matched app, the reload operation fails and the staged changes are not promoted.
+- `--dry-run` does not start containers, so verification is skipped in dry-run mode.
 
 ## GitHub Reload
 
@@ -149,18 +169,33 @@ openrun preview create 49182d4ca1cacbd8e3463a77c2174a6da1fb66c9 /myapp
 
 creates an app accessible at `/myapp_cl_preview_49182d4ca1cacbd8e3463a77c2174a6da1fb66c9` which runs the app code in the specified commit id.
 
-Preview apps cannot be changed once they are created. If preview app requires new permissions, add the `--approve` option to the `preview create` command.
+Preview apps cannot be changed once they are created. If a preview app requires new permissions, add the `--approve` option to the `preview create` command.
 
 ## Write Mode Access
 
-Staging and preview apps allow approved WRITE plugin calls by default, controlled by `security.stage_enable_write_access` and `security.preview_enable_write_access`. To create new apps with read-only staging and preview plugin access, set both options to `false` in `openrun.toml`. Plugin permissions and server-level restrictions still apply in either mode.
+Staging and preview apps allow approved WRITE plugin calls by default. Plugin permissions and server-level restrictions still apply in either mode.
 
-In read-only mode, only calls classified as READ are permitted. The HTTP plugin classifies GET/OPTIONS/HEAD as READ and POST/PUT/DELETE/PATCH as WRITE. The Exec plugin classifies `run` as WRITE because the command may modify data.
+| Setting | Default | Meaning |
+| :--- | :--- | :--- |
+| `security.stage_enable_write_access` | `true` | Whether new staging apps allow approved WRITE plugin calls |
+| `security.preview_enable_write_access` | `true` | Whether new preview apps allow approved WRITE plugin calls |
 
-For cases where the plugin defines an API as Write, the app permission can overwrite the default type and define the operation to be a READ operation. For example, the disk_usage app runs the `du` command, which is a read operation. The [app config defines](https://github.com/openrundev/openrun/blob/49182d4ca1cacbd8e3463a77c2174a6da1fb66c9/examples/disk_usage/app.star#L45) the run plugin call as `type="READ"`, over-riding the default WRITE type defined in the plugin. If no type is specified in the permission, the type defined in the plugin takes effect.
+To create new apps with read-only staging and preview plugin access, set both options to `false` in `openrun.toml`.
 
-To restrict existing apps, run `openrun app settings stage-write-access false all` and `openrun app settings preview-write-access false all`. Change `all` to the desired app glob pattern. These settings apply immediately and are not staged. Use `true` to allow approved WRITE calls again.
+**How calls are classified:** in read-only mode, only calls classified as READ are permitted.
 
-To allow preview apps access to WRITE operation, run `openrun app settings preview-write-access true example.com:/`. This changes the existing preview apps and any new preview apps created for example.com:/ to allow write operations, if the permissions have been approved.
+- The HTTP plugin classifies GET/OPTIONS/HEAD as READ and POST/PUT/DELETE/PATCH as WRITE.
+- The Exec plugin classifies `run` as WRITE because the command may modify data.
+- Where the plugin defines an API as WRITE, the app permission can override the default type and define the operation to be a READ operation. For example, the disk_usage app runs the `du` command, which is a read operation. The [app config defines](https://github.com/openrundev/openrun/blob/49182d4ca1cacbd8e3463a77c2174a6da1fb66c9/examples/disk_usage/app.star#L45) the run plugin call as `type="READ"`, over-riding the default WRITE type defined in the plugin. If no type is specified in the permission, the type defined in the plugin takes effect.
 
-For Starlark apps these controls apply to plugin calls. For proxied (containerized) apps, a staging or preview app without write access refuses every proxied request whose method is not GET, HEAD or OPTIONS with `403`; MCP calls authenticated with a bearer token are governed by RBAC and the app's tool scopes instead. The container itself and its database are not made read-only. Use separate staging credentials and appropriately restricted [service bindings]({{< ref "servicebindings" >}}) to control database access.
+**Changing existing apps:** these settings apply immediately and are not staged. Change `all` to the desired app glob pattern.
+
+| Command | Effect |
+| :--- | :--- |
+| `openrun app settings stage-write-access false all` | Restrict existing staging apps to READ calls |
+| `openrun app settings preview-write-access false all` | Restrict existing preview apps to READ calls |
+| `openrun app settings preview-write-access true example.com:/` | Allow WRITE operations for the existing preview apps and any new preview apps created for example.com:/, if the permissions have been approved |
+
+Use `true` to allow approved WRITE calls again.
+
+**Proxied apps:** for Starlark apps these controls apply to plugin calls. For proxied (containerized) apps, a staging or preview app without write access refuses every proxied request whose method is not GET, HEAD or OPTIONS with `403`; MCP calls authenticated with a bearer token are governed by RBAC and the app's tool scopes instead. The container itself and its database are not made read-only. Use separate staging credentials and appropriately restricted [service bindings]({{< ref "servicebindings" >}}) to control database access.

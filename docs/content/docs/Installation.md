@@ -5,7 +5,16 @@ description: "Install OpenRun as a self-hosted web app platform on a Linux VPS, 
 summary: "Install OpenRun on a VPS, local machine, private server or Kubernetes cluster."
 ---
 
-OpenRun can run as a self-hosted web app platform on a Linux VPS, private server, local workstation or Kubernetes cluster.
+OpenRun can run as a self-hosted web app platform on a Linux VPS, private server, local workstation or Kubernetes cluster. This page covers the install methods, running OpenRun as a service, the initial configuration and installing the first apps.
+
+| Method                                                | Platforms                            | Command                                                   |
+| :---------------------------------------------------- | :----------------------------------- | :-------------------------------------------------------- |
+| [Install script](#install-release-build)              | Linux, macOS, Windows with WSL       | `curl -sSL https://openrun.dev/install.sh \| sh`          |
+| [Native packages](#install-on-linux-native-packages)  | openSUSE Tumbleweed, Fedora, Debian  | `zypper install openrun`, `dnf install openrun`, `apt install openrun` |
+| [Windows script](#install-using-script)               | Windows                              | `powershell -Command "irm https://openrun.dev/install.ps1 \| iex"` |
+| [winget](#install-using-winget)                       | Windows                              | `winget install OpenRunDev.OpenRun`                       |
+| [Brew](#brew-install)                                 | macOS, Linux                         | `brew install openrun`                                    |
+| [Source](#install-from-source)                        | Any platform with the Go toolchain   | `go build -o $OPENRUN_HOME/bin/openrun ./cmd/openrun/`    |
 
 ## Self-Hosted VPS Deployment
 
@@ -15,19 +24,25 @@ For a complete public VPS setup with DNS, TLS and OAuth, follow the [self-hosted
 
 ## Install Release Build
 
-OpenRun manages TLS cert using Let's Encrypt for prod environments. For dev environment, it is recommended to install [mkcert](https://github.com/FiloSottile/mkcert). OpenRun will automatically create local certs using mkcert if it is present. Install mkcert and run `mkcert -install` before starting OpenRun server.
+Before installing:
 
-For container based apps, Docker or Podman or OrbStack should be installed and running on the machine. OpenRun automatically detects the container manager to use.
+- **TLS certs:** OpenRun manages TLS certs using Let's Encrypt for prod environments. For a dev environment, install [mkcert](https://github.com/FiloSottile/mkcert) and run `mkcert -install` before starting the OpenRun server. OpenRun automatically creates local certs using mkcert if it is present.
+- **Containers:** For container based apps, Docker, Podman or OrbStack should be installed and running on the machine. OpenRun automatically detects the container manager to use.
+- **Admin account:** OpenRun creates an `admin` account during installation or first server start. Save the generated password for the console and apps configured with `system` authentication. Apps use `none` authentication by default; see [default authentication]({{< ref "configuration/authentication/#default-authentication-type" >}}) to change this.
 
-OpenRun creates an `admin` account during installation or first server start. Save the generated password for the console and apps configured with `system` authentication. Apps use `none` authentication by default; see [default authentication]({{< ref "configuration/authentication/#default-authentication-type" >}}) to change this.
-
-To install the latest release build on Linux, macOS or Windows with WSL, run the install script. Note down the password printed. Add the env variables as prompted and then start the service.
+To install the latest release build on Linux, macOS or Windows with WSL, run the install script. Note down the password printed and add the env variables as prompted.
 
 ```shell
 curl -sSL https://openrun.dev/install.sh | sh
 ```
 
-The script installs the latest release under `$OPENRUN_HOME` (default `$HOME/openrun`, or `/var/lib/openrun` if that directory exists), adds `$OPENRUN_HOME/bin` to the PATH in the shell profile and, if no `openrun.toml` is present, creates one with a generated `admin` password. To install a specific release, pass the version: `curl -sSL https://openrun.dev/install.sh | sh -s v0.20.3`.
+The script:
+
+- installs the latest release under `$OPENRUN_HOME` (default `$HOME/openrun`, or `/var/lib/openrun` if that directory exists)
+- adds `$OPENRUN_HOME/bin` to the PATH in the shell profile
+- creates `openrun.toml` with a generated `admin` password, if no `openrun.toml` is present
+
+To install a specific release, pass the version: `curl -sSL https://openrun.dev/install.sh | sh -s v0.20.3`.
 
 Open a new terminal to get the updated environment values, then run:
 
@@ -41,13 +56,16 @@ To install apps declaratively, run
 openrun apply --approve github.com/openrundev/openrun/examples/utils.star /utils/bookmarks
 ```
 
-Open https://localhost:25223 to access the app listing UI.
-
-See [start the service]({{< ref "#start-the-service" >}}) for details.
+Open https://localhost:25223 to access the app listing UI. See [start the service]({{< ref "#start-the-service" >}}) for details.
 
 ## Install On Linux (Native Packages)
 
-Native packages (rpm/deb) are published for openSUSE Tumbleweed, Fedora and Debian through the [Open Build Service](https://build.opensuse.org/package/show/home:ajayvk:openrun/openrun). The package installs the `openrun` binary, creates an `openrun` service account with home directory `/var/lib/openrun`, generates the initial config with a random `admin` password (printed during install, note it down) and sets up the systemd service.
+Native packages (rpm/deb) are published for openSUSE Tumbleweed, Fedora and Debian through the [Open Build Service](https://build.opensuse.org/package/show/home:ajayvk:openrun/openrun). The package:
+
+- installs the `openrun` binary
+- creates an `openrun` service account with home directory `/var/lib/openrun`
+- generates the initial config with a random `admin` password (printed during install, note it down)
+- sets up the systemd service
 
 ### openSUSE Tumbleweed
 
@@ -81,7 +99,10 @@ sudo apt update && sudo apt install openrun
 sudo systemctl enable --now openrun
 ```
 
-The server runs as the `openrun` user, using the config file at `/var/lib/openrun/openrun.toml`. Logs go to the journal (`journalctl -u openrun`) and `/var/lib/openrun/logs`. Open https://localhost:25223 to access the app listing UI, using `admin` and the password printed during package installation.
+- **User:** the server runs as the `openrun` user.
+- **Config:** `/var/lib/openrun/openrun.toml`.
+- **Logs:** the journal (`journalctl -u openrun`) and `/var/lib/openrun/logs`.
+- **UI:** open https://localhost:25223 to access the app listing UI, using `admin` and the password printed during package installation.
 
 On systemd-based distros without a native package, the same setup (openrun user, `/var/lib/openrun` home, systemd service) can be done with the setup script:
 
@@ -91,7 +112,7 @@ curl -sSL https://raw.githubusercontent.com/openrundev/openrun/refs/heads/main/d
 
 ### Zero downtime restarts and updates
 
-On Linux and macOS, the server can restart in place with no downtime and no dropped connections: a new server process takes over the listening sockets, re-reads the config and starts serving; the old process finishes its in-flight requests and websockets (up to `restart.drain_timeout_secs`, default 300) and exits. Use this to apply config file changes or to move to a new server version — for a version update, upgrade the openrun binary first (e.g. `apt upgrade openrun`), then restart in place. Any of the following triggers the restart:
+On Linux and macOS, the server can restart in place with no downtime and no dropped connections. A new server process takes over the listening sockets, re-reads the config and starts serving. The old process finishes its in-flight requests and websockets (up to `restart.drain_timeout_secs`, default 300) and exits. Use this to apply config file changes or to move to a new server version. For a version update, upgrade the openrun binary first (e.g. `apt upgrade openrun`), then restart in place. Any of the following triggers the restart:
 
 ```shell
 sudo systemctl reload openrun   # systemd installs
@@ -99,11 +120,20 @@ openrun server restart          # any install, uses the management API
 kill -HUP <server pid>
 ```
 
-Apps are not affected: app containers keep running through the restart. In-place restart is not available on Windows or when the server runs inside a container (restart the container instead; on Kubernetes use `kubectl rollout restart`, app traffic is drained via the pod's termination grace period).
+Apps are not affected: app containers keep running through the restart.
+
+{{< callout type="info" >}}
+In-place restart is not available on Windows or when the server runs inside a container. Restart the container instead; on Kubernetes use `kubectl rollout restart`, app traffic is drained via the pod's termination grace period.
+{{< /callout >}}
 
 ## Install On Windows
 
 OpenRun can be installed on Windows either with the install script or with [winget](https://learn.microsoft.com/en-us/windows/package-manager/winget/). The two methods use different home directory conventions, see [switching between install methods](#switching-between-install-methods) before moving from one to the other.
+
+| Method         | `OPENRUN_HOME`                   | Binary location                                          | Service setup                                              |
+| :------------- | :------------------------------- | :------------------------------------------------------- | :--------------------------------------------------------- |
+| Install script | Set by the script (user env var) | `$env:OPENRUN_HOME\bin`                                  | [Script Service Install](#script-service-install)          |
+| winget         | Left unset                       | winget packages directory, exposed through a links shim  | [Winget Service Install](#winget-service-install)          |
 
 ### Install Using Script
 
@@ -113,7 +143,13 @@ To install the latest release with the install script, run:
 powershell -Command "irm https://openrun.dev/install.ps1 | iex"
 ```
 
-The script installs OpenRun under `$env:OPENRUN_HOME`, defaulting to `$HOME\openrun`: the binary goes in `$env:OPENRUN_HOME\bin` and the config file is `$env:OPENRUN_HOME\openrun.toml`. The script sets the `OPENRUN_HOME` user environment variable to the install directory, adds the `bin` directory to the user PATH and, if no `openrun.toml` is present, creates one with a generated `admin` password. Note down the password printed. To install a specific release, set `$v="v0.20.3"` before running the script. To install to a custom location, set `$env:OPENRUN_HOME` to the desired directory before running the script.
+The script:
+
+- installs OpenRun under `$env:OPENRUN_HOME`, defaulting to `$HOME\openrun`: the binary goes in `$env:OPENRUN_HOME\bin` and the config file is `$env:OPENRUN_HOME\openrun.toml`
+- sets the `OPENRUN_HOME` user environment variable to the install directory and adds the `bin` directory to the user PATH
+- creates `openrun.toml` with a generated `admin` password, if no `openrun.toml` is present. Note down the password printed.
+
+To install a specific release, set `$v="v0.20.3"` before running the script. To install to a custom location, set `$env:OPENRUN_HOME` to the desired directory before running the script.
 
 Open a new terminal to get the updated environment values, then run:
 
@@ -125,7 +161,13 @@ Open https://localhost:25223 to access the app listing UI.
 
 #### Script Service Install
 
-To run a script installed OpenRun as a Windows service, register `openrun server start` with the Windows Service Control Manager from an elevated shell:
+To run a script installed OpenRun as a Windows service, register `openrun server start` with the Windows Service Control Manager.
+
+{{% steps %}}
+
+##### Register and start the service
+
+From an elevated shell:
 
 ```powershell
 $OpenRunExe = Join-Path $env:OPENRUN_HOME 'bin\openrun.exe'
@@ -136,7 +178,13 @@ sc.exe failure openrun reset= 86400 actions= restart/5000/restart/30000//
 Start-Service openrun
 ```
 
-The service runs as LocalSystem by default; for a network facing server, consider a less privileged account using `sc.exe config openrun obj= <account>`. When started this way, OpenRun reports service status to Windows and handles service stop, shutdown and pre-shutdown requests as graceful server shutdowns.
+##### Choose the service account
+
+The service runs as LocalSystem by default; for a network facing server, consider a less privileged account using `sc.exe config openrun obj= <account>`.
+
+{{% /steps %}}
+
+When started this way, OpenRun reports service status to Windows and handles service stop, shutdown and pre-shutdown requests as graceful server shutdowns.
 
 ### Install Using Winget
 
@@ -158,13 +206,21 @@ Open https://localhost:25223 to access the app listing UI.
 
 #### Winget Service Install
 
-To run OpenRun as a Windows service on a machine where it was installed with winget, the recommended approach is a machine scoped install with the service registered against an explicit config file. From an elevated shell:
+To run OpenRun as a Windows service on a machine where it was installed with winget, the recommended approach is a machine scoped install with the service registered against an explicit config file. All commands run from an elevated shell.
+
+{{% steps %}}
+
+##### Install at machine scope
 
 ```powershell
 winget install --scope machine OpenRunDev.OpenRun
 ```
 
-Machine scope installs the binary under `Program Files\WinGet` instead of the installing user's profile, which is preferable for a service. Open a new elevated terminal so `openrun` is on the PATH, then create the home directory at `%ProgramData%\openrun` and the config file with a generated admin password:
+Machine scope installs the binary under `Program Files\WinGet` instead of the installing user's profile, which is preferable for a service.
+
+##### Create the home directory and config
+
+Open a new elevated terminal so `openrun` is on the PATH, then create the home directory at `%ProgramData%\openrun` and the config file with a generated admin password:
 
 ```powershell
 $OpenRunHome = Join-Path $env:ProgramData 'openrun'
@@ -172,7 +228,9 @@ New-Item -ItemType Directory -Force $OpenRunHome | Out-Null
 openrun password | Out-File -Encoding utf8 (Join-Path $OpenRunHome 'openrun.toml')
 ```
 
-Note down the password printed. Then register and start the service:
+Note down the password printed.
+
+##### Register the service against the config file
 
 ```powershell
 $OpenRunExe = (Get-Command openrun.exe).Source
@@ -183,7 +241,16 @@ sc.exe failure openrun reset= 86400 actions= restart/5000/restart/30000//
 Start-Service openrun
 ```
 
-Passing `--config-file` pins the server home directory to the config file's directory (`%ProgramData%\openrun` here), keeping the service independent of any user profile. Without it, a service would resolve its home under the service account profile (for LocalSystem, `C:\Windows\System32\config\systemprofile`), and OpenRun refuses to auto-create a config there. The `openrun` CLI finds this server automatically: a winget binary is a links shim, so the CLI cannot locate the server home relative to the executable like it does for script installs; when `OPENRUN_HOME` is not set it checks `%ProgramData%\openrun\openrun.toml` and connects over the unix domain socket under that home. On OpenRun releases before this discovery was added, set the env variable at machine scope instead:
+{{% /steps %}}
+
+- **Upgrades:** `(Get-Command openrun.exe).Source` resolves to the winget links shim, which stays valid across `winget upgrade`. After an upgrade, run `sc.exe stop openrun` and `sc.exe start openrun` to switch to the new binary.
+- **Service account:** the service runs as LocalSystem by default; for a network facing server, consider a less privileged account using `sc.exe config openrun obj= <account>`.
+
+{{% details title="How the service and the CLI find the home directory" closed="true" %}}
+
+Passing `--config-file` pins the server home directory to the config file's directory (`%ProgramData%\openrun` here), keeping the service independent of any user profile. Without it, a service would resolve its home under the service account profile (for LocalSystem, `C:\Windows\System32\config\systemprofile`), and OpenRun refuses to auto-create a config there.
+
+The `openrun` CLI finds this server automatically. A winget binary is a links shim, so the CLI cannot locate the server home relative to the executable like it does for script installs. When `OPENRUN_HOME` is not set it checks `%ProgramData%\openrun\openrun.toml` and connects over the unix domain socket under that home. On OpenRun releases before this discovery was added, set the env variable at machine scope instead:
 
 ```powershell
 [Environment]::SetEnvironmentVariable('OPENRUN_HOME', (Join-Path $env:ProgramData 'openrun'), 'Machine')
@@ -191,9 +258,19 @@ Passing `--config-file` pins the server home directory to the config file's dire
 
 Env changes apply to shells opened after the change, not existing ones.
 
-For a default user scoped winget install, keep everything under the user profile instead: run `openrun server start` once interactively to create `$HOME\openrun\openrun.toml` (note down the generated admin password), stop it with Ctrl+C, then register the service with `$OpenRunConfig = Join-Path $HOME 'openrun\openrun.toml'` in the `New-Service` command above. No env variable is needed in this setup: the CLI defaults to the same `$HOME\openrun` home.
+{{% /details %}}
 
-In both flows, `(Get-Command openrun.exe).Source` resolves to the winget links shim, which stays valid across `winget upgrade`; after an upgrade, run `sc.exe stop openrun` and `sc.exe start openrun` to switch to the new binary. The service runs as LocalSystem by default; for a network facing server, consider a less privileged account using `sc.exe config openrun obj= <account>`.
+{{% details title="Service for a user scoped winget install" closed="true" %}}
+
+For a default user scoped winget install, keep everything under the user profile instead:
+
+1. Run `openrun server start` once interactively to create `$HOME\openrun\openrun.toml` (note down the generated admin password).
+2. Stop it with Ctrl+C.
+3. Register the service with `$OpenRunConfig = Join-Path $HOME 'openrun\openrun.toml'` in the `New-Service` command above.
+
+No env variable is needed in this setup: the CLI defaults to the same `$HOME\openrun` home. The upgrade and service account notes above apply to this flow too.
+
+{{% /details %}}
 
 ### Switching Between Install Methods
 
@@ -204,12 +281,16 @@ The install script sets the `OPENRUN_HOME` environment variable, while winget in
 [Environment]::SetEnvironmentVariable('OPENRUN_HOME', $null, 'Machine')
 ```
 
-Then open a new terminal before installing with the other method. Also remove the previous install so that only one `openrun` is found on the PATH:
+Then open a new terminal before installing with the other method. Also remove the previous install so that only one `openrun` is found on the PATH.
 
-- Switching from script to winget: remove the script install's `bin` directory (`$env:OPENRUN_HOME\bin`, `$HOME\openrun\bin` by default) from the user PATH, so that the winget links shim is the `openrun` found on the PATH.
-- Switching from winget to script: uninstall the winget package with `winget uninstall OpenRunDev.OpenRun` (add `--scope machine` for a machine scoped install) before running the install script. This removes the winget links shim from the PATH. The install script appends its `bin` directory to the end of the user PATH, so if the shim is left in place it keeps taking precedence and `openrun` continues to resolve to the winget managed binary rather than the one the script installed.
+{{% details title="Removing the previous install" closed="true" %}}
+
+- **Script to winget:** remove the script install's `bin` directory (`$env:OPENRUN_HOME\bin`, `$HOME\openrun\bin` by default) from the user PATH, so that the winget links shim is the `openrun` found on the PATH.
+- **Winget to script:** uninstall the winget package with `winget uninstall OpenRunDev.OpenRun` (add `--scope machine` for a machine scoped install) before running the install script. This removes the winget links shim from the PATH. The install script appends its `bin` directory to the end of the user PATH, so if the shim is left in place it keeps taking precedence and `openrun` continues to resolve to the winget managed binary rather than the one the script installed.
 
 To keep the existing apps and config, move or copy the old home directory contents to the new home directory (for example from `$env:OPENRUN_HOME` to `$HOME\openrun`) before starting the server.
+
+{{% /details %}}
 
 ## Brew Install
 
@@ -223,22 +304,26 @@ brew services start openrun
 
 ## Install from Source
 
-The release binaries are available at [releases](https://github.com/openrundev/openrun/releases).
+The release binaries are available at [releases](https://github.com/openrundev/openrun/releases). The instructions below assume `$HOME/openrun/openrun.toml` as the config file and `$HOME/openrun` as the work directory location.
 
-To install from source
+{{% steps %}}
 
-- Install the Go toolchain required by the checked-out revision's [go.mod](https://github.com/openrundev/openrun/blob/main/go.mod). The current source requires Go 1.27.3 or newer.
-- Check out the OpenRun repo.
-- The below instructions assume you are using $HOME/openrun/openrun.toml as the config file and $HOME/openrun as the work directory location.
+### Install the Go toolchain
 
-First add the below env variables to your shell .profile or .bash_profile:
+Install the Go toolchain required by the checked-out revision's [go.mod](https://github.com/openrundev/openrun/blob/main/go.mod). The current source requires Go 1.27.3 or newer.
+
+### Set the environment variables
+
+Add the below env variables to your shell .profile or .bash_profile:
 
 ```shell
 export OPENRUN_HOME=$HOME/openrun
 export PATH=$OPENRUN_HOME/bin/:$PATH
 ```
 
-Source the updated profile file, for example `source ~/.bash_profile`, then build the OpenRun binary:
+Source the updated profile file, for example `source ~/.bash_profile`.
+
+### Check out and build
 
 ```shell
 # Ensure go is in the $PATH
@@ -248,13 +333,11 @@ git clone -b main https://github.com/openrundev/openrun && cd openrun
 go build -o $OPENRUN_HOME/bin/openrun ./cmd/openrun/
 ```
 
+{{% /steps %}}
+
 ## Certs and Default password
 
-OpenRun manages TLS cert using Let's Encrypt for prod environments. For dev environment, it is recommended to install [mkcert](https://github.com/FiloSottile/mkcert). OpenRun will automatically create local certs using mkcert if it is present. Install mkcert and run `mkcert -install` before starting OpenRun server. Installing OpenRun using brew will automatically install mkcert.
-
-For container based apps, Docker or Podman or OrbStack should be installed and running on the machine. OpenRun automatically detects the container manager to use.
-
-Apps configured with `system` authentication use the `admin` account. Save the password generated during installation or first server start. New apps use `none` authentication unless the server default or app configuration selects another auth type.
+The prerequisites listed under [Install Release Build](#install-release-build) apply to every install method: mkcert for local TLS certs (installing OpenRun using brew automatically installs mkcert), a running Docker, Podman or OrbStack for container based apps, and the `admin` password generated during installation or first server start. Save that password for the console and apps configured with `system` authentication. New apps use `none` authentication unless the server default or app configuration selects another auth type.
 
 ## Initial Configuration
 
@@ -276,9 +359,13 @@ To start the OpenRun server, run
 openrun server start
 ```
 
-The service logs will be going to $OPENRUN_HOME/logs. The service will be started on [https://localhost:25223](https://localhost:25223) by default.
+The service logs go to `$OPENRUN_HOME/logs`. The service is started on [https://localhost:25223](https://localhost:25223) by default.
 
-`openrun server status` reports `ok` when the CLI can connect to the server and `openrun server version` reports the server build version. `openrun server stop` stops the server; add `--wait` to block until the server process has fully exited.
+| Command                       | Effect                                                                    |
+| :---------------------------- | :------------------------------------------------------------------------ |
+| `openrun server status`       | Reports `ok` when the CLI can connect to the server                       |
+| `openrun server version`      | Reports the server build version                                          |
+| `openrun server stop`         | Stops the server; add `--wait` to block until the server process has fully exited |
 
 ## Apply a Sample App File
 
@@ -288,13 +375,17 @@ Apps can be installed declaratively from an app declaration file, which lists on
 openrun apply --approve github.com/openrundev/openrun/examples/utils.star
 ```
 
-`--approve` approves the plugin permissions requested by the apps. Running the same command again updates the apps to match any changes in the file; apps already present are left as is if their declaration has not changed. To apply only some of the apps from the file, pass an app path glob as the second argument, for example
+- `--approve` approves the plugin permissions requested by the apps.
+- Running the same command again updates the apps to match any changes in the file; apps already present are left as is if their declaration has not changed.
+- The container based apps in the file need Docker or Podman to be running.
+
+To apply only some of the apps from the file, pass an app path glob as the second argument. For example
 
 ```shell
 openrun apply --approve github.com/openrundev/openrun/examples/utils.star /utils/bookmarks
 ```
 
-installs just the bookmarks app. Open https://localhost:25223/utils/bookmarks to access it. The container based apps in the file need Docker or Podman to be running. See [declarative app management]({{< ref "applications/overview/#declarative-app-management" >}}) for the file format and apply options.
+installs just the bookmarks app. Open https://localhost:25223/utils/bookmarks to access it. See [declarative app management]({{< ref "applications/overview/#declarative-app-management" >}}) for the file format and apply options.
 
 ### Schedule a Sync
 
@@ -304,7 +395,15 @@ Instead of applying manually, OpenRun can sync the declaration file from Git on 
 openrun sync schedule --approve --promote github.com/openrundev/openrun/examples/utils.star
 ```
 
-The sync runs every 15 minutes by default; use `--minutes` to change the frequency. `--promote` promotes the applied changes to prod immediately instead of staging them. Use `openrun sync list` to see the configured syncs, `openrun sync run <id>` to run one immediately and `openrun sync delete <id>` to remove it. See [automated sync]({{< ref "applications/overview/#automated-sync" >}}) for the full set of sync options, including webhook based sync.
+The sync runs every 15 minutes by default; use `--minutes` to change the frequency. `--promote` promotes the applied changes to prod immediately instead of staging them.
+
+| Command                    | Effect                          |
+| :------------------------- | :------------------------------ |
+| `openrun sync list`        | See the configured syncs        |
+| `openrun sync run <id>`    | Run a sync immediately          |
+| `openrun sync delete <id>` | Remove a sync                   |
+
+See [automated sync]({{< ref "applications/overview/#automated-sync" >}}) for the full set of sync options, including webhook based sync.
 
 ## Install the Console App
 
@@ -318,12 +417,16 @@ openrun app create --approve --auth system \
 
 Open https://localhost:25223/console and log in as `admin`, using the password printed during the OpenRun installation.
 
-The console requires an authenticated user for management operations. `--auth system` selects the admin account created during installation. OAuth/OIDC/SAML and builtin-user [authentication]({{< ref "configuration/authentication" >}}) can also be used with appropriate RBAC grants. Do not use `none` auth for the console: management operations are blocked for anonymous users.
+The console requires an authenticated user for management operations. `--auth system` selects the admin account created during installation. OAuth/OIDC/SAML and builtin-user [authentication]({{< ref "configuration/authentication" >}}) can also be used with appropriate RBAC grants.
+
+{{< callout type="warning" >}}
+Do not use `none` auth for the console: management operations are blocked for anonymous users.
+{{< /callout >}}
 
 The console features are controlled through app params, set with `--param name=value` during create:
 
 | Param                 | Default | Description                                                                             |
-| --------------------- | ------- | --------------------------------------------------------------------------------------- |
+| :-------------------- | :------ | :-------------------------------------------------------------------------------------- |
 | `enable_updates`      | `false` | Enable write operations (create/update/delete). Without this, the console is read-only. |
 | `enable_container`    | `false` | Enable the containers area                                                              |
 | `enable_config`       | `false` | Enable the server configuration area                                                    |

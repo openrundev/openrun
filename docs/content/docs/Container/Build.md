@@ -4,7 +4,15 @@ weight: 400
 summary: "Container builds on single node install and on Kubernetes"
 ---
 
-OpenRun checks out the source code and builds the app container images. On single node install, builds are done locally and images are maintained on the machine. For Kubernetes installation, builds are done on the Kubernetes cluster using Kaniko, a shared registry is required. For both single-node and Kubernetes installations, delegated builds are supported where the container build is delegated to a dedicated build machine running OpenRun in a builder mode.
+OpenRun checks out the source code and builds the app container images. Where the build runs depends on the installation:
+
+| Installation | Build | Images |
+| :--- | :--- | :--- |
+| Single node | Locally, with the container manager CLI | Maintained on the machine |
+| Kubernetes | On the Kubernetes cluster using Kaniko | Pushed to a shared registry (required) |
+| Delegated (both) | On a dedicated build machine running OpenRun in a builder mode | Pushed to a shared registry (required) |
+
+This page covers the [builder and registry config](#builder-and-registry-config), builds on [single-node](#single-node-installations) and [Kubernetes](#kubernetes-installation) installs, [staging and production image reuse](#staging-and-production-image-reuse) and [delegated builds](#delegated-build-mode).
 
 ## Builder and Registry Config
 
@@ -46,7 +54,12 @@ Set the same `builder_auth_token` value on the main install and on every delegat
 
 For single node installation, OpenRun checks if the required container image is available locally. If not, the source code is checked out and the container manager command CLI is used to build the image.
 
-Builds on a node are serialized: `system.max_concurrent_builds` (default `1`) is the number of image builds that run at the same time, and a build waits up to `system.max_build_wait_secs` (default `120`) for a build slot before failing. The same limits apply on delegated builder nodes.
+Builds on a node are serialized. The same limits apply on delegated builder nodes.
+
+| Setting | Default | Meaning |
+| :--- | :--- | :--- |
+| `system.max_concurrent_builds` | `1` | The number of image builds that run at the same time |
+| `system.max_build_wait_secs` | `120` | How long a build waits for a build slot before failing |
 
 ## Staging and Production Image Reuse
 
@@ -73,11 +86,18 @@ For Kubernetes installation, a container registry is required. OpenRun checks if
 
 ## Delegated Build Mode
 
-For single-node install, doing the image build can cause heavy load on the system (CPU and disk). This can impact the performance for API calls to other apps. For Kubernetes based install, doing the Kaniko based install can be slow, since the build runs on a fresh machine which does not have any images cached.
+Delegated builds move the image build off the main install, for both single-node and Kubernetes installations:
 
-For both single-node and Kubernetes installation, delegated builds are supported. One or more machines need to be dedicated for doing the container builds. The main OpenRun installation should use the delegated build option.
+- **Single-node:** doing the image build can cause heavy load on the system (CPU and disk). This can impact the performance for API calls to other apps.
+- **Kubernetes:** doing the Kaniko based build can be slow, since the build runs on a fresh machine which does not have any images cached.
 
-To set up delegated builds, on the builder machine(s) (for example, mybuilder.example.com), enable the builder by installing OpenRun and setting the minimal config to
+One or more machines need to be dedicated for doing the container builds. The main OpenRun installation should use the delegated build option.
+
+{{% steps %}}
+
+### Enable the builder machine(s)
+
+On the builder machine(s) (for example, mybuilder.example.com), install OpenRun and set the minimal config to
 
 ```toml {filename="openrun.toml"}
 [http]
@@ -92,7 +112,12 @@ builder_auth_token = "replace-with-a-random-shared-secret"
 mode = "delegate_server"
 ```
 
-Starting the OpenRun server enables the HTTP port (default 25222) to receive delegated build requests. The container manager (Docker/Podman) should be running on the builder machine. Builder nodes should use `builder.mode = "delegate_server"`. The delegated build endpoint requires `Authorization: Bearer <builder_auth_token>` and rejects requests if the token is missing or does not match.
+- Starting the OpenRun server enables the HTTP port (default 25222) to receive delegated build requests.
+- The container manager (Docker/Podman) should be running on the builder machine.
+- Builder nodes should use `builder.mode = "delegate_server"`.
+- The delegated build endpoint requires `Authorization: Bearer <builder_auth_token>` and rejects requests if the token is missing or does not match.
+
+### Point the main install at the builder
 
 On the actual OpenRun installation, add in the config:
 
@@ -104,7 +129,10 @@ builder_auth_token = "replace-with-a-random-shared-secret"
 mode = "delegate:http://mybuilder.example.com:25222"
 ```
 
-Config like registry settings, git credentials etc are not required in the builder machine. Those are passed from the main install to the builder. The main OpenRun install and the builder nodes do not have to point to the same metadata database. The metadata on the builder machines is not used, so it can default to the local SQLite based metadata, even if multiple builder nodes are used.
+- Config like registry settings, git credentials etc are not required in the builder machine. Those are passed from the main install to the builder.
+- The main OpenRun install and the builder nodes do not have to point to the same metadata database. The metadata on the builder machines is not used, so it can default to the local SQLite based metadata, even if multiple builder nodes are used.
+
+{{% /steps %}}
 
 {{<callout type="warning" >}}
 Existing delegated-build installations must add the same `system.builder_auth_token` value on both sides before upgrading. Otherwise delegated builds will fail with `401 Unauthorized`.

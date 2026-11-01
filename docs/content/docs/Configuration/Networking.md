@@ -4,9 +4,18 @@ weight: 200
 summary: "OpenRun uses unix domain sockets for client CLI requests. HTTP and HTTPS are used for application requests. Automatic signed certificate creation is supported for HTTPS."
 ---
 
+The OpenRun server serves app requests on an HTTP and an HTTPS listener (the CLI uses a unix domain socket). This page covers the two listeners, how TLS certificates are found or created (files on disk, mkcert for local development, ACME for production), the default and staging domains, and binding to privileged ports.
+
+| Listener | Default host | Default port | Reachable from |
+| :--- | :--- | :--- | :--- |
+| HTTP | `127.0.0.1` (localhost) | 25222 | the same machine only |
+| HTTPS | `0.0.0.0` (any) | 25223 | the same machine and remotely |
+
+For either listener, port `0` binds to any available port, port `-1` disables the listener, and host `0.0.0.0` binds to all available interfaces.
+
 ## HTTP
 
-For HTTP requests, by default the OpenRun service listens on port 25222, on the localhost(127.0.0.1) interface. This means the HTTP port can be accessed from the same machine, it cannot be accessed remotely. To configure this, update the config file
+By default the OpenRun service listens for HTTP on port 25222, on the localhost (127.0.0.1) interface, so the HTTP port can be accessed from the same machine but not remotely. To configure this, update the config file to the desired values:
 
 ```toml {filename="openrun.toml"}
 [http]
@@ -14,11 +23,9 @@ host = "127.0.0.1" # bind to localhost by default for HTTP
 port = 25222 # default port for HTTP
 ```
 
-to desired values. Port 0 means bind to any available port. Port -1 means disable HTTP access. Use host as `0.0.0.0` to bind to all available interfaces.
-
 ## HTTPS
 
-For HTTPS requests, the OpenRun service listens on port 25223 by default, on the any(0.0.0.0) interface. This means the HTTPS port can be accessed from the same machine and also remotely. The various HTTPS config settings are:
+By default the OpenRun service listens for HTTPS on port 25223, on the any (0.0.0.0) interface, so the HTTPS port can be accessed from the same machine and also remotely. The various HTTPS config settings are:
 
 ```toml {filename="openrun.toml"}
 # HTTPS port binding related Config
@@ -39,7 +46,7 @@ storage_location = "$OPENRUN_HOME/run/certmagic" # where to cache dynamically cr
 disable_client_certs = true # set to false to enable client certificate (mTLS) authentication for apps
 ```
 
-Port 0 means bind to any available port. Port -1 means disable HTTPS access. See [Client Cert Authentication]({{< ref "authentication/#client-cert-authentication-mtls" >}}) for `disable_client_certs`.
+See [Client Cert Authentication]({{< ref "authentication/#client-cert-authentication-mtls" >}}) for `disable_client_certs`.
 
 {{<callout type="info" >}}
 Using the HTTPS port is recommended even for the local environment. HTTP/2 works with HTTPS only. Server Sent Events (SSE) are used by OpenRun for live reload of dev apps, [SSE works best with HTTP/2](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events#listening_for_custom_events). Without HTTP/2, there can be connection limit issues with HTTP causing connections from browser to OpenRun server to hang.
@@ -47,13 +54,13 @@ Using the HTTPS port is recommended even for the local environment. HTTP/2 works
 
 ## TLS Certificates
 
-In the default configuration, where service_email and acme_ca_url are empty, certmagic integration is disabled. The certificate handling behavior is:
+In the default configuration, where `service_email` and `acme_ca_url` are empty, certmagic integration is disabled and certificates are looked up in this order:
 
-- `$OPENRUN_HOME/config/certificates` is looked up for a crt and key file in the PEM format matching the domain name as passed to the server. If a matching certificate is found, that is used. The lookup is done only for domains the server is configured to serve: the default domain, the domains used by apps, the auth callback domain and the hosts in `security.callback_url`, `api.external_url` and `system.root_serve_list_apps`. Other domain names sent by clients get the default certificate.
-- If no domain specific certificate is found, then the default certificate `default.crt` and `default.key` are looked up. If found, that is used.
-- If default certificate is not found, then a self-signed default certificate is auto created in the certificates folder.
+1. `$OPENRUN_HOME/config/certificates` is looked up for a crt and key file in the PEM format matching the domain name as passed to the server. If a matching certificate is found, that is used. For example, if files example.com.crt and example.com.key are found in the certificates folder, those are used for example.com domain.
+2. If no domain specific certificate is found, then the default certificate `default.crt` and `default.key` are looked up. If found, that is used.
+3. If the default certificate is not found, then a self-signed default certificate is auto created in the certificates folder.
 
-The intent is to allow custom certificates to be placed in the certificate folder, which will be used. If not found, a self-signed certificate is created and used. For example, if files example.com.crt and example.com.key are found in the certificates folder, those are used for example.com domain.
+The lookup is done only for domains the server is configured to serve: the default domain, the domains used by apps, the auth callback domain and the hosts in `security.callback_url`, `api.external_url` and `system.root_serve_list_apps`. Other domain names sent by clients get the default certificate.
 
 ## Redirect from HTTP to HTTPS
 
@@ -70,7 +77,7 @@ App requests to the HTTP port receive a 308 redirect to HTTPS. Management and we
 
 ## Dev Env Certificates
 
-For local dev environment, using the auto generated certs will result in browser warnings when connecting to the HTTPS port. To avoid this, if [mkcert](https://github.com/FiloSottile/mkcert) is installed and configured, OpenRun automatically creates a mkcert cert for any new local domain served by the server. The domains mkcert is used for are set by `https.mkcert_domains`; other domains need the cert files to be placed in the certificates folder. Ensure that the mkcert installation has been done once.
+For a local dev environment, the auto generated certs result in browser warnings when connecting to the HTTPS port. To avoid this, if [mkcert](https://github.com/FiloSottile/mkcert) is installed and configured, OpenRun automatically creates a mkcert cert for any new local domain served by the server. Ensure that the mkcert installation has been done once:
 
 ```sh
 mkcert -install
@@ -82,7 +89,9 @@ mkcert_path = "" # mkcert binary path, looked up in PATH if empty. Set to "disab
 mkcert_domains = ["localhost", "*.localhost", "*.test", "*.local", "*.internal", "*.home.arpa"]
 ```
 
-A `mkcert_domains` entry matches the domain exactly, `*.<domain>` matches all subdomains of the domain and `*` matches all domains. mkcert certs are trusted only on machines where the mkcert CA is installed, so the default is local dev domains only. In all cases, certs are created only for domains served by the server: the default domain, app domains, and the hosts in `security.callback_url`, `api.external_url` and `system.root_serve_list_apps`.
+- **Which domains:** the domains mkcert is used for are set by `https.mkcert_domains`; other domains need the cert files to be placed in the certificates folder. An entry matches the domain exactly, `*.<domain>` matches all subdomains of the domain and `*` matches all domains.
+- **Why only local domains by default:** mkcert certs are trusted only on machines where the mkcert CA is installed.
+- **Served domains only:** in all cases, certs are created only for domains served by the server: the default domain, app domains, and the hosts in `security.callback_url`, `api.external_url` and `system.root_serve_list_apps`.
 
 ## Enable Automatic Signed Certificate
 
@@ -108,7 +117,7 @@ storage_location = "$OPENRUN_HOME/run/certmagic"
 
 Test out the certificate creation by sending HTTPS requests to port 443. If the certificate is getting created, change `use_staging` to false. Let's Encrypt has strict rate limits, use the staging config to ensure that the pre-requisites are met before using the production config.
 
-With this config, certmagic is used to create certificates for all HTTPS requests. Self signed certificates and enable_cert_lookup property are not used when certmagic is enabled.
+With this config, certmagic is used to create certificates for all HTTPS requests. Self signed certificates and the `enable_cert_lookup` property are not used when certmagic is enabled.
 
 ## Custom ACME Server
 
@@ -122,15 +131,20 @@ acme_ca_url = "https://ca.internal:8443/acme/acme/directory" # your CA's ACME di
 acme_ca_cert = "/etc/ssl/internal_root_ca.crt" # root CA cert, if the CA endpoint uses a private root
 ```
 
-`acme_ca_cert` points to a PEM file containing the root certificate(s) to trust when connecting to the ACME CA endpoint. This is required when a private CA's directory URL is itself served with a certificate that is not trusted by the system trust store.
-
-For CAs which require [External Account Binding](https://datatracker.ietf.org/doc/html/rfc8555#section-7.3.4) (such as ZeroSSL or Google Trust Services), set `acme_eab_key_id` and `acme_eab_mac_key` to the values provided by the CA. Both have to be set together.
+| Setting | Meaning |
+| :--- | :--- |
+| `acme_ca_cert` | A PEM file containing the root certificate(s) to trust when connecting to the ACME CA endpoint. Required when a private CA's directory URL is itself served with a certificate that is not trusted by the system trust store |
+| `acme_eab_key_id`, `acme_eab_mac_key` | The values provided by a CA which requires [External Account Binding](https://datatracker.ietf.org/doc/html/rfc8555#section-7.3.4) (such as ZeroSSL or Google Trust Services). Both have to be set together |
 
 ## ACME Challenges
 
-The [TLS-ALPN](https://github.com/caddyserver/certmagic#tls-alpn-challenge) challenge is always enabled when certmagic is enabled. It requires the CA to be able to reach the HTTPS port (port 443 for public CAs).
+| Challenge | Enabled | The CA must reach |
+| :--- | :--- | :--- |
+| [TLS-ALPN](https://github.com/caddyserver/certmagic#tls-alpn-challenge) | always, when certmagic is enabled | the HTTPS port (port 443 for public CAs) |
+| HTTP-01 | `enable_http_challenge = true`; works with Let's Encrypt as well as with a custom ACME CA | the HTTP port, which must be enabled (port 80 for public CAs, see [privileged ports](#privileged-ports)) |
+| DNS | not supported currently | |
 
-The HTTP-01 challenge can additionally be enabled with `enable_http_challenge = true`. This works with Let's Encrypt as well as with a custom ACME CA. Challenge requests are answered on the HTTP port, before the [HTTP to HTTPS redirect](#redirect-from-http-to-https) and any authentication is applied. The HTTP listener must be enabled and reachable by the CA, on port 80 for public CAs (see [privileged ports](#privileged-ports)). For example, with Let's Encrypt:
+HTTP-01 challenge requests are answered on the HTTP port, before the [HTTP to HTTPS redirect](#redirect-from-http-to-https) and any authentication is applied. For example, with Let's Encrypt:
 
 ```toml {filename="openrun.toml"}
 [http]
@@ -148,11 +162,9 @@ enable_http_challenge = true
 
 With this config, certificates are created using either the TLS-ALPN challenge on port 443 or the HTTP-01 challenge on port 80, whichever the CA validates first.
 
-The DNS challenge is not supported currently.
-
 ## Default Domain
 
-The config has the default domain set to `localhost` by default. The default domain is used for any app which is installed without an explicit domain being specified. This can be changed to the required value when configuring the server.
+The default domain is `localhost`. It is used for any app which is installed without an explicit domain being specified, and can be changed when configuring the server.
 
 ```toml {filename="openrun.toml"}
 [system]
@@ -178,19 +190,17 @@ stage_at = "domain"            # "domain", "path", or a staging domain
 default_stage_domain = "stage" # prefix used when stage_at is "domain"
 ```
 
-The supported values are:
+| `stage_at` value | Staging location |
+| :--- | :--- |
+| `domain` | `default_stage_domain` is prepended to the production domain, for example `stage.example.com:/reports` |
+| `path` | The production domain is kept and `_cl_stage` is suffixed to the path, for example `example.com:/reports_cl_stage` |
+| any domain | The specified domain is used with the production path, for example `staging.example.net:/reports` |
 
-| `stage_at` value | Staging location                                                                                                   |
-| :--------------- | :----------------------------------------------------------------------------------------------------------------- |
-| `domain`         | `default_stage_domain` is prepended to the production domain, for example `stage.example.com:/reports`             |
-| `path`           | The production domain is kept and `_cl_stage` is suffixed to the path, for example `example.com:/reports_cl_stage` |
-| any domain       | The specified domain is used with the production path, for example `staging.example.net:/reports`                  |
+- If an app is created without an explicit domain, `domain` mode uses `default_domain` as the production domain when deriving the staging domain. A staging domain value ending in `.` is expanded relative to `default_domain`.
+- For production deployments, make sure DNS and certificates cover the staging hostnames. A wildcard DNS entry such as `*.example.com` is the simplest setup when apps use subdomains. For local development, `*.localhost` names work with the default `localhost` domain.
+- The server setting only controls the default for new production apps. Override it per app with `openrun app create --stage-at path ...` or `openrun app create --stage-at staging.example.net ...`. In declarative apply files, use `stage_at="path"` or `stage_at="staging.example.net"` in the `app(...)` definition for apps being created.
 
-If an app is created without an explicit domain, `domain` mode uses `default_domain` as the production domain when deriving the staging domain. A staging domain value ending in `.` is expanded relative to `default_domain`.
-
-For production deployments, make sure DNS and certificates cover the staging hostnames. A wildcard DNS entry such as `*.example.com` is the simplest setup when apps use subdomains. For local development, `*.localhost` names work with the default `localhost` domain.
-
-The server setting only controls the default for new production apps. Override it per app with `openrun app create --stage-at path ...` or `openrun app create --stage-at staging.example.net ...`. In declarative apply files, use `stage_at="path"` or `stage_at="staging.example.net"` in the `app(...)` definition for apps being created.
+### List apps page
 
 The built-in `list_apps` app is served at the default domain root level if no app is installed there.
 
@@ -199,9 +209,9 @@ The built-in `list_apps` app is served at the default domain root level if no ap
 root_serve_list_apps = "auto"  # "auto" means serve list_apps app for default domain, "disable" means don't server for any domain,
 ```
 
-To disable this, set `root_serve_list_apps` to `disable`. The list apps app uses the default authentication as set for the system. If another domain needs to be used, set the value to that.
+To disable this, set `root_serve_list_apps` to `disable`. If another domain needs to be used, set the value to that. The list apps app uses the default authentication as set for the system.
 
-For the built-in list apps page served by `root_serve_list_apps`, the title and footer branding can also be configured:
+The title and footer branding of the page can also be configured:
 
 ```toml {filename="openrun.toml"}
 [system]

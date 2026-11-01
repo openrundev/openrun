@@ -8,12 +8,14 @@ summary: "Deploy an MCP server as an app and let MCP clients connect with OAuth,
 
 An app deployed through OpenRun can be an [MCP](https://modelcontextprotocol.io) server: a container image speaking Streamable HTTP, a `proxy` app in front of a remote MCP endpoint, or any app that serves MCP on a path. Marking the app with `--mcp` makes OpenRun handle the MCP authorization flow for it:
 
-- OpenRun serves the OAuth protected-resource metadata for the app and acts as the OAuth 2.1 authorization server (the same one that protects the [Remote API and MCP]({{< ref "docs/configuration/remoteaccess" >}}) surfaces).
-- Users log in with the app's configured `auth` (the admin account, builtin users, an `[auth.*]` OAuth/OIDC provider such as GitHub or Google, or a `[saml.*]` provider) and approve the client on a consent page. Federated logins refresh the user's group snapshot used by RBAC. Access requires the same `app:access` grant the app's web UI requires when RBAC is on.
-- The MCP endpoint accepts only OpenRun-issued bearer tokens bound to that app. Cookies, basic auth and login redirects do not apply there. The exception is an app with `auth none`, whose endpoint is [open]({{< ref "#open-mcp-apps-auth-none" >}}).
-- The token is stripped before the request reaches the app. The app receives the usual `X-Openrun-User`, `X-Openrun-User-Id`, `X-Openrun-User-Email` and `X-Openrun-Perms` headers plus `X-Openrun-Scopes` (the granted scopes) and `X-Openrun-Client-Id` (the OAuth client holding the token, or `apikey`).
+- **Authorization server:** OpenRun serves the OAuth protected-resource metadata for the app and acts as the OAuth 2.1 authorization server (the same one that protects the [Remote API and MCP]({{< ref "docs/configuration/remoteaccess" >}}) surfaces).
+- **Login:** users log in with the app's configured `auth` (the admin account, builtin users, an `[auth.*]` OAuth/OIDC provider such as GitHub or Google, or a `[saml.*]` provider) and approve the client on a consent page. Federated logins refresh the user's group snapshot used by RBAC. Access requires the same `app:access` grant the app's web UI requires when RBAC is on.
+- **Tokens only:** the MCP endpoint accepts only OpenRun-issued bearer tokens bound to that app. Cookies, basic auth and login redirects do not apply there. The exception is an app with `auth none`, whose endpoint is [open]({{< ref "#open-mcp-apps-auth-none" >}}).
+- **Headers:** the token is stripped before the request reaches the app. The app receives the usual `X-Openrun-User`, `X-Openrun-User-Id`, `X-Openrun-User-Email` and `X-Openrun-Perms` headers plus `X-Openrun-Scopes` (the granted scopes) and `X-Openrun-Client-Id` (the OAuth client holding the token, or `apikey`).
 
 The app itself implements no authentication. Any MCP server that speaks Streamable HTTP without its own auth works unchanged.
+
+{{< theme-image light="/d2/mcp_app_auth_light.svg" dark="/d2/mcp_app_auth_dark.svg" alt="The MCP client discovers the protected-resource metadata, logs in through the OpenRun authorization server to get a token bound to the app, and calls the app MCP endpoint, which strips the token and adds the user headers before proxying to the app" >}}
 
 ## Deploying an MCP app
 
@@ -35,13 +37,28 @@ openrun app create --auth builtin \
     ./src /shop
 ```
 
-[Action apps]({{< ref "actions/#mcp-tools" >}}) need no `--mcp` option: an app with actions serves them as MCP tools at `<app url>/mcp` by default, OpenRun itself is the MCP server and there is no upstream. `--mcp=actions` is that endpoint as an explicit setting (the [ops tools use case]({{< ref "docs/use-cases/jenkins-rundeck-alternative/" >}}) builds a team's operations tools this way). Everything below about login, tokens, scopes and API keys applies to it. The tools carry the [side-effect hints]({{< ref "actions/#side-effect-hints" >}}) of the actions as annotations, a `destructive=True` action is confirmed by the user before it runs (clients on MCP protocol 2026-07-28 or later with the elicitation capability are asked; by default a client which cannot confirm is refused, the `[api.mcp] destructive_confirm` mode, overridable per app with `action.destructive_confirm` and per API key with `openrun apikey create --confirm skip`, see [MCP tools]({{< ref "actions/#mcp-tools" >}})), and the tool list is private to the caller with a freshness hint of `action.mcp_list_ttl` (default `3m`).
+| `--mcp` value | Effect |
+| :--- | :--- |
+| `--mcp` | The whole app is the MCP endpoint |
+| `--mcp=/mcp` | The upstream serves MCP at `/mcp`; the app root is rewritten to it when proxying |
+| `--mcp='{...}'` | A JSON document with the fields listed below |
+| `--mcp=@file` | Reads the JSON document from a local file (the CLI expands it; the API only accepts the document itself) |
+| `--mcp=actions` | OpenRun serves the app's actions as MCP tools, see [action apps](#action-apps) below |
+| `--mcp=disable` | Turns all MCP off for the app, see [action apps](#action-apps) below |
 
-`--mcp=@file` reads the JSON document from a local file (the CLI expands it; the API only accepts the document itself). `openrun app update mcp <value> <glob>` changes it later (`-` or `default` clears it); updates are staged and promoted like other metadata. In apply files the `app()` entry takes `mcp=True`, `mcp=False`, `mcp="/mcp"` or `mcp={...}`.
+`openrun app update mcp <value> <glob>` changes the setting later (`-` or `default` clears it); updates are staged and promoted like other metadata. In apply files the `app()` entry takes `mcp=True`, `mcp=False`, `mcp="/mcp"` or `mcp={...}`.
 
-`--mcp=disable` (`mcp=False` in an apply file) turns all MCP off for an app: no MCP endpoint (an upstream MCP path becomes an ordinary app path with the app's normal login), the app's actions are not exposed over any MCP route, including the [endpoint for all apps]({{< ref "actions/#one-endpoint-for-all-apps" >}}) and the management action tools.
+### Action apps
 
-The JSON document fields:
+[Action apps]({{< ref "actions/#mcp-tools" >}}) need no `--mcp` option: an app with actions serves them as MCP tools at `<app url>/mcp` by default. OpenRun itself is the MCP server and there is no upstream. `--mcp=actions` is that endpoint as an explicit setting (the [ops tools use case]({{< ref "docs/use-cases/jenkins-rundeck-alternative/" >}}) builds a team's operations tools this way). Everything below about login, tokens, scopes and API keys applies to it.
+
+- The tools carry the [side-effect hints]({{< ref "actions/#side-effect-hints" >}}) of the actions as annotations.
+- A `destructive=True` action is confirmed by the user before it runs. Clients on MCP protocol 2026-07-28 or later with the elicitation capability are asked; by default a client which cannot confirm is refused. This is the `[api.mcp] destructive_confirm` mode, overridable per app with `action.destructive_confirm` and per API key with `openrun apikey create --confirm skip`, see [MCP tools]({{< ref "actions/#mcp-tools" >}}).
+- The tool list is private to the caller with a freshness hint of `action.mcp_list_ttl` (default `3m`).
+
+`--mcp=disable` (`mcp=False` in an apply file) turns all MCP off for an app: no MCP endpoint (an upstream MCP path becomes an ordinary app path with the app's normal login), and the app's actions are not exposed over any MCP route, including the [endpoint for all apps]({{< ref "actions/#one-endpoint-for-all-apps" >}}) and the management action tools.
+
+### JSON document fields
 
 | field | meaning |
 |---|---|
@@ -53,11 +70,20 @@ The JSON document fields:
 | `tools` | Tool name to required scope. A `tools/call` for a listed tool needs that scope on the token; unlisted tools need none |
 | `allowed_origins` | Browser origins (`scheme://host[:port]`) admitted on the endpoint. Requests with any other `Origin` are refused; native clients send none |
 
-An MCP app needs an OAuth issuer origin: `api.external_url`, or `security.callback_url` which it defaults to. When neither is set and the HTTPS listener is on, the listener on the default app domain is used: `https://<system.default_domain>:<https.port>`, so a default install (`https://localhost:25223`) serves MCP apps with no `[api]` configuration. The value is logged at startup. Tokens are bound to it, so setting `api.external_url` later invalidates outstanding tokens; set it up front for a server clients reach by another name. While MCP apps are deployed, a configuration update that clears or breaks the origin is refused.
+### Issuer origin and login domain
 
-The login and consent pages of the flow are served on the auth callback domain (`security.auth_callback_domain`, default `auth.<system.default_domain>`), not on the issuer host, so an app's JavaScript can never be same-origin with the consent step; the domain must resolve to the server, like the app domains. Logins through an `[auth.*]` or `[saml.*]` provider are refused when no auth callback domain resolves, or when the issuer is plain http and the auth callback domain is not a `*.localhost` name (a plain http issuer is served to loopback callers only); `admin` and `builtin` logins do not need it.
+An MCP app needs an OAuth issuer origin.
 
-The health check for an MCP app without an explicit `health` path in `container.config` sends an MCP JSON-RPC request to the endpoint instead of a `GET`, since an MCP endpoint does not answer `GET` with 200. On Kubernetes the pod readiness and startup probes are TCP probes on the container port (a native probe cannot send a body), and OpenRun additionally sends its JSON-RPC probe to the new version through a temporary per-version Service before traffic is switched to it; a version that does not answer as an MCP server is removed and the deploy fails, as with any failed health check.
+- **Source:** `api.external_url`, or `security.callback_url` which it defaults to. When neither is set and the HTTPS listener is on, the listener on the default app domain is used: `https://<system.default_domain>:<https.port>`, so a default install (`https://localhost:25223`) serves MCP apps with no `[api]` configuration. The value is logged at startup.
+- **Tokens are bound to it:** setting `api.external_url` later invalidates outstanding tokens, so set it up front for a server clients reach by another name. While MCP apps are deployed, a configuration update that clears or breaks the origin is refused.
+- **Login and consent pages** are served on the auth callback domain (`security.auth_callback_domain`, default `auth.<system.default_domain>`), not on the issuer host, so an app's JavaScript can never be same-origin with the consent step. The domain must resolve to the server, like the app domains.
+- **Provider logins** through an `[auth.*]` or `[saml.*]` provider are refused when no auth callback domain resolves, or when the issuer is plain http and the auth callback domain is not a `*.localhost` name (a plain http issuer is served to loopback callers only). `admin` and `builtin` logins do not need it.
+
+{{% details title="Health checks for MCP apps" closed="true" %}}
+The health check for an MCP app without an explicit `health` path in `container.config` sends an MCP JSON-RPC request to the endpoint instead of a `GET`, since an MCP endpoint does not answer `GET` with 200.
+
+On Kubernetes the pod readiness and startup probes are TCP probes on the container port (a native probe cannot send a body). OpenRun additionally sends its JSON-RPC probe to the new version through a temporary per-version Service before traffic is switched to it; a version that does not answer as an MCP server is removed and the deploy fails, as with any failed health check.
+{{% /details %}}
 
 ## Connecting a client
 
@@ -92,15 +118,20 @@ An MCP app with `--auth none` has no login to bind a token to, so its MCP endpoi
 
 ## Scopes and tool policy
 
-Scopes are the app's own vocabulary, not the OpenRun RBAC permissions. At consent the requested scopes are intersected with the app's declared list, unknown scopes are dropped, and the user may narrow the grant. When a listed tool is called with a token lacking its scope, OpenRun answers `403` with a `WWW-Authenticate: Bearer error="insufficient_scope", scope="..."` challenge so the client can re-consent for the missing scope. The operation is read from the JSON-RPC body (requests over 1 MiB, non-JSON or malformed bodies are refused); the `Mcp-Method` and `Mcp-Name` headers that current clients send must agree with the body or the request is rejected.
+Scopes are the app's own vocabulary, not the OpenRun RBAC permissions. RBAC decides who may reach the app at all: with RBAC on, the user needs `app:access` on the app (checked at consent and on every call). Scopes only narrow what a specific token may do.
 
-RBAC decides who may reach the app at all: with RBAC on, the user needs `app:access` on the app (checked at consent and on every call). Scopes only narrow what a specific token may do.
+- **At consent:** the requested scopes are intersected with the app's declared list, unknown scopes are dropped, and the user may narrow the grant.
+- **Missing scope:** when a listed tool is called with a token lacking its scope, OpenRun answers `403` with a `WWW-Authenticate: Bearer error="insufficient_scope", scope="..."` challenge so the client can re-consent for the missing scope.
+- **Operation detection:** the operation is read from the JSON-RPC body (requests over 1 MiB, non-JSON or malformed bodies are refused). The `Mcp-Method` and `Mcp-Name` headers that current clients send must agree with the body or the request is rejected.
 
 ## Transport notes
 
-- The endpoint is served over HTTPS, or behind a trusted TLS-terminating proxy listed in `security.trusted_proxies`. Plaintext requests get a 404, except for connections from loopback to a loopback host (`localhost`, `127.0.0.1`, `::1`) for local development; a remote connection with a `Host: localhost` header does not qualify.
- The same exception covers the discovery documents and the OAuth endpoints, so a client can complete the whole flow against `http://localhost:25222`: set `api.external_url = "http://localhost:25222"` (a plain http origin is accepted only on a loopback host, and only while no management API surface is enabled) and add the app as `http://localhost:25222/orders`. With the default https issuer, the client is sent to `https://auth.localhost:25223` for login and needs to trust that certificate.
-
-- Browser-based MCP clients need their origin in `allowed_origins`; CORS preflight requests from an allowed origin are passed to the app without a token so the app's CORS handler can answer them.
-- Legacy MCP clients that use sessions (`Mcp-Session-Id`, GET streams) pass through unchanged. On Kubernetes with several replicas such clients need a stateless-mode server; OpenRun does not pin sessions to pods.
-- Every MCP call is recorded in the audit log as an event of type `mcp` (in place of the `http` event of the request): the operation is the JSON-RPC method (`tools/call`, `tools/list`, `initialize`), the target the tool name, and the detail has the request, the endpoint (`endpoint=app`, `management` for `/_openrun/mcp`, `apps` for `/_openrun/app_mcp`), the app, and the client (`client=<oauth client id or apikey> cred=<credential id>`, `client=none` for a call without a token). Notifications are not recorded. The status is `Failed` for a refused request and, where OpenRun runs the tool itself (the management tools and the endpoint for all apps), for a call which returned an error, with the message in the detail. The console's Audit Logs page filters on the `mcp` type.
+- **HTTPS:** the endpoint is served over HTTPS, or behind a trusted TLS-terminating proxy listed in `security.trusted_proxies`. Plaintext requests get a 404, except for connections from loopback to a loopback host (`localhost`, `127.0.0.1`, `::1`) for local development; a remote connection with a `Host: localhost` header does not qualify.
+  - The same exception covers the discovery documents and the OAuth endpoints, so a client can complete the whole flow against `http://localhost:25222`: set `api.external_url = "http://localhost:25222"` (a plain http origin is accepted only on a loopback host, and only while no management API surface is enabled) and add the app as `http://localhost:25222/orders`.
+  - With the default https issuer, the client is sent to `https://auth.localhost:25223` for login and needs to trust that certificate.
+- **Browser clients** need their origin in `allowed_origins`; CORS preflight requests from an allowed origin are passed to the app without a token so the app's CORS handler can answer them.
+- **Legacy sessions:** MCP clients that use sessions (`Mcp-Session-Id`, GET streams) pass through unchanged. On Kubernetes with several replicas such clients need a stateless-mode server; OpenRun does not pin sessions to pods.
+- **Audit log:** every MCP call is recorded as an event of type `mcp` (in place of the `http` event of the request). Notifications are not recorded. The console's Audit Logs page filters on the `mcp` type.
+  - Operation: the JSON-RPC method (`tools/call`, `tools/list`, `initialize`). Target: the tool name.
+  - Detail: the request, the endpoint (`endpoint=app`, `management` for `/_openrun/mcp`, `apps` for `/_openrun/app_mcp`), the app, and the client (`client=<oauth client id or apikey> cred=<credential id>`, `client=none` for a call without a token).
+  - Status: `Failed` for a refused request and, where OpenRun runs the tool itself (the management tools and the endpoint for all apps), for a call which returned an error, with the message in the detail.

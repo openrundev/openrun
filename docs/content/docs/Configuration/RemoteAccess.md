@@ -8,10 +8,21 @@ summary: "Enable remote CLI access and the MCP endpoint, create API keys, and ap
 
 By default, the OpenRun server is managed over a unix domain socket: the CLI on the same machine connects with no credentials, protected by file system permissions. Two optional remote surfaces extend management beyond the local machine:
 
-- **`rest`** — the management REST API over TCP, used by the OpenRun CLI running on another machine.
-- **`mcp`** — a [Model Context Protocol](https://modelcontextprotocol.io/) endpoint at `https://<host>:<https_port>/_openrun/mcp`, which lets AI clients like Claude Code operate OpenRun: list and create apps, promote, manage services and bindings, run syncs and more.
+| Surface | What it is | Used by |
+| :--- | :--- | :--- |
+| `rest` | the management REST API over TCP | the OpenRun CLI running on another machine |
+| `mcp` | a [Model Context Protocol](https://modelcontextprotocol.io/) endpoint at `https://<host>:<https_port>/_openrun/mcp` | AI clients like Claude Code, to operate OpenRun: list and create apps, promote, manage services and bindings, run syncs and more |
 
-Both surfaces are **off by default** (`[api.rest] enable` / `[api.mcp] enable`). When enabled, they are served **only over HTTPS** (or through a TLS-terminating proxy listed in `security.trusted_proxies`) — a plaintext request gets a plain 404, never a redirect. Every remote call authenticates with a bearer credential (an API key, or an OAuth token from a browser login) and runs as that credential's user identity with [RBAC]({{< ref "rbac" >}}) enforced. RBAC is always on: the default grant gives every authenticated principal read access to apps, and the `admin` account has full authority, so a fresh install needs no RBAC setup before enabling remote access.
+Both surfaces follow the same rules:
+
+- **Off by default** (`[api.rest] enable` / `[api.mcp] enable`).
+- **HTTPS only**, or through a TLS-terminating proxy listed in `security.trusted_proxies`. A plaintext request gets a plain 404, never a redirect.
+- **Every call authenticates** with a bearer credential (an API key, or an OAuth token from a browser login) and runs as that credential's user identity with [RBAC]({{< ref "rbac" >}}) enforced.
+- **RBAC is always on.** The default grant gives every authenticated principal read access to apps, and the `admin` account has full authority, so a fresh install needs no RBAC setup before enabling remote access.
+
+{{< theme-image light="/d2/remote_access_light.svg" dark="/d2/remote_access_dark.svg" alt="The local CLI uses the unix domain socket as the trusted admin. The remote CLI uses the REST surface and AI clients use the MCP surface, both with a bearer token and RBAC checks as the credential's user, before reaching the management operations" >}}
+
+This page covers enabling the surfaces, connecting the remote CLI and MCP clients, API keys, what MCP can do, the defaults and the security practices.
 
 ## Server Setup
 
@@ -28,14 +39,20 @@ enable = true
 auth = ["admin"]   # login mechanisms for MCP OAuth clients
 ```
 
-API keys work on any enabled surface whatever its login mechanisms. The [console]({{< ref "/console-tour" >}}) manages the external url, the token lifetimes and the REST surface on its API Access page; its MCP page (Configuration → MCP) holds the MCP settings, shows the state of every MCP endpoint, enables the management endpoint with one click once the prerequisites below hold, and gives the connect commands for Claude Code and Codex.
+API keys work on any enabled surface whatever its login mechanisms.
 
-The server refuses to start with a surface enabled unless the transport prerequisites are met:
+The [console]({{< ref "/console-tour" >}}) manages the same settings:
 
-- An HTTPS listener (on by default, port 25223) or `security.trusted_proxies` for a TLS-terminating proxy.
-- A canonical https origin in `api.external_url`, defaulting to `security.callback_url` when that is set, and otherwise to the HTTPS listener on the default app domain (`https://<system.default_domain>:<https.port>`, logged at startup). This value backs the OAuth metadata and token bindings — treat it as stable; changing it invalidates outstanding tokens. Set it explicitly whenever clients reach the server by a name other than the default domain.
-- The browser login and consent pages of the OAuth flow are served on the [auth callback domain]({{< ref "authentication/#login-page" >}}) (`security.auth_callback_domain`, default `auth.<system.default_domain>`, on the issuer's port), never on a domain that serves apps, so no app's JavaScript is ever same-origin with the consent step. The metadata names that endpoint and clients follow it; the domain must resolve to the server and gets a certificate like the app domains. With no auth callback domain (`auth_callback_domain = ""`, or the `auth.` prefix with no `default_domain`) the `admin` and `builtin` logins still work on the issuer host, but the `[auth.*]` and `[saml.*]` logins are refused.
+- **API Access page:** the external url, the token lifetimes and the REST surface.
+- **MCP page (Configuration → MCP):** the MCP settings and the state of every MCP endpoint. It enables the management endpoint with one click once the prerequisites below hold, and gives the connect commands for Claude Code and Codex.
 
+### Transport prerequisites
+
+The server refuses to start with a surface enabled unless all of these hold:
+
+- **An HTTPS listener** (on by default, port 25223), or `security.trusted_proxies` for a TLS-terminating proxy.
+- **A canonical https origin in `api.external_url`.** It defaults to `security.callback_url` when that is set, and otherwise to the HTTPS listener on the default app domain (`https://<system.default_domain>:<https.port>`, logged at startup). This value backs the OAuth metadata and token bindings: treat it as stable, changing it invalidates outstanding tokens. Set it explicitly whenever clients reach the server by a name other than the default domain.
+- **An auth callback domain for the OAuth login and consent pages.** The browser login and consent pages of the OAuth flow are served on the [auth callback domain]({{< ref "authentication/#login-page" >}}) (`security.auth_callback_domain`, default `auth.<system.default_domain>`, on the issuer's port), never on a domain that serves apps, so no app's JavaScript is ever same-origin with the consent step. The metadata names that endpoint and clients follow it; the domain must resolve to the server and gets a certificate like the app domains. With no auth callback domain (`auth_callback_domain = ""`, or the `auth.` prefix with no `default_domain`) the `admin` and `builtin` logins still work on the issuer host, but the `[auth.*]` and `[saml.*]` logins are refused.
 
 ```toml {filename="openrun.toml"}
 [security]
@@ -44,7 +61,7 @@ callback_url = "https://openrun.example.com:25223"
 
 For real deployments, configure [automatic TLS certificates]({{< ref "networking" >}}); the default self-signed certificate works for the OpenRun CLI (with `skip_cert_check`) but most MCP clients reject it.
 
-The `[api]` surface settings shown in the console (enable, logins, operation overrides, the external url and token lifetimes) are also part of the [dynamic config]({{< ref "overview/#dynamic-config" >}}), so the surfaces can be enabled and reconfigured at runtime without a restart (the same transport prerequisites are validated on update). The `cimd_*` client metadata settings are static config only.
+The `[api]` surface settings shown in the console (enable, logins, operation overrides, the external url and token lifetimes) are part of the [dynamic config]({{< ref "overview/#dynamic-config" >}}), so the surfaces can be enabled and reconfigured at runtime without a restart (the same transport prerequisites are validated on update). The `cimd_*` client metadata settings are static config only.
 
 ## Connect the Remote CLI
 
@@ -57,13 +74,15 @@ server_uri = "https://openrun.example.com:25223"
 skip_cert_check = false  # true only for self-signed certs
 ```
 
-The global `--server-uri` flag (or the `OPENRUN_SERVER_URI` env variable) takes precedence over `server_uri` in the config file, which allows one client config to be used against multiple servers:
+The global `--server-uri` flag (or the `OPENRUN_SERVER_URI` env variable) takes precedence over `server_uri` in the config file, so one client config works against multiple servers:
 
 ```sh
 openrun --server-uri https://staging.example.com:25223 app list
 ```
 
-Then either log in interactively:
+Then authenticate, either interactively or with an API key.
+
+### Browser login
 
 ```sh
 openrun login             # opens the browser, authenticates against [api.rest] auth,
@@ -72,9 +91,16 @@ openrun app list
 openrun logout            # revokes the session server side
 ```
 
-When `[api.rest] auth` lists more than one mechanism the login page offers the choice; `openrun login --auth <name>` selects an `[auth.*]` or `saml_<name>` login directly. Listing the auth provider of an app lets the users of that app log in from the CLI and [run its actions]({{< ref "actions/#command-line" >}}) as themselves. `openrun login --server https://host[:port]` logs in to a server other than `server_uri`, and `--no-browser` prints the login url instead of opening a browser (for SSH sessions). The tokens are stored in the OS keychain, falling back to a file under `$OPENRUN_HOME/config` when no keychain service is available; set the `OPENRUN_NO_KEYRING` env variable to always use the file.
+- **Choosing the login:** when `[api.rest] auth` lists more than one mechanism the login page offers the choice; `openrun login --auth <name>` selects an `[auth.*]` or `saml_<name>` login directly.
+- **App users:** listing the auth provider of an app lets the users of that app log in from the CLI and [run its actions]({{< ref "actions/#command-line" >}}) as themselves.
+- **Another server:** `openrun login --server https://host[:port]` logs in to a server other than `server_uri`.
+- **SSH sessions:** `--no-browser` prints the login url instead of opening a browser.
+- **Token storage:** tokens are stored in the OS keychain, falling back to a file under `$OPENRUN_HOME/config` when no keychain service is available; set the `OPENRUN_NO_KEYRING` env variable to always use the file.
+- **Lifetime:** tokens rotate automatically (access tokens live 1 hour, refreshed transparently) and the whole grant expires after `api.grant_max_ttl` (90 days), after which a fresh login is required.
 
-or use an API key (for CI and headless use):
+### API key
+
+For CI and headless use:
 
 ```sh
 # on the server (or as any user holding apikey:manage:self):
@@ -85,29 +111,33 @@ export OPENRUN_API_KEY=orun_pat_...   # or set client.api_key in the config file
 openrun app list
 ```
 
-`openrun login` tokens rotate automatically (access tokens live 1 hour, refreshed transparently) and the whole grant expires after `api.grant_max_ttl` (90 days), after which a fresh login is required. API keys expire after 90 days by default; `--expires` changes that and `--expires=never` is required for a non-expiring key.
+API keys expire after 90 days by default; `--expires` changes that and `--expires=never` is required for a non-expiring key.
 
 ## Connect an MCP Client
 
 This section covers OpenRun's own management MCP endpoint. OpenRun serves three kinds of MCP endpoint:
 
 | Endpoint | Tools | Login | On by default |
-|---|---|---|---|
+| :--- | :--- | :--- | :--- |
 | `/_openrun/app_mcp` | the [actions of every app]({{< ref "actions/#one-endpoint-for-all-apps" >}}) the user can run, one tool each | the app login named by `?auth=`; the server's default app auth without it | yes |
 | `<app>/mcp` | the [actions of one app]({{< ref "actions/#mcp-tools" >}}), or the [MCP server the app deploys]({{< ref "docs/applications/mcp" >}}) | the app's own `auth` | yes, for an app with actions |
 | `/_openrun/mcp` | management: apps, versions, services, secrets, config, and the generic `run_action` | `[api.mcp] auth` | no |
 
 A fresh install has no apps and therefore no action tools: the first two endpoints list nothing until an app with actions is deployed, which the client shows as an empty tool list, not a failed connection. The [ops tools use case]({{< ref "docs/use-cases/jenkins-rundeck-alternative/" >}}) walks through connecting Claude Code to the app endpoint and running a destructive action with confirmation.
 
-The MCP endpoint is `https://<external_url host>/_openrun/mcp`. There are two ways to authenticate:
+The management endpoint is `https://<external_url host>/_openrun/mcp`. There are two ways to authenticate: OAuth (browser login) or an API key.
 
-**OAuth (browser login)** — for clients that support MCP OAuth, like Claude Code, add the server and the client discovers the OpenRun authorization server, identifies itself, and opens a browser login (against the mechanisms in `[api.mcp] auth`: `admin`, `builtin`, the name of an `[auth.*]` OAuth/OIDC provider, or `saml_<name>` for a `[saml.*]` provider; with several mechanisms the login page offers a choice, with a single federated one it goes straight to that provider). The consent page defaults MCP sessions to **read-only** scopes (`*:read` plus `app:read_detail`, so the client can inspect apps, versions, files and logs but change nothing); choosing broader scopes at consent is an explicit act.
+### OAuth (browser login)
 
-Clients identify themselves in one of three ways, in the order the MCP spec recommends: a pre-registered client id (the OpenRun CLI uses `openrun-cli`), a **Client ID Metadata Document** (the client id is an `https` URL serving a JSON document with the client's name and redirect URIs; OpenRun fetches and validates it on demand and caches it per its `Cache-Control` headers), or **Dynamic Client Registration** (`/_openrun/oauth/register`), which the MCP spec has deprecated but OpenRun keeps for older clients. Metadata document clients are accepted from any domain by default; `api.cimd_allowed_domains` and `api.cimd_denied_domains` restrict them, and documents on private or loopback addresses are refused unless `api.cimd_allow_private_hosts` is set (development only). Document fetches always connect directly and ignore `HTTPS_PROXY`, so the address check applies to the document host itself. Only public clients (`token_endpoint_auth_method` absent or `none`) are supported. The consent page names the document URL and warns when a client only redirects to `localhost`, since any website can publish such a document.
+For clients that support MCP OAuth, like Claude Code, add the server:
 
 ```sh
 claude mcp add --transport http openrun https://openrun.example.com:25223/_openrun/mcp
 ```
+
+The client discovers the OpenRun authorization server, identifies itself, and opens a browser login against the mechanisms in `[api.mcp] auth`: `admin`, `builtin`, the name of an `[auth.*]` OAuth/OIDC provider, or `saml_<name>` for a `[saml.*]` provider. With several mechanisms the login page offers a choice; with a single federated one it goes straight to that provider.
+
+The consent page defaults MCP sessions to **read-only** scopes (`*:read` plus `app:read_detail`, so the client can inspect apps, versions, files and logs but change nothing); choosing broader scopes at consent is an explicit act.
 
 The endpoint url can name the login to use: `https://<host>/_openrun/mcp?auth=<name>`, where the name is one of `[api.mcp] auth` (`system` is accepted for `admin`). The login page then offers that login only, a single federated one is started right away, and credentials of the other listed logins are not accepted through it. This only selects the login: the token is a normal MCP token, valid at the endpoint with or without the param.
 
@@ -115,7 +145,19 @@ The endpoint url can name the login to use: `https://<host>/_openrun/mcp?auth=<n
 claude mcp add --transport http openrun "https://openrun.example.com:25223/_openrun/mcp?auth=google_openrun"
 ```
 
-**API key** — mint an MCP-bound key and pass it as a bearer header:
+{{% details title="How clients identify themselves" closed="true" %}}
+Clients identify themselves in one of three ways, in the order the MCP spec recommends:
+
+- **A pre-registered client id.** The OpenRun CLI uses `openrun-cli`.
+- **A Client ID Metadata Document.** The client id is an `https` URL serving a JSON document with the client's name and redirect URIs; OpenRun fetches and validates it on demand and caches it per its `Cache-Control` headers. Metadata document clients are accepted from any domain by default; `api.cimd_allowed_domains` and `api.cimd_denied_domains` restrict them, and documents on private or loopback addresses are refused unless `api.cimd_allow_private_hosts` is set (development only). Document fetches always connect directly and ignore `HTTPS_PROXY`, so the address check applies to the document host itself. The consent page names the document URL and warns when a client only redirects to `localhost`, since any website can publish such a document.
+- **Dynamic Client Registration** (`/_openrun/oauth/register`), which the MCP spec has deprecated but OpenRun keeps for older clients.
+
+Only public clients (`token_endpoint_auth_method` absent or `none`) are supported.
+{{% /details %}}
+
+### API key
+
+Mint an MCP-bound key and pass it as a bearer header:
 
 ```sh
 openrun apikey create --resource mcp --desc "claude on laptop"
@@ -123,9 +165,19 @@ claude mcp add --transport http openrun https://openrun.example.com:25223/_openr
   --header "Authorization: Bearer orun_pat_..."
 ```
 
-An MCP-only key with no explicit `--scopes` defaults to **`*:read app:read_detail`** — the AI client can inspect everything its user can read, including app details, versions, files and logs, but cannot change anything. Mint a write-capable key deliberately with `--scopes "*"`. A key bound to `mcp` is rejected at the REST surface and vice versa (`--resource all` for a key valid on both).
+An MCP-only key with no explicit `--scopes` defaults to **`*:read app:read_detail`**: the AI client can inspect everything its user can read, including app details, versions, files and logs, but cannot change anything. Mint a write-capable key deliberately with `--scopes "*"`. A key bound to `mcp` is rejected at the REST surface and vice versa (`--resource all` for a key valid on both).
 
-Destructive tools (delete, promote, version switch, ...) support `dry_run`, and for clients that support elicitation the server runs a dry-run preview and asks for confirmation before applying the change. A client which cannot confirm is refused by default (`[api.mcp] destructive_confirm = "require"`); `"ask"` runs the call at once for such clients and `"skip"` never asks. A key created with `openrun apikey create --confirm skip` skips the prompt where the mode is `ask`, for headless automation. See [side-effect hints]({{< ref "/docs/actions#mcp-tools" >}}) for the modes.
+### Destructive tools
+
+Destructive tools (delete, promote, version switch, ...) support `dry_run`, and for clients that support elicitation the server runs a dry-run preview and asks for confirmation before applying the change. `[api.mcp] destructive_confirm` decides what happens to a client which cannot confirm:
+
+| `destructive_confirm` | Effect |
+| :--- | :--- |
+| `"require"` (default) | a client which cannot confirm is refused |
+| `"ask"` | the call runs at once for such clients |
+| `"skip"` | never asks |
+
+A key created with `openrun apikey create --confirm skip` skips the prompt where the mode is `ask`, for headless automation. See [side-effect hints]({{< ref "/docs/actions#mcp-tools" >}}) for the modes.
 
 ## API Keys
 
@@ -140,7 +192,7 @@ openrun apikey delete <id>
 
 - The key value is shown **once** at creation and stored only as a hash.
 - `--user` defaults to the caller. Creating a key for another user requires `admin` and is prominently audited.
-- **Scopes are a ceiling, not a grant**: the key can never do more than its user's RBAC grants allow, and scopes only narrow that further. A `*` scope deliberately does **not** cover `secret:reveal`, `binding:reveal`, `app:approve`, `config:update`, `admin` or `admin:manage` — those must be named literally in `--scopes`, so a key carrying reveal- or admin-class authority is visible as such.
+- **Scopes are a ceiling, not a grant**: the key can never do more than its user's RBAC grants allow, and scopes only narrow that further. A `*` scope deliberately does **not** cover `secret:reveal`, `binding:reveal`, `app:approve`, `config:update`, `admin` or `admin:manage`. Those must be named literally in `--scopes`, so a key carrying reveal- or admin-class authority is visible as such.
 - A key created by a remote (credential-authenticated) caller can only be as powerful as the creating credential: scopes and resources must be subsets, and the new key cannot outlive its parent.
 - Expired and revoked credentials are pruned automatically 30 days after they die.
 
@@ -154,18 +206,33 @@ openrun apikey create --user builtin:alice --resource app_mcp:builtin --scopes a
 openrun apikey create --resource app:/orders                           # one app's own MCP endpoint
 ```
 
-Four layers decide whether a call succeeds, and their errors name themselves: the client's own approval policy (Codex and Claude Code ask before a tool runs, independently of OpenRun; `destructive_confirm = "skip"` only removes OpenRun's confirmation prompt), the credential's scopes (`credential scope ceiling`), the user's RBAC grants (`does not have ... permission`), and the operations disabled for the surface (`disabled for the mcp API surface`). Running an app's actions also needs the app's plugin permissions approved.
+Four layers decide whether a call succeeds, and their errors name themselves:
+
+| Layer | How it shows up |
+| :--- | :--- |
+| the client's own approval policy | Codex and Claude Code ask before a tool runs, independently of OpenRun; `destructive_confirm = "skip"` only removes OpenRun's confirmation prompt |
+| the credential's scopes | `credential scope ceiling` |
+| the user's RBAC grants | `does not have ... permission` |
+| the operations disabled for the surface | `disabled for the mcp API surface` |
+
+Running an app's actions also needs the app's plugin permissions approved.
 
 ## What MCP Can Do
 
 The MCP tool set mirrors the management API: apps (list/create/delete/approve/reload/promote/preview/versions), sync, services, bindings, secrets metadata, config read, API key self-management and more. RBAC decides per identity what actually succeeds, and every call is audited with the invoker type and credential id.
 
-The `list_actions`, `get_action`, `run_action` and `suggest_action` tools run [app actions]({{< ref "actions/#who-the-action-runs-as" >}}) as the calling user, under the checks the app's form UI applies to that user (the app's login provider, `app:access` and the action's `permit`). A credential limited by scopes needs `app:access` in its scopes: the read only default of `openrun apikey create --resource mcp` does not include it (`--scopes app:access`). The result of `run_action` has the rows of a download or image result with their urls, not the files: use the [MCP endpoint of the app]({{< ref "actions/#mcp-tools" >}}) for actions whose files the client should receive. To keep AI clients away from actions, add `run_action` to `disable_apis`. The runs of [async actions]({{< ref "actions/#async-actions" >}}) are managed with `list_action_runs`, `get_action_run` and `cancel_action_run`.
+App actions through the management endpoint:
+
+- The `list_actions`, `get_action`, `run_action` and `suggest_action` tools run [app actions]({{< ref "actions/#who-the-action-runs-as" >}}) as the calling user, under the checks the app's form UI applies to that user (the app's login provider, `app:access` and the action's `permit`).
+- A credential limited by scopes needs `app:access` in its scopes: the read only default of `openrun apikey create --resource mcp` does not include it (`--scopes app:access`).
+- The result of `run_action` has the rows of a download or image result with their urls, not the files: use the [MCP endpoint of the app]({{< ref "actions/#mcp-tools" >}}) for actions whose files the client should receive.
+- To keep AI clients away from actions, add `run_action` to `disable_apis`.
+- The runs of [async actions]({{< ref "actions/#async-actions" >}}) are managed with `list_action_runs`, `get_action_run` and `cancel_action_run`.
 
 Dangerous operations are **disabled for MCP by default** and are not even registered as tools:
 
 | Operation | Why |
-|---|---|
+| :--- | :--- |
 | `stop_server`, `restart_server` | server lifecycle |
 | `secret_reveal`, `secret_rekey` | reading back / re-encrypting secret values |
 | `binding_show_account` | revealing service account credentials |
@@ -186,15 +253,17 @@ destructive_confirm = "require"  # require, ask or skip for destructive tools ca
 disable_apis = []
 ```
 
-Note on secrets: `secret_create` **is** enabled for MCP by default, which means secret values typed into an AI client transit that client and the model's context by design. Disable it (as above) if secret writes must never pass through an AI client. Reading values back stays disabled unless explicitly enabled.
+{{< callout type="warning" >}}
+`secret_create` **is** enabled for MCP by default, which means secret values typed into an AI client transit that client and the model's context by design. Disable it (as above) if secret writes must never pass through an AI client. Reading values back stays disabled unless explicitly enabled.
+{{< /callout >}}
 
 ## Defaults Summary
 
 | Setting | Default |
-|---|---|
-| `api.rest enable`, `api.mcp enable` | `false` — no management surface |
-| `api.app_mcp enable` | `true` — the [actions of all apps]({{< ref "actions/#one-endpoint-for-all-apps" >}}) are served at `/_openrun/app_mcp` (not with `security.unsafe_disable_rbac`) |
-| `api.rest auth`, `api.mcp auth` | `["admin"]` — the admin account is the only login mechanism |
+| :--- | :--- |
+| `api.rest enable`, `api.mcp enable` | `false`: no management surface |
+| `api.app_mcp enable` | `true`: the [actions of all apps]({{< ref "actions/#one-endpoint-for-all-apps" >}}) are served at `/_openrun/app_mcp` (not with `security.unsafe_disable_rbac`) |
+| `api.rest auth`, `api.mcp auth` | `["admin"]`: the admin account is the only login mechanism |
 | `/_openrun/app_mcp` login | `?auth=` on the url, default `security.app_default_auth_type` (`none`: no login, open apps only) |
 | Transport | HTTPS only (or `security.trusted_proxies`); plaintext is a 404 |
 | RBAC | Always on; default grant gives every principal `app:access` + `app:read` |
@@ -214,11 +283,11 @@ Note on secrets: `secret_create` **is** enabled for MCP by default, which means 
 - **One identity per person, one key per client.** Create keys with `--user builtin:<name>` (or the SSO principal) and a `--desc` naming where it lives. Audit events record the acting user and the credential id, so shared keys destroy attribution.
 - **Prefer `openrun login` for humans.** It stores rotating short-lived tokens in the OS keychain and is revoked with one `openrun logout`. Reserve long-lived API keys for automation.
 - **Keep AI clients read-only until proven.** The MCP defaults (read-only key scopes, read-only consent preset, destructive confirmation, disabled dangerous ops) are the intended starting point; widen deliberately, one capability at a time.
-- **Name dangerous scopes explicitly.** Since `*` never matches `secret:reveal`, `binding:reveal`, `app:approve`, `config:update`, `admin` or `admin:manage`, any credential carrying that authority shows it in `openrun apikey list` — review for keys with literal dangerous scopes.
+- **Name dangerous scopes explicitly.** Since `*` never matches `secret:reveal`, `binding:reveal`, `app:approve`, `config:update`, `admin` or `admin:manage`, any credential carrying that authority shows it in `openrun apikey list`. Review for keys with literal dangerous scopes.
 - **Bind keys to one surface.** The `rest`/`mcp` resource binding stops a key leaked from an MCP client config being replayed against the REST API and vice versa; avoid `--resource all`.
 - **Let keys expire.** Keep the 90 day default, rotate CI keys, and audit `openrun apikey list --all` for stale `never` keys. Deleting a key takes effect immediately.
 - **Use real certificates.** `skip_cert_check` and self-signed certs are for trials; [automatic TLS]({{< ref "networking" >}}) makes real certificates easy. Only list actual TLS-terminating proxies in `security.trusted_proxies`, and bind the plaintext listener to a private address in that setup.
-- **Watch the audit log.** Every MCP call, to this endpoint, to an app's MCP endpoint and to `/_openrun/app_mcp`, is an audit event of type `mcp` naming the method, the tool, the client and the credential, so "what did this AI client call" is one filter. Every remote call carries `invoker=rest` or `invoker=mcp` plus `cred=<id>` in the audit detail, and calls refused by the per-surface operation policy are audited too — "what has MCP done (or tried)" is a single filter.
+- **Watch the audit log.** Every MCP call, to this endpoint, to an app's MCP endpoint and to `/_openrun/app_mcp`, is an audit event of type `mcp` naming the method, the tool, the client and the credential, so "what did this AI client call" is one filter. Every remote call carries `invoker=rest` or `invoker=mcp` plus `cred=<id>` in the audit detail, and calls refused by the per-surface operation policy are audited too, so "what has MCP done (or tried)" is a single filter.
 - **Keep `unsafe_*` flags off in production.** `security.unsafe_disable_rbac` and friends are dev-only; they cannot be set through the dynamic config API, and disabling RBAC also disables the remote surfaces.
 - **Deploy from git remotely.** Paths on the server's disk (an app source directory, an apply or sync file) are accepted over the unix socket only; a remote `app create ./dir`, `apply ./file` or `sync schedule ./file` is refused, since it would read any file of the server user. Paths under `security.remote_disk_read_paths` (by default `$OPENRUN_HOME/app_src`, the builder's publish area) are exempt, and `security.unsafe_enable_remote_disk_read` lifts the restriction entirely, see [Security]({{< ref "security#disk-paths-over-the-remote-api" >}}).
 - **Narrow the default grant if apps should not be reachable by every authenticated user.** Replace the default `*` grant with group-scoped grants in the [RBAC config]({{< ref "rbac" >}}).
@@ -255,4 +324,10 @@ max_tools = 300                  # the tool list fails above this, narrow the ap
 allowed_auth = []                # logins the auth url param may name; empty = any configured one. A key for app_mcp:<auth> needs a user of that login
 ```
 
-`[api.app_mcp]` is the [MCP endpoint for the actions of all apps]({{< ref "actions/#one-endpoint-for-all-apps" >}}). It has no `auth` list: the login comes from the url (`?auth=`), by default `security.app_default_auth_type`. Unlike the two management surfaces it is on by default: it gives a user nothing the apps' own pages do not, each action runs under the app's checks. It is not served with `security.unsafe_disable_rbac` set, and a login needs an OAuth issuer origin (https, or http on localhost for development); without one only the token-less `auth=none` view works. With it on, the OAuth authorization server endpoints (`/_openrun/oauth/*`) are active on the server.
+`[api.app_mcp]` is the [MCP endpoint for the actions of all apps]({{< ref "actions/#one-endpoint-for-all-apps" >}}):
+
+- It has no `auth` list: the login comes from the url (`?auth=`), by default `security.app_default_auth_type`.
+- Unlike the two management surfaces it is on by default: it gives a user nothing the apps' own pages do not, each action runs under the app's checks.
+- It is not served with `security.unsafe_disable_rbac` set.
+- A login needs an OAuth issuer origin (https, or http on localhost for development); without one only the token-less `auth=none` view works.
+- With it on, the OAuth authorization server endpoints (`/_openrun/oauth/*`) are active on the server.

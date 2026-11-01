@@ -4,6 +4,8 @@ weight: 330
 summary: "Overview of developing OpenRun Apps"
 ---
 
+This page covers how an OpenRun app is put together: the folder [structure](#structure), the `ace.app` [definition](#app-definition) and its settings, the dev to prod [lifecycle](#app-lifecycle), [params](#app-parameters), [permissions](#app-permissions) and [resource limits](#resource-limits). It also walks through the main app types: a [text app](#simple-text-app), a [spec based app](#building-apps-from-spec), an [action app](#action-apps) and a [containerized app](#containerized-app).
+
 ## Structure
 
 The structure of an OpenRun application is:
@@ -22,22 +24,22 @@ The structure of an OpenRun application is:
 
 The `app` global is created by calling the `ace.app` builtin. `name` is the only required argument, all other arguments are optional keyword arguments. The `ace.app` struct definition is
 
-|      Property      | Optional |                    Type                     |  Default  |                                                                             Notes                                                                              |
-| :----------------: | :------: | :-----------------------------------------: | :-------: | :------------------------------------------------------------------------------------------------------------------------------------------------------------: |
-|        name        |  False   |                   string                    |           |                                                                  The display name for the app                                                                  |
-|       routes       |   True   | list of `ace.html`, `ace.api` , `ace.proxy` |    []     |                                          The [routes]({{< ref "docs/app/routing" >}}) exposed by the application                                               |
-|      actions       |   True   |            list of `ace.action`             |    []     |                                     The [actions]({{< ref "actions" >}}) exposed by the app, with an auto-generated UI                                         |
-|        jobs        |   True   | list of `ace.job` | [] | [Scheduled jobs and deploy hooks]({{< ref "applications/jobs" >}}) |
-|    permissions     |   True   |           list of `ace.permission`          |    []     |                          The plugin calls the app is allowed to make, see [App Permissions]({{< relref "#app-permissions" >}})                                 |
-|     container      |   True   |             `container.config`              |           |                        The container configuration, for [containerized apps]({{< relref "#containerized-app" >}})                                              |
-|       style        |   True   |                 `ace.style`                 |           |                                       The CSS [styling]({{< ref "docs/app/styling" >}}) configuration for the app                                              |
-|     libraries      |   True   |      list of string or `ace.library`        |    []     |                                 The [JavaScript modules]({{< ref "docs/app/javascript" >}}) to import for the app                                              |
-|   custom_layout    |   True   |                    bool                     |   False   | If True, the app defines the full HTML layout in `index.go.html`. If False, a layout is generated and the app defines only the `openrun_body` [template block]({{< ref "docs/app/templates" >}}) |
-|      settings      |   True   |                    dict                     |    {}     |                                     Advanced app settings, see [App Settings]({{< relref "#app-settings" >}})                                                  |
-|    static_only     |   True   |                    bool                     |   False   |                            If True, the app serves static files only, see [Static Apps]({{< relref "#static-apps" >}})                                         |
-|       index        |   True   |                   string                    |           |            For static apps, the file served for the app root path. Defaults to `index.html` (or `index.htm`) if present in the app source                      |
-|    single_file     |   True   |                    bool                     |   False   |                     For static apps, serve only the `index` file; requests for any other path return a 404 response                                            |
-| redirect_bare_path |   True   |                    bool                     |   False   |              If True, requests to the bare app path (like `/myapp`) are redirected to the path with a trailing slash (`/myapp/`)                               |
+| Property           | Optional | Type                                        | Default | Notes |
+| :----------------- | :------- | :------------------------------------------ | :------ | :---- |
+| name               | False    | string                                      |         | The display name for the app |
+| routes             | True     | list of `ace.html`, `ace.api` , `ace.proxy` | []      | The [routes]({{< ref "docs/app/routing" >}}) exposed by the application |
+| actions            | True     | list of `ace.action`                        | []      | The [actions]({{< ref "actions" >}}) exposed by the app, with an auto-generated UI |
+| jobs               | True     | list of `ace.job`                           | []      | [Scheduled jobs and deploy hooks]({{< ref "applications/jobs" >}}) |
+| permissions        | True     | list of `ace.permission`                    | []      | The plugin calls the app is allowed to make, see [App Permissions]({{< relref "#app-permissions" >}}) |
+| container          | True     | `container.config`                          |         | The container configuration, for [containerized apps]({{< relref "#containerized-app" >}}) |
+| style              | True     | `ace.style`                                 |         | The CSS [styling]({{< ref "docs/app/styling" >}}) configuration for the app |
+| libraries          | True     | list of string or `ace.library`             | []      | The [JavaScript modules]({{< ref "docs/app/javascript" >}}) to import for the app |
+| custom_layout      | True     | bool                                        | False   | If True, the app defines the full HTML layout in `index.go.html`. If False, a layout is generated and the app defines only the `openrun_body` [template block]({{< ref "docs/app/templates" >}}) |
+| settings           | True     | dict                                        | {}      | Advanced app settings, see [App Settings]({{< relref "#app-settings" >}}) |
+| static_only        | True     | bool                                        | False   | If True, the app serves static files only, see [Static Apps]({{< relref "#static-apps" >}}) |
+| index              | True     | string                                      |         | For static apps, the file served for the app root path. Defaults to `index.html` (or `index.htm`) if present in the app source |
+| single_file        | True     | bool                                        | False   | For static apps, serve only the `index` file; requests for any other path return a 404 response |
+| redirect_bare_path | True     | bool                                        | False   | If True, requests to the bare app path (like `/myapp`) are redirected to the path with a trailing slash (`/myapp/`) |
 
 For example, a minimal app definition is
 
@@ -47,9 +49,13 @@ app = ace.app("hello", routes=[ace.api("/", type=ace.TEXT)])
 
 ### Static Apps
 
-Setting `static_only=True` makes the app serve the files in the app source folder directly, at the root level of the app path. No Starlark handlers or HTML templates are involved. The `index` property sets the file served for the app root path; if not set, `index.html` or `index.htm` from the app source is used if present. A static app cannot define HTML routes or a root level wildcard proxy route.
+Setting `static_only=True` makes the app serve the files in the app source folder directly, at the root level of the app path. No Starlark handlers or HTML templates are involved.
 
-Setting `single_file=True` (along with `static_only=True`) serves only the `index` file; any other path returns a 404 response. The `index` property is required in this case. The `static`, `static_single` and `static_disk` [app specs]({{< ref "docs/container/appspecs" >}}) use these options, so static sites can be deployed without writing any Starlark configuration.
+- **`index`:** the file served for the app root path. If not set, `index.html` or `index.htm` from the app source is used if present.
+- **`single_file=True`** (along with `static_only=True`): serves only the `index` file; any other path returns a 404 response. The `index` property is required in this case.
+- **Restrictions:** a static app cannot define HTML routes or a root level wildcard proxy route.
+
+The `static`, `static_single` and `static_disk` [app specs]({{< ref "docs/container/appspecs" >}}) use these options, so static sites can be deployed without writing any Starlark configuration.
 
 ### Redirect Bare Path
 
@@ -57,7 +63,7 @@ Some containerized apps (like Gradio based apps) require the app to be accessed 
 
 ### App Settings
 
-The `settings` dict allows advanced customization of the app behavior. The supported settings, with their default values, are
+The `settings` dict allows advanced customization of the app behavior. All settings are optional; only the entries being changed need to be specified. The supported settings, with their default values, are
 
 ```python {filename="app.star"}
 app = ace.app("myapp",
@@ -86,15 +92,23 @@ app = ace.app("myapp",
     })
 ```
 
-New apps default to htmx 4.0.0. Apps with an existing `config_gen.lock` retain their pinned version, and an htmx runtime listed explicitly in `libraries` pins the version regardless of the config. In development mode, OpenRun downloads the SSE extension matching the htmx version into `static/gen/lib/sse.js` and the generated `openrun_gen_import` block uses the live reload markup for htmx 4 or for the htmx 1/2 APIs. The block does not change htmx's own defaults: with htmx 4, error responses are swapped like any other, see [Response]({{< ref "docs/app/response" >}}).
+See [Templates]({{< ref "docs/app/templates/#template-file-location" >}}) for details on `template_locations` and `base_templates`.
 
-All settings are optional; only the entries being changed need to be specified. See [Templates]({{< ref "docs/app/templates/#template-file-location" >}}) for details on `template_locations` and `base_templates`.
+{{% details title="How the htmx version is resolved" closed="true" %}}
 
-In addition, an `app_config` key in the settings dict can set [app configuration]({{< ref "docs/applications/overview" >}}) options from within the app definition, the same options as set with `--conf` during app creation. For example, `settings={"app_config": {"cors": {"allow_origin": "*"}}}` sets the CORS allowed origin for the app. Values set in the app metadata using `--conf` take precedence over `app_config` values set in `app.star`.
+- New apps default to htmx 4.0.0.
+- Apps with an existing `config_gen.lock` retain their pinned version.
+- An htmx runtime listed explicitly in `libraries` pins the version regardless of the config.
+- In development mode, OpenRun downloads the SSE extension matching the htmx version into `static/gen/lib/sse.js`, and the generated `openrun_gen_import` block uses the live reload markup for htmx 4 or for the htmx 1/2 APIs.
+- The block does not change htmx's own defaults: with htmx 4, error responses are swapped like any other, see [Response]({{< ref "docs/app/response" >}}).
+
+{{% /details %}}
+
+An `app_config` key in the settings dict can set [app configuration]({{< ref "docs/applications/overview" >}}) options from within the app definition, the same options as set with `--conf` during app creation. For example, `settings={"app_config": {"cors": {"allow_origin": "*"}}}` sets the CORS allowed origin for the app. Values set in the app metadata using `--conf` take precedence over `app_config` values set in `app.star`.
 
 ## Sharing Files Across Apps
 
-The app config property `star_base` can be used to set the base directory for Starlark files. This is useful when multiple apps need to share common files, like templates, static files, container spec etc. For example, if dir /mydir/ is the base directory with /mydir/app1 and /mydir/app2 as subdirectories containing two apps, creating apps using
+The app config property `star_base` sets the base directory for Starlark files. This is useful when multiple apps need to share common files, like templates, static files, container spec etc. For example, if dir /mydir/ is the base directory with /mydir/app1 and /mydir/app2 as subdirectories containing two apps, creating apps using
 
 ```
 openrun app create --approve --conf-str star_base=/app1 /mydir /test1
@@ -107,11 +121,11 @@ will create two apps. `/mydir/app1/app.star` will be used as the app definition 
 
 The OpenRun app development lifecycle is:
 
-- Create a folder for the app, with the app.star file and templates.
-- Start the OpenRun server. Create an app using `openrun app create --dev`. This runs the app in dev mode.
-- In dev mode, some additional files are generated, with `_gen` in the file name. CSS dependencies and JavaScript modules are downloaded into the `static` folder.
-- After the app development is done, the whole app folder can be checked into source control. There is no build step.
-- Create a production app, `openrun app create`, without the `--dev`. The app is now live. The OpenRun server can host multiple applications, each application has a dedicated path and optionally a dedicated domain.
+1. Create a folder for the app, with the app.star file and templates.
+2. Start the OpenRun server. Create an app using `openrun app create --dev`. This runs the app in dev mode.
+3. In dev mode, some additional files are generated, with `_gen` in the file name. CSS dependencies and JavaScript modules are downloaded into the `static` folder.
+4. After the app development is done, the whole app folder can be checked into source control. There is no build step.
+5. Create a production app, `openrun app create`, without the `--dev`. The app is now live. The OpenRun server can host multiple applications, each application has a dedicated path and optionally a dedicated domain.
 
 ## Simple Text App
 
@@ -137,7 +151,13 @@ The default for `ace.api` is `ace.JSON`; set `type=ace.TEXT` for plain text. `ac
 
 ## Building Apps from Spec
 
-A spec (specification) can be set for an app. This makes OpenRun use the spec as a template to specify the app configuration. Use `app create --spec python-flask` while creating an app or change the spec using `app update spec python-flask /myapp`. The spec brings in a set of predefined files. If a file with the same name is already present in the app code, then the spec file is ignored. So if the app code and spec both define a `Containerfile`, the file from the app code takes precedence. If the app folder contains just `app.py`
+A spec (specification) can be set for an app. OpenRun then uses the spec as a template to specify the app configuration, bringing in a set of predefined files.
+
+- **Setting the spec:** use `app create --spec python-flask` while creating an app, or change the spec using `app update spec python-flask /myapp`.
+- **Precedence:** if a file with the same name is already present in the app code, the spec file is ignored. So if the app code and spec both define a `Containerfile`, the file from the app code takes precedence.
+- **Available specs:** see https://github.com/openrundev/appspecs for the list. The OpenRun server build includes these specs by default.
+
+If the app folder contains just `app.py`
 
 ```python {filename="flaskapp/app.py"}
 from flask import Flask
@@ -151,7 +171,9 @@ def hello_world():
 
 Creating an app like `openrun app create --approve --spec python-flask ./flaskapp /myapp ` will do everything required to fully define the OpenRun app. If the app has additional python dependencies, add a `requirements.txt` file in the app source code. By [default](https://github.com/openrundev/appspecs/blob/main/python-flask/requirements.txt), only the flask package is installed. The file in the app source takes precedence.
 
-See https://github.com/openrundev/appspecs for the list of specs. The OpenRun server build includes these specs by default. Additional specs can be defined by creating a folder `$OPENRUN_HOME/config/appspecs`. Any directory within that is treated as a spec. If the name matches with the predefined ones the spec in the config folder takes precedence. No server restart is required after spec changes. Setting up the server by doing
+{{% details title="Custom and updated specs" closed="true" %}}
+
+Additional specs can be defined by creating a folder `$OPENRUN_HOME/config/appspecs`. Any directory within that is treated as a spec. If the name matches with the predefined ones, the spec in the config folder takes precedence. No server restart is required after spec changes. Setting up the server by doing
 
 ```bash
 cd $OPENRUN_HOME/config
@@ -159,6 +181,8 @@ git clone https://github.com/openrundev/appspecs.git
 ```
 
 ensures that the specs are updated to the latest version. Periodically doing a git pull on this folder refreshes the specs. Instead of cloning the main spec repo, a custom spec repo can also be used similarly. If no custom specs are defined, the specs as bundled in the OpenRun server build are available.
+
+{{% /details %}}
 
 ## App Parameters
 
@@ -175,20 +199,30 @@ param("preserve_host", type=BOOLEAN, description="Whether to preserve the origin
 
 This is defining three parameters. The type can be one of `STRING`(default), `INT`, `BOOLEAN`, `LIST` and `DICT`. The param structure definition is
 
-|   Property   | Optional |                    Type                    |         Default         |                                                        Notes                                                        |
-| :----------: | :------: | :----------------------------------------: | :---------------------: | :-----------------------------------------------------------------------------------------------------------------: |
-|     name     |  False   |                   string                   |                         |                                         Should be a valid Starlark identifier                                          |
-|     type     |   True   | `STRING`, `INT`, `BOOLEAN`, `LIST`or`DICT` |        `STRING`         |                                                    The data type                                                    |
-|   default    |   True   |           Type as set for `type`           | Zero value for the type |                                                                                                                     |
-| description  |   True   |                   string                   |                         |                                            The description for the param                                            |
-|   required   |   True   |                    bool                    |          True           |                    If required is True and default value is not specified, then validation fails                    |
-| display_type |   True   |                   string                   |                         | How this param should be displayed in the UI. Options are `FILE`, `PASSWORD`, `TEXTAREA` and `COMBO`, default is text input. |
+| Property     | Optional | Type                                       | Default                 | Notes |
+| :----------- | :------- | :----------------------------------------- | :---------------------- | :---- |
+| name         | False    | string                                     |                         | Should be a valid Starlark identifier |
+| type         | True     | `STRING`, `INT`, `BOOLEAN`, `LIST`or`DICT` | `STRING`                | The data type |
+| default      | True     | Type as set for `type`                     | Zero value for the type | |
+| description  | True     | string                                     |                         | The description for the param |
+| required     | True     | bool                                       | True                    | If required is True and default value is not specified, then validation fails |
+| display_type | True     | string                                     |                         | How this param should be displayed in the UI. Options are `FILE`, `PASSWORD`, `TEXTAREA` and `COMBO`, default is text input. |
 
 The parameters are available in the app Starlark code, through the `param` namespace. For example, `param.port`, `param.app_name` etc. See https://github.com/openrundev/appspecs/blob/main/python-flask/app.star for an example of how this can be used.
 
-Params are set during app creation using `app create --param port=9000` or using `param update port 9000 /myapp`. Set value to `-` to delete the param. Use `param list /myapp` to list the params.
+| Command                        | Effect                                   |
+| :----------------------------- | :--------------------------------------- |
+| `app create --param port=9000` | Set a param during app creation          |
+| `param update port 9000 /myapp` | Set a param on an existing app; set value to `-` to delete the param |
+| `param list /myapp`            | List the params                          |
 
-For containerized apps, all params specified for the app (including ones not specified in `params.star` spec) are passed to the container at runtime as environment parameters. `CL_APP_PATH` is a special param passed to the container with the app installation path (without the domain name), and `CL_APP_URL` is set to the full URL the app is served at. `PORT` is also set with the value of the port number the app is expected to bind to within the container.
+For containerized apps, all params specified for the app (including ones not specified in `params.star` spec) are passed to the container at runtime as environment parameters. The following special params are also set:
+
+| Env variable  | Value                                                            |
+| :------------ | :--------------------------------------------------------------- |
+| `CL_APP_PATH` | The app installation path (without the domain name)              |
+| `CL_APP_URL`  | The full URL the app is served at                                |
+| `PORT`        | The port number the app is expected to bind to within the container |
 
 ## Action Apps
 
@@ -225,7 +259,11 @@ The app, when accessed, shows a form for the params, with the action output disp
   <img alt="Repo info action app" src="/images/action_light.png">
 </picture>
 
-See list files [code](https://github.com/openrundev/apps/tree/main/system/list_files):[demo](https://utils.demo.clace.io/list_files) for an actions app which lists files (using the exec plugin). See dictionary [code](https://github.com/openrundev/apps/tree/main/misc/dictionary):[demo](https://utils.demo.clace.io/dict) for another actions example app which shows different type of reports. [Actions]({{< ref "actions" >}}) has more details on building app actions.
+More action examples:
+
+- List files [code](https://github.com/openrundev/apps/tree/main/system/list_files):[demo](https://utils.demo.clace.io/list_files), an actions app which lists files (using the exec plugin).
+- Dictionary [code](https://github.com/openrundev/apps/tree/main/misc/dictionary):[demo](https://utils.demo.clace.io/dict), an actions app which shows different types of reports.
+- [Actions]({{< ref "actions" >}}) has more details on building app actions.
 
 ## Containerized App
 
@@ -246,7 +284,7 @@ app = ace.app("My App",
 
 <!-- prettier-ignore-end -->
 
-which completely specifies the app. This is saying that the app is using the container plugin to configure the container and the proxy plugin to proxy all API calls (`/` route) to the container URL. On the first API call to the app, OpenRun will build the image, start the container and proxy the API traffic to the appropriate port. No other configuration is required in Starlark. If the container spec does not define the port being exposed, then the container config needs to specify the port number to use. The port number can be parameterized.
+which completely specifies the app. The app uses the container plugin to configure the container and the proxy plugin to proxy all API calls (`/` route) to the container URL. On the first API call to the app, OpenRun builds the image, starts the container and proxies the API traffic to the appropriate port. No other configuration is required in Starlark. If the container spec does not define the port being exposed, then the container config needs to specify the port number to use. The port number can be parameterized.
 
 With the default server config, `proxy.config(container.URL, ...)` and `container.config(...)` are already approved implicitly, so no explicit `ace.permission(...)` entries are required for this standard containerized app flow. That default approval does not allow `container.config(...)` to resolve secrets; apps that pass secrets to containers must request and receive approval for the required `secrets=[...]` allowlist.
 
@@ -256,16 +294,20 @@ With the default server config, `proxy.config(container.URL, ...)` and `containe
 
 For plugin calls made by the app, the plugin permissions normally have to be specified in the app permissions and approved in the app metadata. Server config can also define globally allowed calls under `permissions.allow`, in which case no explicit app approval is required for those calls. The `ace.permission` struct definition is
 
-| Property  | Optional |          Type          |  Default  |                                                  Notes                                                  |
-| :-------: | :------: | :--------------------: | :-------: | :-----------------------------------------------------------------------------------------------------: |
-|  plugin   |  False   |         string         |           |                                             The plugin name                                             |
-|  method   |  False   |         string         |           |                                             The method name                                             |
-| arguments |   True   |      list string       |           |                                   The arguments allowed for the call                                    |
-|   type    |   True   |         string         | plugin default |                                Override the plugin call type with `ace.READ` or `ace.WRITE`                                 |
-|  secrets  |   True   | list of list of string |           |                                 The secrets the plugin call can access                                  |
-|  permit   |   True   |      list string       |    []     | Custom RBAC permissions, any one of which is required to make the call when RBAC is enabled for the app |
+| Property  | Optional | Type                   | Default        | Notes |
+| :-------- | :------- | :--------------------- | :------------- | :---- |
+| plugin    | False    | string                 |                | The plugin name |
+| method    | False    | string                 |                | The method name |
+| arguments | True     | list string            |                | The arguments allowed for the call |
+| type      | True     | string                 | plugin default | Override the plugin call type with `ace.READ` or `ace.WRITE` |
+| secrets   | True     | list of list of string |                | The secrets the plugin call can access |
+| permit    | True     | list string            | []             | Custom RBAC permissions, any one of which is required to make the call when RBAC is enabled for the app |
 
-For example `ace.permission("proxy.in", "config", [container.URL])` is a plugin call to `config` method in `proxy.in` plugin. The first argument has to be `container.URL`. Additional arguments are allowed. If no arguments are specified in the permission, then there is no restriction on arguments passed at runtime. If the value specified starts with `regex:`, then the value passed is checked against the specified regex at runtime.
+For example `ace.permission("proxy.in", "config", [container.URL])` is a plugin call to `config` method in `proxy.in` plugin. How arguments are matched:
+
+- The first argument has to be `container.URL`. Additional arguments are allowed.
+- If no arguments are specified in the permission, then there is no restriction on arguments passed at runtime.
+- If the value specified starts with `regex:`, then the value passed is checked against the specified regex at runtime.
 
 The default server config already allows `proxy.config(container.URL, ...)` and `container.config(...)`, so these two calls do not need an explicit permission entry unless the app wants to narrow the default access or allow specific secrets for `container.config(...)`.
 
@@ -275,19 +317,26 @@ See [secrets]({{< ref "/docs/configuration/secrets/#plugin-access-to-secrets" >}
 
 ## Resource Limits
 
-App code runs in the server process, so the values a request supplies must not be able to make a handler allocate or compute without bound. The following limits apply to Starlark handlers and templates, and a handler which exceeds one fails with an error (a 500 response, or the app's error handler):
+App code runs in the server process, so the values a request supplies must not be able to make a handler allocate or compute without bound. The following limits apply to Starlark handlers and templates. A handler which exceeds one fails with an error (a 500 response, or the app's error handler):
 
-- The request body of the html, fragment and api routes is capped by `max_request_body_bytes` (an `[app_config]` setting, 10MB by default); a larger body is refused with 413. Action routes have their own `action.max_request_body_bytes` cap.
-- `int()` refuses a string over 4096 characters (parsing is quadratic in the length).
-- `list`, `tuple`, `set`, `sorted`, `reversed`, `enumerate` and `zip` refuse an iterable of over 16777216 elements of known length, such as `list(range(n))` with a large `n`.
-- A handler recursing over 10000 frames fails.
-- The template functions `until`, `untilStep` and `seq` refuse over 1000000 items, and `repeat`, `indent`, `nindent` and the `rand*` functions an output over 16MB.
-- While the server's memory in use is over `system.memory_high_water_bytes` (0 by default, which uses 90% of the Go memory limit when `GOMEMLIMIT` is set, else no check), running handlers are canceled at their next instruction.
+| Limit | Value |
+| :--- | :--- |
+| Request body of html, fragment and api routes | Capped by `max_request_body_bytes` (an `[app_config]` setting, 10MB by default); a larger body is refused with 413. Action routes have their own `action.max_request_body_bytes` cap. |
+| `int()` string length | Refuses a string over 4096 characters (parsing is quadratic in the length) |
+| `list`, `tuple`, `set`, `sorted`, `reversed`, `enumerate`, `zip` | Refuse an iterable of over 16777216 elements of known length, such as `list(range(n))` with a large `n` |
+| Recursion depth | A handler recursing over 10000 frames fails |
+| Template functions `until`, `untilStep`, `seq` | Refuse over 1000000 items |
+| Template functions `repeat`, `indent`, `nindent`, `rand*` | Refuse an output over 16MB |
+| Memory high water mark | While the server's memory in use is over `system.memory_high_water_bytes` (0 by default, which uses 90% of the Go memory limit when `GOMEMLIMIT` is set, else no check), running handlers are canceled at their next instruction |
 
+{{< callout type="warning" >}}
 A list or string repeat (`[x] * n`, `"s" * n`) is bounded only by the interpreter's own element count limit, so a count taken from a request should be validated by the handler. The server itself should run with a memory limit (`GOMEMLIMIT`, a container memory limit or `MemoryMax` in the systemd unit) so a single request cannot take down the node.
+{{< /callout >}}
 
 ## More examples
 
-There is a disk_usage example [here](https://github.com/openrundev/openrun/tree/main/examples) and many in the [apps repo](https://github.com/openrundev/apps). The disk_usage example shows a basic hypermedia flow. The cowbull game has multiple [pages](https://github.com/openrundev/apps/blob/f5566cea6061ec85ea59495efc7b8700f06a4e70/misc/cowbull/app.star#L107), each page with some dynamic behavior. For styling, it uses the [DaisyUI](https://daisyui.com/) component library with Tailwind CSS. These two examples work fine with JavaScript disabled in the browser, falling back to basic HTML without any HTMX extensions.
+- **disk_usage** ([here](https://github.com/openrundev/openrun/tree/main/examples)): shows a basic hypermedia flow.
+- **cowbull** game, in the [apps repo](https://github.com/openrundev/apps): has multiple [pages](https://github.com/openrundev/apps/blob/f5566cea6061ec85ea59495efc7b8700f06a4e70/misc/cowbull/app.star#L107), each page with some dynamic behavior. For styling, it uses the [DaisyUI](https://daisyui.com/) component library with Tailwind CSS.
+- **memory_usage**: uses the [d3](https://d3js.org/) library to show an interactive display of the memory usage for processes on the machine. The plot library is [automatically imported](https://github.com/openrundev/apps/blob/f5566cea6061ec85ea59495efc7b8700f06a4e70/system/memory_usage/app.star#L103) as an ECMAScript module and the custom [JavaScript code](https://github.com/openrundev/apps/blob/main/system/memory_usage/static/js/app.js) works with a [JSON API](https://github.com/openrundev/apps/blob/f5566cea6061ec85ea59495efc7b8700f06a4e70/system/memory_usage/app.star#L98) on the backend.
 
-The memory_usage example uses the [d3](https://d3js.org/) library to show an interactive display of the memory usage for processes on the machine. The plot library is [automatically imported](https://github.com/openrundev/apps/blob/f5566cea6061ec85ea59495efc7b8700f06a4e70/system/memory_usage/app.star#L103) as an ECMAScript module and the custom [JavaScript code](https://github.com/openrundev/apps/blob/main/system/memory_usage/static/js/app.js) works with a [JSON API](https://github.com/openrundev/apps/blob/f5566cea6061ec85ea59495efc7b8700f06a4e70/system/memory_usage/app.star#L98) on the backend. The default in OpenRun is hypermedia exchange, JSON can be used for data APIs.
+The disk_usage and cowbull examples work fine with JavaScript disabled in the browser, falling back to basic HTML without any HTMX extensions. The default in OpenRun is hypermedia exchange, JSON can be used for data APIs. The [apps repo](https://github.com/openrundev/apps) has many more examples.

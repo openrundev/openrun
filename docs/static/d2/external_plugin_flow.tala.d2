@@ -1,0 +1,26 @@
+# https://d2lang.com diagram. Use make update-diagrams to generate SVG; the layout engine is the suffix in the file name.
+direction: right
+
+app: {
+  label: "App"
+  code: "app.star\nload(\"notes.in\", \"notes\")\nnotes.add(...)"
+}
+
+openrun: {
+  label: "OpenRun server"
+  style: {stroke-width: 2}
+  manifest: "Registered manifest\nfunctions, read/write,\nconstants"
+  hook: "Plugin hook\napproval, disallow, RBAC,\nwrite gating, secrets"
+  manifest -> hook: "load and audit\nwithout a process"
+}
+
+provider: {
+  label: "Plugin provider process\none per app, started on first call"
+  impl: "SDK plugin\nyour Go methods"
+  session: "Session\ndefers, cursors"
+}
+
+app.code -> openrun.hook: "call"
+openrun.hook -> provider.impl: "gRPC over unix socket\nmutual TLS, sha256 verified" {style.stroke-width: 2}
+provider.impl -> openrun.hook: "plugin_response"
+openrun -> provider: "Describe at install:\nregister the manifest" {style.stroke-dash: 3}

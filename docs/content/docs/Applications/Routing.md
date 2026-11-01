@@ -24,6 +24,8 @@ For the above scenario:
 - Requests to /appB/\* for the default domain go to App B.
 - Requests to example.com for any path will always go to App C, since it is installed at the root path.
 
+{{< theme-image light="/d2/app_routing_light.svg" dark="/d2/app_routing_dark.svg" alt="OpenRun matches the request domain, then the app path: localhost/utils/appA goes to App A, localhost/appB to App B, any path on example.com to App C at the root, /_openrun/ to the internal APIs on every domain, and an unknown hostname gets a 404 unless system.fallback_unknown_domains is true" >}}
+
 ## Creating Applications
 
 When an app is being created, a path and an optional domain need to be specified. For the above example scenario:

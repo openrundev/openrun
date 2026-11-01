@@ -1,0 +1,26 @@
+# https://d2lang.com diagram. Use make update-diagrams to generate SVG; the layout engine is the suffix in the file name.
+direction: right
+
+src: "App source on disk\nopenrun app create --dev" {shape: page}
+
+openrun: {
+  label: "OpenRun dev mode"
+  style: {stroke-width: 2}
+  watch: "Watches the source"
+  ident: "Image identity changed?\nContainerfile, build args,\ntarget stage, env_files"
+  watch -> ident
+}
+
+image: "Dev image\nbuilt with --target dev\ntoolchain included"
+
+container: {
+  label: "App container"
+  mount: "Source bind mounted\nover the image copy"
+  reload: "On change:\nrestart, recreate or none"
+}
+
+src -> openrun.watch: "file saved"
+openrun.ident -> image: "yes: rebuild"
+openrun.ident -> container.reload: "no: source change only"
+image -> container: "runs"
+src -> container.mount: "bind mount" {style.stroke-dash: 3}

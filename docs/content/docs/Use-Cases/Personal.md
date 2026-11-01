@@ -7,6 +7,13 @@ summary: "Turn a Linux VPS into a secure platform for personal web apps shared w
 
 This guide turns a Linux VPS (virtual private server) into a self-hosted platform for personal web apps. OpenRun manages application deployment, GitOps updates, HTTPS certificates and authenticated access while Docker or Podman runs each application.
 
+What you will set up on this page:
+
+- A publicly reachable VPS with OpenRun [installed](#installation) as a systemd service
+- Server [configuration](#configuration) with Google login for every app, automatic TLS certificates and a GitHub token for source access
+- [RBAC grants](#rbac-config) that give family and friends their own set of apps
+- An `apps.star` declaration in git with a scheduled [sync](#app-installation) that creates and updates apps
+
 ## Scenario
 
 This use-case documents the scenario where you want to:
@@ -21,28 +28,51 @@ For this use case, we will use a Google OAuth account for authentication and a G
 
 To get OpenRun running, the initial setup involves:
 
-- Create a Linux VPS or server that is publicly accessible on port 443.
-- Create a DNS entry pointing to the machine's IP address, for example an `A` record for `apps.example.com`. A wildcard DNS entry `*.apps.example.com` will make it easier to install apps at the domain level.
-- Create a Google OAuth by visiting [Google Console](https://console.cloud.google.com/auth/clients). The callback URL would be `https://apps.example.com/_openrun/auth/google/callback`. Note the client ID and secret.
-- Create a GitHub Personal Access Token in [GitHub settings](https://github.com/settings/personal-access-tokens). Set the scope to the repositories you want to use for your apps. Note the token.
+{{% steps %}}
+
+### Create the server
+
+Create a Linux VPS or server that is publicly accessible on port 443.
+
+### Create the DNS entry
+
+Create a DNS entry pointing to the machine's IP address, for example an `A` record for `apps.example.com`. A wildcard DNS entry `*.apps.example.com` will make it easier to install apps at the domain level.
+
+### Create the Google OAuth client
+
+Create a Google OAuth by visiting [Google Console](https://console.cloud.google.com/auth/clients). The callback URL would be `https://apps.example.com/_openrun/auth/google/callback`. Note the client ID and secret.
+
+### Create a GitHub token
+
+Create a GitHub Personal Access Token in [GitHub settings](https://github.com/settings/personal-access-tokens). Set the scope to the repositories you want to use for your apps. Note the token.
+
+{{% /steps %}}
 
 ## Installation
 
-On openSUSE Tumbleweed, Fedora and Debian, install the [native package]({{< ref "docs/installation#install-on-linux-native-packages" >}}) and start the service:
+{{< tabs >}}
+{{< tab name="openSUSE, Fedora, Debian" >}}
+Install the [native package]({{< ref "docs/installation#install-on-linux-native-packages" >}}) and start the service:
 
 ```sh
 sudo systemctl enable --now openrun
 ```
-
-On other systemd-based Linux systems, to install OpenRun and start the service, run
+{{< /tab >}}
+{{< tab name="Other systemd Linux" >}}
+To install OpenRun and start the service, run
 
 ```sh
 curl -sSL https://raw.githubusercontent.com/openrundev/openrun/refs/heads/main/deploy/setup_systemd.sh | sudo sh
 ```
+{{< /tab >}}
+{{< /tabs >}}
 
 Both approaches create a user `openrun` and install the service under `/var/lib/openrun`.
 
-To run [containerized apps]({{< ref "docs/container/overview/" >}}), ensure that Docker or Podman is installed and running on the machine. For Docker, the `openrun` user should be added to the docker group. As `openrun` user, run `docker ps` or `podman ps` to verify that the container manager is functional.
+To run [containerized apps]({{< ref "docs/container/overview/" >}}), ensure that Docker or Podman is installed and running on the machine:
+
+- For Docker, the `openrun` user should be added to the docker group.
+- As `openrun` user, run `docker ps` or `podman ps` to verify that the container manager is functional.
 
 ## Configuration
 
@@ -77,15 +107,25 @@ key = "37019xxxxx-u8e2lltb1tmxxxxxx.apps.googleusercontent.com" # CHANGEME
 secret = "GOCSPX-ybUAedirQiexxxxxxxxxx" # CHANGEME
 ```
 
-This sets the default ports to 80 and 443, sets the apps to use Google for auth and sets the GitHub PAT. Automatic TLS cert creation is also enabled. As the regular user (since `openrun` user might not have sudo access), run `sudo systemctl restart openrun` to pick up the config update. The `admin_password_bcrypt` is not used in this scenario, it can be kept at its original value or changed.
+This config:
+
+- Sets the default ports to 80 and 443
+- Sets the apps to use Google for auth
+- Sets the GitHub PAT
+- Enables automatic TLS cert creation
+- Leaves `admin_password_bcrypt` unused in this scenario; it can be kept at its original value or changed
+
+As the regular user (since `openrun` user might not have sudo access), run `sudo systemctl restart openrun` to pick up the config update.
 
 ## RBAC Config
 
 At this point, all apps are authenticated by the Google OAuth account, but anyone with a Google account can access the apps. To restrict which user has access to what apps, [RBAC]({{< ref "docs/configuration/rbac/" >}}) can be used. RBAC uses the [dynamic config]({{< ref "docs/configuration/overview/#dynamic-config" >}}), which does not require restarting the OpenRun server. We will set up a RBAC schema where:
 
-- Apps under /family will be shared with family members
-- Apps under /shared will be shared with family members and friends
-- All other apps will be available only to the admin.
+| Apps under | Shared with |
+| :--- | :--- |
+| `/family` | Family members |
+| `/shared` | Family members and friends |
+| All other paths | Only the admin |
 
 To set the RBAC config, change to the `openrun` account by running `sudo su -l openrun`. Edit `/var/lib/openrun/config/dynamic_config.json` to have:
 
@@ -164,6 +204,12 @@ If this file is checked into the main branch in the `myuser/myrepo` repo, then r
 openrun sync schedule --minutes 1 --approve --promote github.com/myuser/myrepo/apps.star
 ```
 
-will set up a [sync]({{< ref "docs/applications/overview/#automated-sync" >}}) which checks every minute for new updates to the file. When RBAC is enabled it applies to every app: who can reach an app is controlled by the `app:access` grants, not by the app's auth type. To make an app available to everyone who can log in, add a grant like the `/shared/**` one with `"users": ["regex:.*"]`. If `auth="none"` is used, no login is required for the app, and with RBAC enabled the `anonymous` user needs an `app:access` grant on it.
+will set up a [sync]({{< ref "docs/applications/overview/#automated-sync" >}}) which checks every minute for new updates to the file.
 
-Any new apps declared will be automatically created. Any code changes in the repos referenced or config changes in the apps will also automatically be applied on the existing apps. No further manual updates are required on the machine. All updates can be done by just checking in changes into the declarative config - **Full GitOps CI/CD, in one command.**
+- **RBAC applies to every app:** who can reach an app is controlled by the `app:access` grants, not by the app's auth type.
+- **Apps for everyone who can log in:** add a grant like the `/shared/**` one with `"users": ["regex:.*"]`.
+- **Apps without login:** if `auth="none"` is used, no login is required for the app, and with RBAC enabled the `anonymous` user needs an `app:access` grant on it.
+- **New apps** declared will be automatically created.
+- **Code changes** in the repos referenced or config changes in the apps will also automatically be applied on the existing apps.
+
+No further manual updates are required on the machine. All updates can be done by just checking in changes into the declarative config - **Full GitOps CI/CD, in one command.**

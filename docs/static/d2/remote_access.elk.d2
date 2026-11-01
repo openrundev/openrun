@@ -1,0 +1,26 @@
+# https://d2lang.com diagram. Use make update-diagrams to generate SVG; the layout engine is the suffix in the file name.
+direction: down
+
+local: "Local CLI\non the server machine" {shape: person}
+remote: "Remote CLI\nopenrun login or API key" {shape: person}
+ai: "AI client\nClaude Code, Codex\nOAuth login or API key" {shape: person}
+
+openrun: {
+  label: "OpenRun server"
+  style: {stroke-width: 2}
+
+  uds: "Unix domain socket\nfile mode 0700\nno credentials, admin"
+  rest: "[api.rest]\nmanagement REST API\nHTTPS only, off by default"
+  mcp: "[api.mcp]\n/_openrun/mcp\nHTTPS only, off by default"
+  rbac: "RBAC as the\ncredential's user"
+  mgmt: "Management operations\napps, syncs, services,\nbindings, secrets"
+
+  rest -> rbac
+  mcp -> rbac
+  rbac -> mgmt
+  uds -> mgmt: "transport trusted"
+}
+
+local -> openrun.uds
+remote -> openrun.rest: "bearer token"
+ai -> openrun.mcp: "bearer token"

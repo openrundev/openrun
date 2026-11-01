@@ -1,0 +1,19 @@
+# https://d2lang.com diagram. Use make update-diagrams to generate SVG; the layout engine is the suffix in the file name.
+direction: down
+
+client: "MCP client\nClaude Code, Cursor, VS Code" {shape: person}
+
+openrun: {
+  label: "OpenRun server"
+  style: {stroke-width: 2}
+  meta: "Protected-resource\nmetadata for the app"
+  authz: "OAuth 2.1 authorization server\nlogin with the app's auth,\nconsent page, RBAC app:access"
+  endpoint: "App MCP endpoint\naccepts only tokens\nbound to this app"
+}
+
+app: "MCP server app\nno auth code of its own\ngets X-Openrun-User, -Perms,\n-Scopes, -Client-Id"
+
+client -> openrun.meta: "1. discover"
+client -> openrun.authz: "2. browser login,\ntoken issued"
+client -> openrun.endpoint: "3. MCP calls\nbearer token"
+openrun.endpoint -> app: "token stripped,\nheaders added"

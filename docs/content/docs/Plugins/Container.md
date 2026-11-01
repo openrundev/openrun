@@ -14,40 +14,46 @@ OpenRun can build and manage containers for implementing the app backend APIs. T
 
 The `container.in` plugin has the following APIs:
 
-|     API     | Type  |                            Notes                            |
-| :---------: | :---: | :---------------------------------------------------------: |
-| **config**  | Read  |        Configures the container details for the app         |
-| **sidecar** | Read  | Declares one sidecar container, for `config(sidecars=[..])` |
-|   **run**   | Write |     Runs a command in a container using the app's image     |
+| API | Type | Notes |
+| :--- | :--- | :--- |
+| **config** | Read | Configures the container details for the app |
+| **sidecar** | Read | Declares one sidecar container, for `config(sidecars=[..])` |
+| **run** | Write | Runs a command in a container using the app's image |
 
 The plugin also defines the following constants:
 
-|         Constant         |  Value  |                                              Notes                                              |
-| :----------------------: | :-----: | :---------------------------------------------------------------------------------------------: |
-|     `container.URL`      |         | Placeholder for the container URL, for use with the proxy plugin, like `proxy.config(container.URL)` |
-|     `container.AUTO`     | `auto`  |                    `src` value to auto detect the `Containerfile`/`Dockerfile`                  |
-| `container.IMAGE_PREFIX` | `image:` |                   Prefix for the `src` value when using a prebuilt image                       |
-|   `container.COMMAND`    | `command` |                            `lifetime` value for command-only apps                             |
-|   `container.NIXPACKS`   | `nixpacks` |                         Reserved for nixpacks builds, not supported yet                      |
+| Constant | Value | Notes |
+| :--- | :--- | :--- |
+| `container.URL` | | Placeholder for the container URL, for use with the proxy plugin, like `proxy.config(container.URL)` |
+| `container.AUTO` | `auto` | `src` value to auto detect the `Containerfile`/`Dockerfile` |
+| `container.IMAGE_PREFIX` | `image:` | Prefix for the `src` value when using a prebuilt image |
+| `container.COMMAND` | `command` | `lifetime` value for command-only apps |
+| `container.NIXPACKS` | `nixpacks` | Reserved for nixpacks builds, not supported yet |
 
 ## config
 
 The `config` API supports the following parameters:
 
-- **src** (string, optional) : the source for the containerfile, `auto` (`container.AUTO`) by default
-- **port** (int, optional) : the port number exposed from the container
-- **scheme** (string, optional) : the url scheme, `http` by default
-- **health** (string, optional) : the health check API, `/` by default
-- **lifetime** (string, optional) : the lifetime for the container, default is to start a service when the app is initialized. Set to `container.COMMAND` to allow running commands against the container using `container.run` without starting a service.
-- **build_dir** (string, optional) : the build directory for the build, `/` by default
-- **volumes** (list of strings, optional) : the [volumes]({{< ref "docs/container/overview/#volumes" >}}) to mount in the container. Supports named volumes (`myvolume:/data`), bind mounts (`./config.yaml:/app/config.yaml`) and generated secret mounts (`cl_secret:secret.tmpl:/app/secret.ini`)
-- **cargs** (dict, optional) : the container build arguments, `Containerfile` `ARG` values passed as `--build-arg` during the image build. Values set in the app metadata with `openrun app create --carg key=value` or `openrun app update carg key=value /myapp` override values set here
-- **dev_settings** (dict, optional) : settings for the dev mode [fast reload]({{< ref "docs/container/devreload" >}}) flow. The allowed keys are `target`, `command`, `dir`, `reload`, `env_files`, `additional_mounts`, `port`, `dev_stage` and `disable`. These settings apply in dev mode only
-- **sidecars** (list, optional) : the [sidecar containers]({{< ref "docs/container/overview/#sidecar-containers" >}}) for the app. Each entry must be created with `container.sidecar(...)`, a plain dict is not accepted
+| Parameter | Type | Default | Notes |
+| :--- | :--- | :--- | :--- |
+| **src** | string | `auto` (`container.AUTO`) | The source for the containerfile, see the `src` values below |
+| **port** | int | | The port number exposed from the container. `port` can also be specified in the container file, using an EXPOSE directive; a value other than zero in the config takes precedence over the value in the Expose |
+| **scheme** | string | `http` | The url scheme |
+| **health** | string | `/` | The health check API |
+| **lifetime** | string | start a service when the app is initialized | The lifetime for the container. Set to `container.COMMAND` to allow running commands against the container using `container.run` without starting a service |
+| **build_dir** | string | `/` | The build directory for the build |
+| **volumes** | list of strings | | The [volumes]({{< ref "docs/container/overview/#volumes" >}}) to mount in the container. Supports named volumes (`myvolume:/data`), bind mounts (`./config.yaml:/app/config.yaml`) and generated secret mounts (`cl_secret:secret.tmpl:/app/secret.ini`) |
+| **cargs** | dict | | The container build arguments, `Containerfile` `ARG` values passed as `--build-arg` during the image build. Values set in the app metadata with `openrun app create --carg key=value` or `openrun app update carg key=value /myapp` override values set here |
+| **dev_settings** | dict | | Settings for the dev mode [fast reload]({{< ref "docs/container/devreload" >}}) flow. The allowed keys are `target`, `command`, `dir`, `reload`, `env_files`, `additional_mounts`, `port`, `dev_stage` and `disable`. These settings apply in dev mode only |
+| **sidecars** | list | | The [sidecar containers]({{< ref "docs/container/overview/#sidecar-containers" >}}) for the app. Each entry must be created with `container.sidecar(...)`, a plain dict is not accepted |
 
-When the `src` is auto, the container file is auto detected. It checks for presence of either `Containerfile` or `Dockerfile`. If the value begins with `image:` (`container.IMAGE_PREFIX`), the subsequent portion is treated as the image to download. No image build is done in that case. Any other value for `src` is treated as the file name to use as the container file.
+The `src` value selects how the image is built:
 
-`port` can be specified in the container file, using an EXPOSE directive. If a value other than zero is specified in the config, that takes precedence over the value in the Expose.
+| `src` value | Behavior |
+| :--- | :--- |
+| `auto` (`container.AUTO`) | The container file is auto detected: checks for presence of either `Containerfile` or `Dockerfile` |
+| `image:<name>` (`container.IMAGE_PREFIX`) | The portion after `image:` is treated as the image to download. No image build is done |
+| Any other value | Treated as the file name to use as the container file |
 
 A sample program using the container `config` is
 
@@ -64,23 +70,29 @@ app = ace.app("My App",
        ) 
 ```
 
-With the default server config, both `proxy.config(container.URL)` and `container.config(...)` are approved implicitly. That default `container.config(...)` approval does not allow secrets. Add an explicit `ace.permission("container.in", "config", ..., secrets=[...])` entry when the app needs to pass secrets to the container, or when you want to narrow the allowed arguments. Declaring the secrets does not by itself grant them: the app still deploys without approval (the config call is allowed by the server config), but the secrets resolve only once the app is approved with `openrun app approve` or `--approve`. Create and reload print a warning while the declared access is not approved. The built-in specs declare this permission with their `secrets` param as the allowlist; it is empty by default, so set it to pass secrets, e.g. `--param secrets='[["DB_PASSWORD"]]'`.
+With the default server config, both `proxy.config(container.URL)` and `container.config(...)` are approved implicitly. That default `container.config(...)` approval does not allow secrets:
+
+- Add an explicit `ace.permission("container.in", "config", ..., secrets=[...])` entry when the app needs to pass secrets to the container, or when you want to narrow the allowed arguments.
+- Declaring the secrets does not by itself grant them: the app still deploys without approval (the config call is allowed by the server config), but the secrets resolve only once the app is approved with `openrun app approve` or `--approve`. Create and reload print a warning while the declared access is not approved.
+- The built-in specs declare this permission with their `secrets` param as the allowlist; it is empty by default, so set it to pass secrets, e.g. `--param secrets='[["DB_PASSWORD"]]'`.
 
 ## sidecar
 
 The `sidecar` API declares one sidecar container: a background worker running the app's own image with a different command, or a companion service from another image. The result is passed to `container.config` in the `sidecars` list. The API supports the following parameters:
 
-- **name** (string, required) : the sidecar name, 1 to 20 lower case letters, digits and dashes, starting with a letter or digit. Used as the container name suffix and in the `CL_SIDECAR_<NAME>_ADDR` env var name
-- **image** (string, optional) : the image for the sidecar, like `image:memcached:1.6-alpine` (the `image:` prefix is optional). If empty, the sidecar runs the app's own image
-- **command** (list of strings, optional) : overrides the image entrypoint. Required for sidecars running the app image, since the image default command is the app's web server
-- **args** (list of strings, optional) : arguments passed to the command (or to the image entrypoint)
-- **env** (dict, optional) : the sidecar's own environment variables, overlaid on the inherited app env
-- **inherit_env** (bool, optional) : whether to copy the app's env (params, binding env vars, `CL_*` vars) into the sidecar. Defaults to True for app image sidecars and False for foreign images. The app `PORT` is never inherited; a sidecar with a `port` gets `PORT` set to its own port
-- **port** (int, optional) : the port the sidecar listens on. Sidecars with a port are readiness checked before the app container starts, and the app gets `CL_SIDECAR_<NAME>_ADDR` to reach them. Must differ from the app port and from other sidecars
-- **health** (string, optional) : the readiness probe for sidecars with a port. Empty does a TCP connect to the port, `http:/path` does an HTTP GET expecting a 200 response
-- **volumes** (list of strings, optional) : same syntax as the `config` `volumes`; a named volume also used by the app refers to the same volume
-- **always_on** (bool, optional) : Docker/Podman only, keep the sidecar running when the app container is stopped for idleness. Defaults to True for sidecars without a port (workers) and False for sidecars with a port
-- **options** (dict, optional) : container options for the sidecar, same keys as the app container options `--copt` (`kubernetes.cpus`, `kubernetes.memory`, ...)
+| Parameter | Type | Required | Notes |
+| :--- | :--- | :--- | :--- |
+| **name** | string | yes | The sidecar name, 1 to 20 lower case letters, digits and dashes, starting with a letter or digit. Used as the container name suffix and in the `CL_SIDECAR_<NAME>_ADDR` env var name |
+| **image** | string | no | The image for the sidecar, like `image:memcached:1.6-alpine` (the `image:` prefix is optional). If empty, the sidecar runs the app's own image |
+| **command** | list of strings | no | Overrides the image entrypoint. Required for sidecars running the app image, since the image default command is the app's web server |
+| **args** | list of strings | no | Arguments passed to the command (or to the image entrypoint) |
+| **env** | dict | no | The sidecar's own environment variables, overlaid on the inherited app env |
+| **inherit_env** | bool | no | Whether to copy the app's env (params, binding env vars, `CL_*` vars) into the sidecar. Defaults to True for app image sidecars and False for foreign images. The app `PORT` is never inherited; a sidecar with a `port` gets `PORT` set to its own port |
+| **port** | int | no | The port the sidecar listens on. Sidecars with a port are readiness checked before the app container starts, and the app gets `CL_SIDECAR_<NAME>_ADDR` to reach them. Must differ from the app port and from other sidecars |
+| **health** | string | no | The readiness probe for sidecars with a port. Empty does a TCP connect to the port, `http:/path` does an HTTP GET expecting a 200 response |
+| **volumes** | list of strings | no | Same syntax as the `config` `volumes`; a named volume also used by the app refers to the same volume |
+| **always_on** | bool | no | Docker/Podman only, keep the sidecar running when the app container is stopped for idleness. Defaults to True for sidecars without a port (workers) and False for sidecars with a port |
+| **options** | dict | no | Container options for the sidecar, same keys as the app container options `--copt` (`kubernetes.cpus`, `kubernetes.memory`, ...) |
 
 Each `container.sidecar` call needs its own `container.in sidecar` permission, with the sidecar name and image as the positional arguments, so foreign images are visible during app approval:
 
@@ -106,13 +118,15 @@ See [Sidecar Containers]({{< ref "docs/container/overview/#sidecar-containers" >
 
 The `run` API runs a command inside a new container created from the app's image (like `docker run --rm image command args...`), with the app's environment (params, binding env vars) and configured volumes. The container is removed after the command completes. The API supports the following parameters:
 
-- **path** (string, required) : the command to run inside the container
-- **args** (list of strings, optional) : arguments to pass to the command
-- **process_partial** (bool, optional) : whether to process the output when the command fails
-- **stdout_file** (bool, optional) : whether to send the stdout for the command to a temporary file on disk. The response `value` is then the temp file name; the app is responsible for deleting the file. Not supported with `stream`
-- **parse** (string, optional) : whether to parse the stdout. Supported options are `json` (the whole output is one JSON object, returned as a list with that one dict) and `jsonlines` (each output line is a JSON object, returned as a list of dicts)
-- **stream** (bool, optional) : return the output as a stream which is read as the response is being generated, instead of buffering the full output; an action handler can return it in `ace.result(stream=...)` to show the output live (see [streaming output]({{< ref "docs/actions/#streaming-output" >}})). Not supported with `parse="json"`
-- **include_stderr** (bool, optional, default True) : whether to include the stderr output in the command output. If False, stderr is reported only in the error message when the command fails
+| Parameter | Type | Required | Notes |
+| :--- | :--- | :--- | :--- |
+| **path** | string | yes | The command to run inside the container |
+| **args** | list of strings | no | Arguments to pass to the command |
+| **process_partial** | bool | no | Whether to process the output when the command fails |
+| **stdout_file** | bool | no | Whether to send the stdout for the command to a temporary file on disk. The response `value` is then the temp file name; the app is responsible for deleting the file. Not supported with `stream` |
+| **parse** | string | no | Whether to parse the stdout. Supported options are `json` (the whole output is one JSON object, returned as a list with that one dict) and `jsonlines` (each output line is a JSON object, returned as a list of dicts) |
+| **stream** | bool | no | Return the output as a stream which is read as the response is being generated, instead of buffering the full output; an action handler can return it in `ace.result(stream=...)` to show the output live (see [streaming output]({{< ref "docs/actions/#streaming-output" >}})). Not supported with `parse="json"` |
+| **include_stderr** | bool | no, default True | Whether to include the stderr output in the command output. If False, stderr is reported only in the error message when the command fails |
 
 The response format is the same as the `exec` plugin [`run`]({{< ref "/docs/plugins/catalog/#run" >}}) API: a list of output lines by default, parsed JSON with `parse`, a temp file name with `stdout_file`. The `env` and `cwd` parameters of `exec.run` are not used in container mode; the container gets the app's environment.
 
@@ -137,6 +151,6 @@ app = ace.app(param.app_name + " : " + param.image ,
 )
 ```
 
-The explicit `container.in.run` permission is still required in this example. `container.config(...)` is implicitly approved by default without secret access. Add an explicit `ace.permission("container.in", "config", ..., secrets=[...])` entry if the config call needs to resolve secrets, or if the app needs to restrict the allowed arguments for that config call, and approve the app for the declared secrets to resolve.
+The explicit `container.in.run` permission is still required in this example. `container.config(...)` is implicitly approved by default without secret access; see the [config](#config) section for when an explicit `ace.permission("container.in", "config", ..., secrets=[...])` entry is needed and how the declared secrets get approved.
 
 <!-- prettier-ignore-end -->

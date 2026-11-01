@@ -12,19 +12,23 @@ style=ace.style("daisyui")
 
 in the app definition. The fields in the `ace.style` structure are:
 
-|    Property     | Optional |   Type   | Default |                                  Notes                                   |
-| :-------------: | :------: | :------: | :-----: | :----------------------------------------------------------------------: |
-|     library     |  false   |  string  |         | The library to use, url to classless library, "tailwindcss" or "daisyui" |
-|     themes      |   true   | string[] |   []    |                      The daisyui themes to include                       |
-| disable_watcher |   true   |   bool   |  false  |   Whether to disable the tailwind watcher process startup in dev mode    |
-|      light      |   true   |  string  | emerald |            The DaisyUI theme to use in light mode for Actions            |
-|      dark       |   true   |  string  |  night  |            The DaisyUI theme to use in dark mode for Actions             |
+| Property | Optional | Type | Default | Notes |
+| :--- | :--- | :--- | :--- | :--- |
+| library | false | string | | The library to use, url to classless library, "tailwindcss" or "daisyui" |
+| themes | true | string[] | [] | The daisyui themes to include |
+| disable_watcher | true | bool | false | Whether to disable the tailwind watcher process startup in dev mode |
+| light | true | string | emerald | The DaisyUI theme to use in light mode for Actions |
+| dark | true | string | night | The DaisyUI theme to use in dark mode for Actions |
 
 Theme names, `custom_themes` names, property names and values, and the `routing.template_locations` patterns are written into the generated tailwind config, so they cannot contain `{`, `}`, `;`, `@`, quotes, a backslash or newlines.
 
 ## Classless CSS
 
-If the library property is a url, it should point to a publicly accessible style file. The style file is downloaded into the `static/gen/css/style.css` file. The download refuses hosts resolving to loopback, private or link-local addresses (also when going through `HTTPS_PROXY`, as described for [JavaScript libraries]({{< ref "docs/app/javascript" >}})), follows at most five redirects (never from https to http) and is capped at 128MB. The file is automatically included as part of the `openrun_gen_import` template.
+If the library property is a url, it should point to a publicly accessible style file. The style file is downloaded into the `static/gen/css/style.css` file and automatically included as part of the `openrun_gen_import` template. The download:
+
+- refuses hosts resolving to loopback, private or link-local addresses (also when going through `HTTPS_PROXY`, as described for [JavaScript libraries]({{< ref "docs/app/javascript" >}}))
+- follows at most five redirects (never from https to http)
+- is capped at 128MB
 
 For example,
 
@@ -55,16 +59,18 @@ tailwind_version = 4
 file_watcher_debounce_millis = 300
 ```
 
-`tailwindcss_command` is the tailwindcss executable used to start the watcher: a name looked up in the `PATH` or a path. Arguments are not supported, OpenRun generates the watcher flags. If the standalone version is being used change to
+| Setting | Default | Meaning |
+| :--- | :--- | :--- |
+| `tailwindcss_command` | `tailwindcss` | The tailwindcss executable used to start the watcher: a name looked up in the `PATH` or a path. Arguments are not supported, OpenRun generates the watcher flags |
+| `tailwind_version` | `4` | The generated config format. `4` generates Tailwind 4/daisyUI 5 CSS-first config in `style/input.css`. `3` uses the legacy Tailwind 3/daisyUI 4 `tailwind.config.js` config format. Values below `3` are rejected |
+| `file_watcher_debounce_millis` | `300` | Prevents repeated reloads of the application files during dev mode. On a slower machine, this value might have to be increased, but setting it too high makes the reload slower |
+
+If the standalone version is being used change to
 
 ```toml {filename="openrun.toml"}
 [system]
 tailwindcss_command = "/path/to/tailwindcss"
 ```
-
-`tailwind_version` controls the generated config format. The default is `4`, which generates Tailwind 4/daisyUI 5 CSS-first config in `style/input.css`. Set it to `3` to use the legacy Tailwind 3/daisyUI 4 `tailwind.config.js` config format. Values below `3` are rejected.
-
-`file_watcher_debounce_millis` is used to prevent repeated reloads of the application files during dev mode. On slower machine, this value might have to be increased, but setting it too high will cause the reload to be slower.
 
 ## DaisyUI
 
@@ -110,4 +116,6 @@ style=ace.style("daisyui",
                 })
 ```
 
-OpenRun generates a daisyUI theme plugin block per custom theme in `style/input.css` (using the prebundled daisyUI theme plugin, downloaded automatically like the main plugin; `daisyui_theme_url` overrides the download location). Custom themes can be mixed with the bundled theme names in `themes`. When only custom themes are used, the bundled themes are disabled, keeping the generated CSS small.
+- OpenRun generates a daisyUI theme plugin block per custom theme in `style/input.css`, using the prebundled daisyUI theme plugin, downloaded automatically like the main plugin. `daisyui_theme_url` overrides the download location.
+- Custom themes can be mixed with the bundled theme names in `themes`.
+- When only custom themes are used, the bundled themes are disabled, keeping the generated CSS small.

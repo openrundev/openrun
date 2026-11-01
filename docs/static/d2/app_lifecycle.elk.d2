@@ -1,0 +1,25 @@
+# https://d2lang.com diagram. Use make update-diagrams to generate SVG; the layout engine is the suffix in the file name.
+direction: down
+
+source: {
+  label: "App source"
+  disk: "Local disk\n~/myappcode"
+  git: "Git\ngithub.com/myorg/repo"
+}
+
+dev: "Dev app\n/myapp_dev\nlive reload on save" {style.stroke-dash: 3}
+
+openrun: {
+  label: "Prod app with its staging app"
+  style: {stroke-width: 2}
+  stage: "Staging app\nstage.localhost/myapp\nverify here"
+  prod: "Production app\nlocalhost/myapp\nversioned"
+  stage -> prod: "openrun app promote"
+}
+
+preview: "Preview apps\nreview environment\nfor a code change" {style.stroke-dash: 3}
+
+source.disk -> dev: "--dev"
+source.disk -> openrun.stage: "app reload"
+source.git -> openrun.stage: "app reload or sync"
+source.git -> preview: "openrun preview create\nfrom a git commit"

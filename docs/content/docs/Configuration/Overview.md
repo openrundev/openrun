@@ -4,29 +4,39 @@ weight: 100
 summary: "Overview of OpenRun configuration, at the server level and client level and the $OPENRUN_HOME location for files"
 ---
 
+This page covers where OpenRun reads its configuration from: the static `openrun.toml` for the [server](#openrun-server) and the [client CLI](#openrun-client-cli), the [home directory](#home-directory) layout, server-wide [app config](#app-config), [reading config from app code](#config-access-from-code), the [dynamic config](#dynamic-config) which needs no restart, and the remaining [general server settings](#other-server-settings).
+
 ## OpenRun Server
 
-The OpenRun server picks up its configuration from the config file at startup. All the parameters have default values, specified in the code at [openrun.default.toml](https://github.com/openrundev/openrun/blob/main/internal/system/openrun.default.toml).
+The OpenRun server picks up its configuration from the config file at startup. All the parameters have default values, specified in the code at [openrun.default.toml](https://github.com/openrundev/openrun/blob/main/internal/system/openrun.default.toml). Values in the user specified config take precedence over the default config values in the source code.
 
 Select a config file with the global `--config-file` (`-c`) flag, or with `CL_CONFIG_FILE`. The flag takes precedence. Otherwise, OpenRun uses `$OPENRUN_HOME/openrun.toml` or discovers an existing installation as described below.
-
-Values in the user specified config take precedence over the default config values in the source code.
 
 ### Server Commands
 
 The server is managed with the `openrun server` sub-commands:
 
-- `start`: start the server in the foreground (install as a service, see [Installation]({{< ref "docs/installation" >}})).
-- `stop [--wait]`: stop the server. `--wait` blocks until the server process has fully exited (the final litestream sync runs as the process exits).
-- `status`: prints `ok` when the server connection works. `version`: reports the server's build version and commit.
-- `restart`: zero downtime in-place restart (Linux/macOS): re-executes the server binary, reloading `openrun.toml` and picking up a new binary while handing over the listeners. `SIGHUP` does the same. `[restart] drain_timeout_secs` (default 300) is the max wait on shutdown for in-flight requests and websockets, `upgrade_timeout_secs` (default 90) the max wait for the new process to report ready.
-- `show-config` / `update-config <file> [--force]`: read and update the [dynamic config](#dynamic-config).
-- `metadata-status`: reports the metadata database connection health and SQLite maintenance metrics as JSON (exit code 1 when unhealthy).
+| Command | Effect |
+| :--- | :--- |
+| `start` | Start the server in the foreground (install as a service, see [Installation]({{< ref "docs/installation" >}})). |
+| `stop [--wait]` | Stop the server. `--wait` blocks until the server process has fully exited (the final litestream sync runs as the process exits). |
+| `status` | Prints `ok` when the server connection works. |
+| `version` | Reports the server's build version and commit. |
+| `restart` | Zero downtime in-place restart (Linux/macOS): re-executes the server binary, reloading `openrun.toml` and picking up a new binary while handing over the listeners. `SIGHUP` does the same. |
+| `show-config` / `update-config <file> [--force]` | Read and update the [dynamic config](#dynamic-config). |
+| `metadata-status` | Reports the metadata database connection health and SQLite maintenance metrics as JSON (exit code 1 when unhealthy). |
+
+Restart timeouts, under `[restart]`:
+
+| Setting | Default | Meaning |
+| :--- | :--- | :--- |
+| `drain_timeout_secs` | 300 | Max wait on shutdown for in-flight requests and websockets |
+| `upgrade_timeout_secs` | 90 | Max wait for the new process to report ready |
 
 ### Environment Variables
 
 | Variable | Purpose |
-| --- | --- |
+| :--- | :--- |
 | `OPENRUN_HOME` | Home directory for the server and client, see below |
 | `CL_CONFIG_FILE` | Config file path, same as `--config-file` |
 | `OPENRUN_SERVER_URI` | Server to connect to, same as the global `--server-uri` flag; takes precedence over `server_uri` in the config file |
@@ -36,15 +46,24 @@ The server is managed with the `openrun server` sub-commands:
 
 ## Home Directory
 
-Set `OPENRUN_HOME` to choose the server home directory. If only a config file is specified, its parent directory becomes the home. If neither is set, OpenRun looks for an existing config beside its installation, then in platform-specific Homebrew or system locations such as `/var/lib/openrun` on Linux or `%ProgramData%\openrun` on Windows. If none is found, it uses `$HOME/openrun`.
+The server home directory is resolved in this order:
 
-Automatic first-start initialization applies only to this final fallback. With an explicit home or config path, initialize the config yourself as described in [Initial Configuration]({{< ref "docs/installation/#initial-configuration" >}}). Without a saved password hash, a generated password changes on each server start. The home directory stores:
+1. `OPENRUN_HOME`, if set.
+2. If only a config file is specified, its parent directory becomes the home.
+3. An existing config beside the OpenRun installation, then platform-specific Homebrew or system locations such as `/var/lib/openrun` on Linux or `%ProgramData%\openrun` on Windows.
+4. If none is found, `$HOME/openrun`.
 
-- The default config file, `$OPENRUN_HOME/openrun.toml`
-- The sqlite database containing the metadata information, default is `$OPENRUN_HOME/metadata/clace_metadata.db`
-- The logs for the service, under the `logs` folder.
-- The config folder contains the certificates to use for TLS.
-- The run folder contains app specific temporary files.
+Automatic first-start initialization applies only to this final fallback. With an explicit home or config path, initialize the config yourself as described in [Initial Configuration]({{< ref "docs/installation/#initial-configuration" >}}). Without a saved password hash, a generated password changes on each server start.
+
+The home directory stores:
+
+| Location | Contents |
+| :--- | :--- |
+| `$OPENRUN_HOME/openrun.toml` | The default config file |
+| `$OPENRUN_HOME/metadata/clace_metadata.db` | The sqlite database containing the metadata information (default location) |
+| `logs` | The logs for the service |
+| `config` | The certificates to use for TLS |
+| `run` | App specific temporary files |
 
 ## OpenRun Client CLI
 
@@ -86,7 +105,11 @@ app = ace.app("My App",
 
 When the same property is set in multiple places, the server `[app_config]` value is applied first, then the `app.star` settings, then the app metadata value set with `--conf`.
 
+### Request Body Limit
+
 The request body of the Starlark handler routes (html, fragment and api routes) is capped by `max_request_body_bytes` under `[app_config]`, 10MB by default: a larger body is refused with a 413 status. Proxied routes are not capped, and action routes have their own `action.max_request_body_bytes` cap.
+
+### Version Retention
 
 Version retention is also configured under `[app_config]`. By default, OpenRun keeps the current version plus 5 older versions for each app. Older versions are cleaned up automatically after operations which create or promote app versions.
 
@@ -105,18 +128,26 @@ openrun app update conf --promote fs.retain_versions=10 /myapp
 
 Setting `fs.retain_versions = 0` keeps only the current version for that app.
 
+### Static Files from Disk
+
 The `static_from_disk` property makes an app with a local disk source serve its files directly from the source directory instead of copying them into the metadata database, as done by the [static_disk spec]({{< ref "/docs/container/appspecs" >}}). It can be set for one app with `openrun app create --conf static_from_disk=true <source_dir> <app_path>`, and requires the app source to be a local disk directory.
 
 ## Config Access from Code
 
-[App Params]({{< ref "docs/develop/#app-parameters" >}}) are the primary user configurable properties for apps. For cases where properties need to be read from `openrun.toml` config file or from env, the config builtin can be used. This is available as `config` in app declarations (`apps.star`) and in `params.star`. In the app definition (`app.star`), this is available as `ace.config`.
+[App Params]({{< ref "docs/develop/#app-parameters" >}}) are the primary user configurable properties for apps. For cases where properties need to be read from `openrun.toml` config file or from env, use the config builtin. This is available as `config` in app declarations (`apps.star`) and in `params.star`. In the app definition (`app.star`), this is available as `ace.config`.
 
 The `config`/`ace.config` builtin supports the following parameters:
 
 - **key** (string, required) : the config key name
 - **default** (any, required) : the default value
 
-`_branch` is a special key which resolves to the git branch from which the app declaration is loaded. `_dev` is true if the apply is run in dev mode. In `app.star`, `ace.config("_app_url", "")` is a special key which resolves to the url the app is served at.
+Special keys:
+
+| Key | Available in | Resolves to |
+| :--- | :--- | :--- |
+| `_branch` | app declaration | The git branch from which the app declaration is loaded |
+| `_dev` | app declaration | True if the apply is run in dev mode |
+| `_app_url` | `app.star`, as `ace.config("_app_url", "")` | The url the app is served at |
 
 In `app.star`, a call to config like
 
@@ -151,7 +182,12 @@ This creates the app from the same branch as used during the `apply`/`sync` comm
 
 ## Dynamic Config
 
-The `openrun.toml` is statically read at service startup. In addition, dynamic config is supported which does not require a service restart. The current dynamic config is always available at `$OPENRUN_HOME/config/dynamic_config.json`. To make changes, copy this file to a new location, make updates and then run `openrun server update-config /tmp/dynamic-config.json`. This updates the service with the new config, persists the config to the metadata database and automatically notifies any additional OpenRun server instances to dynamically update its config.
+The `openrun.toml` is statically read at service startup. In addition, dynamic config is supported which does not require a service restart. The current dynamic config is always available at `$OPENRUN_HOME/config/dynamic_config.json`.
+
+To make changes:
+
+1. Copy `$OPENRUN_HOME/config/dynamic_config.json` to a new location and make updates.
+2. Run `openrun server update-config /tmp/dynamic-config.json`. This updates the service with the new config, persists the config to the metadata database and automatically notifies any additional OpenRun server instances to dynamically update its config.
 
 The basic format of this config is
 
@@ -182,22 +218,41 @@ Besides `rbac`, the dynamic config can carry two more sections, which take prece
 
 Only the config the console manages can be set dynamically, since `config:update` is held by operators who are not admin:
 
-| Kind     | Dynamically settable                                                                                                                                                                                                                                                                                          |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| entries  | `git_auth`, `auth`, `saml`, `secret`, `builder_agent`, `builder_profile`, `builder_git`                                                                                                                                                                                                                       |
-| settings | `security`: `app_default_auth_type`, `default_git_auth`                                                                                                                                                                                                                                                       |
-|          | `system`: `default_domain`, `stage_at`, `list_apps_title`, `show_hosted_with`                                                                                                                                                                                                                                 |
-|          | `api`: `external_url`, `access_token_ttl`, `refresh_token_ttl`, `grant_max_ttl`, `federated_identity_ttl`, `pat_default_ttl`, `rest.enable`, `rest.auth`, `rest.enable_apis`, `rest.disable_apis`, `mcp.enable`, `mcp.auth`, `mcp.enable_apis`, `mcp.disable_apis`, `mcp.skip_destructive_confirm`, `app_mcp.enable`, `app_mcp.allowed_auth`, `app_mcp.max_tools`, `app_mcp.list_ttl` |
-|          | `app_builder`: `enabled`, `default_builder_profile`, `preview_path`, `max_sessions`, `session_idle_mins`, `system_prompt`                                                                                                                                                                                     |
-|          | `app_config`, `node_config`: any key                                                                                                                                                                                                                                                                          |
+| Kind     | Section       | Dynamically settable |
+| :------- | :------------ | :------------------- |
+| entries  |               | `git_auth`, `auth`, `saml`, `secret`, `builder_agent`, `builder_profile`, `builder_git` |
+| settings | `security`    | `app_default_auth_type`, `default_git_auth` |
+| settings | `system`      | `default_domain`, `stage_at`, `list_apps_title`, `show_hosted_with` |
+| settings | `api`         | `external_url`, `access_token_ttl`, `refresh_token_ttl`, `grant_max_ttl`, `federated_identity_ttl`, `pat_default_ttl`, `rest.enable`, `rest.auth`, `rest.enable_apis`, `rest.disable_apis`, `mcp.enable`, `mcp.auth`, `mcp.enable_apis`, `mcp.disable_apis`, `mcp.skip_destructive_confirm`, `app_mcp.enable`, `app_mcp.allowed_auth`, `app_mcp.max_tools`, `app_mcp.list_ttl` |
+| settings | `app_builder` | `enabled`, `default_builder_profile`, `preview_path`, `max_sessions`, `session_idle_mins`, `system_prompt` |
+| settings | `app_config`, `node_config` | any key |
 
-Everything else, including every `unsafe_*` flag, is static `openrun.toml` config only. Setting it dynamically fails with an error naming the keys which can be set. A value persisted by an earlier version for a key which is now static only is ignored (with a warning in the server log); an `update-config` upload may carry such a value unchanged, but cannot change it.
+Everything else, including every `unsafe_*` flag, is static `openrun.toml` config only. Setting it dynamically fails with an error naming the keys which can be set.
 
-Making a config update will automatically update the `$OPENRUN_HOME/config/dynamic_config.json` file on all instances. The `show-config` command can also show the latest config. The version id is auto-generated with a unique value. Subsequent updates need to pass the current version id, the `update-config` will fail if a stale id is passed in. The `--force` option can be used to overwrite the config. The server keeps the last `metadata.config_history_versions` (default 20) config snapshots.
+{{% details title="Versioning and legacy values" closed="true" %}}
+
+- Making a config update automatically updates the `$OPENRUN_HOME/config/dynamic_config.json` file on all instances. The `show-config` command can also show the latest config.
+- The version id is auto-generated with a unique value. Subsequent updates need to pass the current version id; `update-config` fails if a stale id is passed in. The `--force` option overwrites the config.
+- The server keeps the last `metadata.config_history_versions` (default 20) config snapshots.
+- A value persisted by an earlier version for a key which is now static only is ignored (with a warning in the server log); an `update-config` upload may carry such a value unchanged, but cannot change it.
+
+{{% /details %}}
 
 ## Other Server Settings
 
-Most server sections are documented on their own pages: [Ports and Certificates]({{< ref "networking" >}}) for `[http]`, `[https]` and the domain settings in `[system]`, [Security]({{< ref "security" >}}), [Remote API and MCP]({{< ref "remoteaccess" >}}) for `[api]`, [Secrets]({{< ref "secrets" >}}), [Telemetry]({{< ref "telemetry" >}}) for `[telemetry]` and `[logging]`, [Container]({{< ref "docs/container" >}}) for the container, build and Kubernetes settings and [Litestream]({{< ref "docs/applications/litestream" >}}) for `[litestream.*]`. The remaining general settings, with their defaults, are:
+Most server sections are documented on their own pages:
+
+| Section | Page |
+| :--- | :--- |
+| `[http]`, `[https]` and the domain settings in `[system]` | [Ports and Certificates]({{< ref "networking" >}}) |
+| Security settings | [Security]({{< ref "security" >}}) |
+| `[api]` | [Remote API and MCP]({{< ref "remoteaccess" >}}) |
+| Secrets | [Secrets]({{< ref "secrets" >}}) |
+| `[telemetry]` and `[logging]` | [Telemetry]({{< ref "telemetry" >}}) |
+| Container, build and Kubernetes settings | [Container]({{< ref "docs/container" >}}) |
+| `[litestream.*]` | [Litestream]({{< ref "docs/applications/litestream" >}}) |
+
+The remaining general settings, with their defaults, are:
 
 ```toml {filename="openrun.toml"}
 [metadata]

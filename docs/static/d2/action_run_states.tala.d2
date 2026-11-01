@@ -1,0 +1,18 @@
+# https://d2lang.com diagram. Use make update-diagrams to generate SVG; the layout engine is the suffix in the file name.
+direction: right
+
+start: "Start\nform, REST, CLI or MCP" {shape: oval}
+running: "running" {style: {stroke-width: 2}}
+succeeded: "succeeded"
+failed: "failed"
+timed_out: "timed_out"
+canceled: "canceled"
+lost: "lost"
+
+start -> running: "is_async=True\nstarts a run"
+running -> succeeded: "result returned,\nor exit code 0"
+running -> failed: "handler error, param_errors\nor non-zero exit"
+running -> timed_out: "timeout or\naction.run_timeout"
+running -> canceled: "cancel from run page,\nCLI, REST or MCP"
+running -> lost: "node stopped,\nmarked after a minute"
+lost -> start: "start again" {style.stroke-dash: 3}

@@ -4,6 +4,15 @@ weight: 300
 summary: "Overview of OpenRun deployment on Kubernetes"
 ---
 
+On Kubernetes, OpenRun runs as a Deployment and starts each containerized app as its own Deployment and Service. Images are built in-cluster with Kaniko and pushed to a shared registry; app metadata lives in Postgres. This page covers:
+
+- [Installation](#installation) with the Helm chart, and [registry config](#registry-config) for the node container runtime
+- [Install using Terraform](#install-using-terraform) on AWS (EKS, ECR, RDS)
+- [Configuration](#configuration): enabling Kubernetes mode and namespaces
+- [Resources and autoscaling](#resources-and-autoscaling) per app
+- [Binding providers](#binding-providers) on multi-replica installs
+- [Architecture](#architecture): how resources are created, rolled out and cleaned up
+
 ## Installation
 
 OpenRun can be installed on a Kubernetes cluster using the Helm chart.
@@ -26,9 +35,12 @@ Running the Helm chart creates:
 - Optionally, a Postgres database for metadata. An external Postgres database can be used instead.
 - Optionally, a container registry is installed. An external registry can be used instead.
 
-SQLite based metadata is not supported when using Kubernetes. The Postgres metadata needs to be managed properly, with backups and scheduled upgrades. An externally managed Postgres installation is recommended for production Kubernetes OpenRun installations.
+| Component | Requirement |
+| :--- | :--- |
+| Metadata | Postgres. SQLite based metadata is not supported when using Kubernetes. The Postgres metadata needs to be managed properly, with backups and scheduled upgrades. An externally managed Postgres installation is recommended for production Kubernetes OpenRun installations. |
+| Registry | Required. The registry can be installed through the Helm chart or an external registry can be used. |
 
-A container registry is required for Kubernetes based OpenRun install. The registry can be installed through the Helm chart or an external registry can be used. An installation with external Postgres and Registry is shown below.
+An installation with external Postgres and Registry is shown below.
 
 <picture  class="responsive-picture" style="display: block; margin-left: auto; margin-right: auto;">
 <img alt="Kubernetes Deployment" src="/d2/k8s.svg">
@@ -36,7 +48,11 @@ A container registry is required for Kubernetes based OpenRun install. The regis
 
 ## Registry Config
 
-OpenRun on Kubernetes requires a registry to which Kaniko built images can be pushed and from which pods can pull. Image pulls require a registry trusted by the node container runtime. A private CA can be configured on each node; for example, K3s supports `ca_file` in its [private registry configuration](https://docs.k3s.io/installation/private-registry). An alternative for local testing is an explicitly configured HTTP registry. Details depend on the Kubernetes installation being used. For K3S, install the `registry:2` images as a service. If registry is started at `registry.svc.cluster.local:5000`, edit `/etc/rancher/k3s/registries.yaml` to add:
+OpenRun on Kubernetes requires a registry to which Kaniko built images can be pushed and from which pods can pull. Image pulls require a registry trusted by the node container runtime. A private CA can be configured on each node; for example, K3s supports `ca_file` in its [private registry configuration](https://docs.k3s.io/installation/private-registry). An alternative for local testing is an explicitly configured HTTP registry. Details depend on the Kubernetes installation being used.
+
+{{< tabs >}}
+{{< tab name="K3s" >}}
+Install the `registry:2` images as a service. If registry is started at `registry.svc.cluster.local:5000`, edit `/etc/rancher/k3s/registries.yaml` to add:
 
 ```{filename="/etc/rancher/k3s/registries.yaml"}
 mirrors:
@@ -46,8 +62,9 @@ mirrors:
 ```
 
 The registry IP might have to added to `/etc/hosts` depending on how it is accessed.
-
-If using OrbStack, run the `registry:2` service and run `orb config docker` and add
+{{< /tab >}}
+{{< tab name="OrbStack" >}}
+Run the `registry:2` service and run `orb config docker` and add
 
 ```
 {
@@ -62,26 +79,44 @@ To install OpenRun, run
 ```
 helm --kube-context orbstack upgrade --install openrun openrun/openrun --namespace openrun --create-namespace --wait --timeout 3m --set config.registry.url=registry.orb.local:5000
 ```
+{{< /tab >}}
+{{< /tabs >}}
 
 The Helm chart sets `insecure = true` by default. Change that to `insecure = false` if using a HTTPS registry.
 
 ## Install using Terraform
 
-To install a production-ready OpenRun installation on AWS, with EKS cluster, ECR registry and RDS Postgres for metadata, do the following:
+The Terraform config creates a production-ready OpenRun installation on AWS, with EKS cluster, ECR registry and RDS Postgres for metadata.
+
+{{% steps %}}
+
+### Check out and configure
 
 - Check out the terraform config `git clone git@github.com:openrundev/openrun.git`
 - Switch to the config directory `cd openrun/deploy/terraform`
 - Create a copy of sample config `cp tfvars.sample terraform.tfvars`
 - Update `terraform.tfvars`, set the values as appropriate.
-- Ensure that AWS CLI is installed and credentials are configured. Also, ensure that Helm CLI is installed and the OpenRun repo is updated: `helm repo add openrun https://openrundev.github.io/openrun-helm-charts/; helm repo update`
-- Terraform state is by default saved on local disk. If required, update to use S3
+
+### Prepare the tools
+
+- Ensure that AWS CLI is installed and credentials are configured.
+- Ensure that Helm CLI is installed and the OpenRun repo is updated: `helm repo add openrun https://openrundev.github.io/openrun-helm-charts/; helm repo update`
+- Terraform state is by default saved on local disk. If required, update to use S3.
+
+### Apply
+
 - Run `terraform init`. Add `-backend-config` if using remote state.
 - Run `terraform plan --var-file terraform.tfvars`, verify the plan.
 - Run `terraform apply --var-file terraform.tfvars`, or apply the plan created earlier.
 
-Save the password for the admin user using `terraform output openrun_admin_password`. Add the DNS entries as output under `openrun_dns_records`. The `root_a` and `wildcard_a` DNS entries enable installing apps at the domain level. Wait for the DNS entries to propagate before attempting to access the url (to allow TLS cert creation to work).
+### After installation
 
-After installation, run the CLI inside an OpenRun server pod with `kubectl exec -n openrun -it <openrun-pod> -- openrun sync schedule --approve --promote <git-config-path>` to set up sync. All subsequent operations are done by checking in config updates to the app config in Git.
+- Save the password for the admin user using `terraform output openrun_admin_password`.
+- Add the DNS entries as output under `openrun_dns_records`. The `root_a` and `wildcard_a` DNS entries enable installing apps at the domain level.
+- Wait for the DNS entries to propagate before attempting to access the url (to allow TLS cert creation to work).
+- Run the CLI inside an OpenRun server pod with `kubectl exec -n openrun -it <openrun-pod> -- openrun sync schedule --approve --promote <git-config-path>` to set up sync. All subsequent operations are done by checking in config updates to the app config in Git.
+
+{{% /steps %}}
 
 To destroy the resource created,
 
@@ -97,7 +132,10 @@ container_command = "kubernetes"
 
 is the main config which enables Kubernetes mode. By default, Kaniko based builds are used. Delegated builds can be configured instead, see [delegated builds]({{< ref "/docs/container/build/#delegated-build-mode" >}}). See [registry]({{< ref "/docs/container/build/#builder-and-registry-config" >}}) for registry config.
 
-OpenRun service and Kaniko jobs run in the main namespace (default `openrun`). When the server runs as a pod, its own namespace is used; otherwise `kubernetes.namespace` in `openrun.toml` sets it. Applications are started in the `<main_ns>-apps` namespace (default `openrun-apps`), which is automatically created by the Helm chart. It has to exist before apps are started.
+| Namespace | Default | Used for |
+| :--- | :--- | :--- |
+| Main | `openrun` | OpenRun service and Kaniko jobs. When the server runs as a pod, its own namespace is used; otherwise `kubernetes.namespace` in `openrun.toml` sets it. |
+| Apps | `<main_ns>-apps` (`openrun-apps`) | Applications. Automatically created by the Helm chart; it has to exist before apps are started. |
 
 ```toml {filename="openrun.toml"}
 [kubernetes]
@@ -123,19 +161,31 @@ app("/api", "github.com/myorg/api", spec="container",
     app_config={"container.idle_shutdown_secs": 0})
 ```
 
-`cpus` sets the app container's CPU request, without a CPU limit. `memory` sets both its memory request and limit. Kubernetes-specific options can use the `kubernetes.` prefix so they are ignored by Docker and Podman.
+| Option | Default | Effect |
+| :--- | :--- | :--- |
+| `cpus` | | The app container's CPU request, without a CPU limit |
+| `memory` | | Both the memory request and limit of the app container |
+| `kubernetes.min_replicas` | `1` | Initial replica count, for stateless apps |
+| `kubernetes.max_replicas` | | When greater than `1`, OpenRun creates a HorizontalPodAutoscaler with a minimum of at least one replica |
+| `app_config.kubernetes.scaling_threshold_cpu` | `80` | Target CPU utilization (percent) of the HPA, relative to the CPU request |
 
-For stateless apps, `min_replicas` sets the initial replica count (default `1`). When `max_replicas` is greater than `1`, OpenRun creates a HorizontalPodAutoscaler with a minimum of at least one replica. It targets CPU utilization relative to the CPU request, using `app_config.kubernetes.scaling_threshold_cpu` (default `80` percent). With app sidecars, the metric measures the main app container's CPU. Memory limits do not enable memory-based autoscaling.
+Kubernetes-specific options can use the `kubernetes.` prefix so they are ignored by Docker and Podman.
 
-Configure a CPU request and ensure the cluster provides resource metrics, typically through Metrics Server. See the [Kubernetes HPA documentation](https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/) for metrics requirements.
-
-OpenRun's idle shutdown still applies independently of replica minimums. The example disables it with `container.idle_shutdown_secs = 0` to keep the app running after startup. Keep the default idle timeout if the app should scale to zero without traffic. Resources are created on first access or deployment verification.
-
-Apps with persistent volumes, including SQLite bindings, always run with one replica and the `Recreate` strategy. OpenRun ignores higher replica counts and does not create an HPA for these apps.
+- **HPA metric:** with app sidecars, the metric measures the main app container's CPU. Memory limits do not enable memory-based autoscaling.
+- **Metrics requirement:** configure a CPU request and ensure the cluster provides resource metrics, typically through Metrics Server. See the [Kubernetes HPA documentation](https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/) for metrics requirements.
+- **Idle shutdown:** OpenRun's idle shutdown still applies independently of replica minimums. The example disables it with `container.idle_shutdown_secs = 0` to keep the app running after startup. Keep the default idle timeout if the app should scale to zero without traffic.
+- **Lazy creation:** resources are created on first access or deployment verification.
+- **Persistent volumes:** apps with persistent volumes, including SQLite bindings, always run with one replica and the `Recreate` strategy. OpenRun ignores higher replica counts and does not create an HPA for these apps.
 
 ## Binding Providers
 
-Out-of-process [binding providers](https://github.com/openrundev/bindings) (sqlserver, oracle, mongodb, snowflake, clickhouse, databricks) work on Kubernetes without any special setup: installed providers are registered in the metadata database (Postgres, required for Kubernetes installs), which is the source of truth. Each server replica materializes the provider executables into a node-local cache directory at startup, before serving traffic, and re-downloads them (with checksum verification) whenever a pod starts on a fresh node. Installs and uninstalls propagate to all replicas through Postgres notifications, so `openrun provider install` works on multi-replica deployments exactly as on a single server.
+Out-of-process [binding providers](https://github.com/openrundev/bindings) (sqlserver, oracle, mongodb, snowflake, clickhouse, databricks) work on Kubernetes without any special setup:
+
+- **Source of truth:** installed providers are registered in the metadata database (Postgres, required for Kubernetes installs).
+- **Per replica:** each server replica materializes the provider executables into a node-local cache directory at startup, before serving traffic, and re-downloads them (with checksum verification) whenever a pod starts on a fresh node.
+- **Propagation:** installs and uninstalls propagate to all replicas through Postgres notifications, so `openrun provider install` works on multi-replica deployments exactly as on a single server.
+
+### Declarative install
 
 For declarative, config-managed deployments, declare the providers in the Helm values instead of using the CLI:
 
@@ -166,11 +216,16 @@ mongodb = "v0.1.0"
 sqlserver = "v0.1.0"
 ```
 
-Every replica installs the declared providers at startup, downloading them from `bindings.release_url_template` (the openrundev/bindings GitHub releases by default; point it at an internal mirror when the cluster restricts egress). Append `@sha256:<hex>` to a version to pin the binary digest, GitOps-style; the install fails before anything is written or executed if the download does not match. For mixed-architecture clusters, list one digest per platform separated by commas (`v0.1.0@sha256:<amd64-hex>,<arm64-hex>`); each replica's download must match one of them. Providers declared this way cannot be modified with the provider CLI; version upgrades are config changes followed by a rollout. Removing an entry does not uninstall the provider: it stays installed and becomes manageable with the provider CLI (`openrun provider uninstall`). Providers installed imperatively with `openrun provider install` can be used alongside config-declared ones.
+- **Startup install:** every replica installs the declared providers at startup, downloading them from `bindings.release_url_template` (the openrundev/bindings GitHub releases by default; point it at an internal mirror when the cluster restricts egress).
+- **Digest pinning:** append `@sha256:<hex>` to a version to pin the binary digest, GitOps-style; the install fails before anything is written or executed if the download does not match.
+- **Mixed-architecture clusters:** list one digest per platform separated by commas (`v0.1.0@sha256:<amd64-hex>,<arm64-hex>`); each replica's download must match one of them.
+- **CLI interaction:** providers declared this way cannot be modified with the provider CLI; version upgrades are config changes followed by a rollout. Removing an entry does not uninstall the provider: it stays installed and becomes manageable with the provider CLI (`openrun provider uninstall`). Providers installed imperatively with `openrun provider install` can be used alongside config-declared ones.
 
-A replica that misses an install notification (for example after a transient database disconnect) recovers on demand: a binding operation against a service type that is installed but not yet registered triggers a reconcile of that provider before the operation proceeds.
-
-The provider processes run inside the OpenRun server pod, so a provider binary must run in the server container image; the published providers are static pure-Go binaries and need nothing beyond the stock image. Provider startup materialization completes before the server starts serving, so binding operations never race provider registration during a rollout.
+{{% details title="Recovery and provider process details" closed="true" %}}
+- A replica that misses an install notification (for example after a transient database disconnect) recovers on demand: a binding operation against a service type that is installed but not yet registered triggers a reconcile of that provider before the operation proceeds.
+- The provider processes run inside the OpenRun server pod, so a provider binary must run in the server container image; the published providers are static pure-Go binaries and need nothing beyond the stock image.
+- Provider startup materialization completes before the server starts serving, so binding operations never race provider registration during a rollout.
+{{% /details %}}
 
 ### OCI image install
 
@@ -183,7 +238,9 @@ bindings:
     sqlserver: ghcr.io/openrundev/openrun-binding-sqlserver@sha256:8f4e...
 ```
 
-The Helm chart renders one init container per provider, which copies the binary from its image into a shared volume (`export` subcommand of the provider binary); the server registers the pre-placed providers at startup, with no downloads and no database registration. Integrity comes from the image digests that placed the binaries — reference images by digest where policy requires it — and the server pins the discovered binary's checksum so every provider launch verifies the file has not changed. Images are pulled by the container runtime, so `imagePullSecrets` and registry mirrors apply as for any other image.
+- **How it works:** the Helm chart renders one init container per provider, which copies the binary from its image into a shared volume (`export` subcommand of the provider binary). The server registers the pre-placed providers at startup, with no downloads and no database registration.
+- **Integrity:** comes from the image digests that placed the binaries (reference images by digest where policy requires it). The server pins the discovered binary's checksum so every provider launch verifies the file has not changed.
+- **Image pulls:** images are pulled by the container runtime, so `imagePullSecrets` and registry mirrors apply as for any other image.
 
 With either declarative path, `bindings.disableInstall: true` additionally rejects the imperative `openrun provider install`/`uninstall` CLI on the deployment, making the chart values the only way providers are added.
 
@@ -191,16 +248,33 @@ With either declarative path, `bindings.disableInstall: true` additionally rejec
 
 OpenRun is installed as a Kubernetes Deployment, with a Service for routing API calls. For each containerized app installed on OpenRun, a ClusterIP Service is created for app traffic. API calls to the OpenRun API Server are routed to the app-specific Service using its cluster IP.
 
-All Kubernetes resources are created lazily, on the first API call to the app (or when reload/apply is done with the verify option). If an app is running version 1, and a code/config change updates it to version 2, the deployment update happens on the next API call to the app. That API call is blocked while the container image is rebuilt if required and the Kubernetes resources are updated using Server Side Apply API calls.
+- **Lazy creation:** all Kubernetes resources are created lazily, on the first API call to the app (or when reload/apply is done with the verify option). If an app is running version 1, and a code/config change updates it to version 2, the deployment update happens on the next API call to the app. That API call is blocked while the container image is rebuilt if required and the Kubernetes resources are updated using Server Side Apply API calls.
+- **Rollout wait:** OpenRun waits until Kubernetes reports the expected new version rollout is complete before processing further API calls. It watches Deployment rollout status so readiness and Kubernetes-declared rollout failures are detected without waiting for the next polling interval, while still honoring the `container.deploy_health_attempts` deployment wait budget.
 
-OpenRun waits until Kubernetes reports the expected new version rollout is complete before processing further API calls. It watches Deployment rollout status so readiness and Kubernetes-declared rollout failures are detected without waiting for the next polling interval, while still honoring the `container.deploy_health_attempts` deployment wait budget.
+### Stateless apps
 
-For stateless apps, OpenRun deploys each new version as a separate Deployment and promotes it by switching the app Service selector after the new Deployment is ready. This keeps the previous version serving traffic until the replacement is healthy. After promotion, OpenRun waits briefly for the Service's EndpointSlices to route only to ready pods from the new version, then removes inactive Deployments for the app and their owned HPA, Secret, and ConfigMap objects. The EndpointSlice wait is best-effort; if the cluster API or OpenRun's Kubernetes RBAC permissions do not allow listing EndpointSlices, OpenRun skips that wait instead of delaying the deployment.
+- OpenRun deploys each new version as a separate Deployment and promotes it by switching the app Service selector after the new Deployment is ready. This keeps the previous version serving traffic until the replacement is healthy.
+- After promotion, OpenRun waits briefly for the Service's EndpointSlices to route only to ready pods from the new version, then removes inactive Deployments for the app and their owned HPA, Secret, and ConfigMap objects.
+- The EndpointSlice wait is best-effort; if the cluster API or OpenRun's Kubernetes RBAC permissions do not allow listing EndpointSlices, OpenRun skips that wait instead of delaying the deployment.
 
-Apps with OpenRun-managed persistent volumes use a stable Deployment name with a single replica and a Recreate update strategy, because a ReadWriteOnce PVC cannot be mounted by two running pods at the same time. There is no second version to switch traffic to, so a new version is rolled out in place: the previous pod is terminated and the new one started, a brief window in which the app is not served. During an update operation (reload, apply, sync) the live Deployment is not touched before the operation's metadata transaction commits: the new version's objects are validated with a server-side dry run beforehand, and the rollout runs when the operation commits. If another app in the same operation fails, the persistent-volume app stays on its current version, with its Deployment untouched. If the rollout itself fails at commit, the Deployment (and its owned ConfigMaps and Secrets) is restored to the previous version and the operation reports the failure; the app metadata is already on the new version, so the next request retries the rollout, and `openrun version revert` switches the app back if the new version cannot run. PVCs are preserved when an app moves from a persistent-volume configuration to a stateless configuration. If the app later adds the same volume again, the existing PVC is reused and its previous data is still present.
+### Apps with persistent volumes
 
-For image-spec apps, OpenRun resolves the supplied image reference directly. Public images such as `nginx` are pulled from their normal registry instead of being rewritten to the OpenRun build registry. When the registry returns a digest, OpenRun pins the pod image to that digest. If a later refresh has a transient registry failure, OpenRun keeps using the last known digest; missing images, invalid references, and registry authorization errors fail the deployment instead of falling back to a floating tag.
+Apps with OpenRun-managed persistent volumes use a stable Deployment name with a single replica and a Recreate update strategy, because a ReadWriteOnce PVC cannot be mounted by two running pods at the same time. There is no second version to switch traffic to, so a new version is rolled out in place: the previous pod is terminated and the new one started, a brief window in which the app is not served.
 
-Secrets and ConfigMaps generated for mounted app config are named from the workload name and a short hash suffix so that Kubernetes object names stay within the 63-character DNS label limit.
+{{% details title="Rollout during an update operation (reload, apply, sync)" closed="true" %}}
+- The live Deployment is not touched before the operation's metadata transaction commits: the new version's objects are validated with a server-side dry run beforehand, and the rollout runs when the operation commits.
+- If another app in the same operation fails, the persistent-volume app stays on its current version, with its Deployment untouched.
+- If the rollout itself fails at commit, the Deployment (and its owned ConfigMaps and Secrets) is restored to the previous version and the operation reports the failure. The app metadata is already on the new version, so the next request retries the rollout, and `openrun version revert` switches the app back if the new version cannot run.
+- PVCs are preserved when an app moves from a persistent-volume configuration to a stateless configuration. If the app later adds the same volume again, the existing PVC is reused and its previous data is still present.
+{{% /details %}}
 
-The app's environment (resolved `{{secret}}` parameters and binding credentials included) is stored in a Secret named `<workload>-env` which the container loads with `envFrom`, never as literal values in the Deployment or Job spec, so reading the pod template does not reveal it. The Secret carries the workload's ownership labels and is snapshotted, restored and removed with the version's other Secrets; a job run's Secret is owned by its Job and removed with it.
+### Image-spec apps
+
+- OpenRun resolves the supplied image reference directly. Public images such as `nginx` are pulled from their normal registry instead of being rewritten to the OpenRun build registry.
+- When the registry returns a digest, OpenRun pins the pod image to that digest. If a later refresh has a transient registry failure, OpenRun keeps using the last known digest; missing images, invalid references, and registry authorization errors fail the deployment instead of falling back to a floating tag.
+
+### Secrets and ConfigMaps
+
+- Secrets and ConfigMaps generated for mounted app config are named from the workload name and a short hash suffix so that Kubernetes object names stay within the 63-character DNS label limit.
+- The app's environment (resolved `{{secret}}` parameters and binding credentials included) is stored in a Secret named `<workload>-env` which the container loads with `envFrom`, never as literal values in the Deployment or Job spec, so reading the pod template does not reveal it.
+- The `<workload>-env` Secret carries the workload's ownership labels and is snapshotted, restored and removed with the version's other Secrets; a job run's Secret is owned by its Job and removed with it.

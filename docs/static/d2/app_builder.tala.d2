@@ -1,0 +1,22 @@
+# https://d2lang.com diagram. Use make update-diagrams to generate SVG; the layout engine is the suffix in the file name.
+direction: right
+
+user: "Console user\nbuilder area" {shape: person}
+
+session: {
+  label: "Builder session"
+  style: {stroke-width: 2}
+  agent: "Coding agent\nin a Docker or Podman\ncontainer"
+  ws: "Source workspace\napp_builder.workspace_dir" {shape: page}
+  preview: "Preview app\ntry the changes"
+  agent -> ws: "edits files"
+  ws -> preview: "runs"
+}
+
+llm: "Model provider\ncredential from secrets" {style.stroke-dash: 3}
+app: "Published app"
+
+user -> session.agent: "conversation"
+session.agent <-> llm: {style.stroke-dash: 3}
+user -> session.preview: "inspect"
+session.ws -> app: "publish"

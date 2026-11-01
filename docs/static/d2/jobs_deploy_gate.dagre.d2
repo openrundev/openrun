@@ -1,0 +1,27 @@
+# https://d2lang.com diagram. Use make update-diagrams to generate SVG; the layout engine is the suffix in the file name.
+direction: down
+
+op: "app reload, apply\nor sync run" {shape: oval}
+
+stage: {
+  label: "Stage instance"
+  build: "Build image\nfor new version"
+  gate: "before_deploy jobs\nfrom the new image,\nin declaration order"
+  commit: "Reload transaction\nnew version written"
+  build -> gate
+  gate -> commit: "all pass"
+}
+
+prod: {
+  label: "Prod instance (with --promote or app promote)"
+  gate: "before_deploy jobs\nwith prod binding accounts"
+  commit: "Promote\nnew version written"
+  gate -> commit: "all pass"
+}
+
+stop: "Operation stops\nrun id and output tail reported,\nprevious version keeps serving" {style.stroke-dash: 3}
+
+op -> stage.build
+stage.commit -> prod.gate
+stage.gate -> stop: "first failure"
+prod.gate -> stop: "first failure"

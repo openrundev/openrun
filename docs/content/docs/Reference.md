@@ -65,7 +65,14 @@ Handler functions are plain Starlark functions defined in `app.star` (or in file
 |   `handler(req)`  |                    The default request handler, used when a route defines no handler                   |               [Structure]({{< ref "docs/develop/#structure" >}})                     |
 | `error_handler(req, ret)` |       Defining this enables automatic error handling for plugin calls                          | [Automatic Error Handling]({{< ref "docs/plugins/overview/#automatic-error-handling" >}}) |
 
-All other handlers are regular functions with no special name, referenced from the definition: route handlers through the `handler` property of [`ace.html`/`ace.api`/`ace.fragment`]({{< ref "docs/app/routing" >}}), the action run handler (called as `run(dry_run, args)`) through the `run` property of [`ace.action`]({{< ref "docs/actions/#action-definition" >}}), the action [suggest handler]({{< ref "docs/actions/#suggest-handler" >}}) through its `suggest` property, and a Starlark job function (the same `run(dry_run, args)` shape) through the `run` property of [`ace.job`]({{< ref "docs/applications/jobs/#declaring-jobs-in-appstar" >}}).
+All other handlers are regular functions with no special name, referenced from the definition:
+
+| Handler | Referenced through |
+| :--- | :--- |
+| Route handler | The `handler` property of [`ace.html`/`ace.api`/`ace.fragment`]({{< ref "docs/app/routing" >}}) |
+| Action run handler, called as `run(dry_run, args)` | The `run` property of [`ace.action`]({{< ref "docs/actions/#action-definition" >}}) |
+| Action [suggest handler]({{< ref "docs/actions/#suggest-handler" >}}) | The `suggest` property of `ace.action` |
+| Starlark job function, the same `run(dry_run, args)` shape | The `run` property of [`ace.job`]({{< ref "docs/applications/jobs/#declaring-jobs-in-appstar" >}}) |
 
 ### Plugins
 
@@ -80,7 +87,10 @@ Plugins are loaded with `load("<plugin>.in", "<plugin>")` and called from handle
 | `container.in` |  Configures the app container, sidecars and runs commands |        [Container Plugin]({{< ref "docs/plugins/container" >}})      |
 |   `proxy.in`   |             Configures proxying for proxy routes          |            [Proxy Plugin]({{< ref "docs/plugins/proxy" >}})          |
 
-The privileged system plugins `openrun.in` (read-only server information, like `list_apps`), `openrun_admin.in` (management operations) and `build.in` (the AI app builder) are used by the management console; see [System Plugin Access]({{< ref "docs/configuration/security/#system-plugin-access" >}}). Additional plugins can be added as [external plugins]({{< ref "docs/plugins/external-plugins" >}}). App parameters are available in `app.star` through the `param` namespace, like `param.port`, as defined in [`params.star`]({{< ref "docs/develop/#app-parameters" >}}). When the app has a `schema.star`, the `doc` namespace has a constructor for each type (like `doc.bookmark(url=...)`) and the `table` namespace has the table name for each type (like `table.bookmark`), see [Store Types]({{< ref "docs/plugins/store/#store-types" >}}).
+- **System plugins:** the privileged `openrun.in` (read-only server information, like `list_apps`), `openrun_admin.in` (management operations) and `build.in` (the AI app builder) are used by the management console; see [System Plugin Access]({{< ref "docs/configuration/security/#system-plugin-access" >}}).
+- **External plugins:** additional plugins can be added as [external plugins]({{< ref "docs/plugins/external-plugins" >}}).
+- **`param` namespace:** app parameters are available in `app.star` as `param.port` and so on, as defined in [`params.star`]({{< ref "docs/develop/#app-parameters" >}}).
+- **`doc` and `table` namespaces:** when the app has a `schema.star`, `doc` has a constructor for each type (like `doc.bookmark(url=...)`) and `table` has the table name for each type (like `table.bookmark`), see [Store Types]({{< ref "docs/plugins/store/#store-types" >}}).
 
 ### Constants
 
@@ -114,7 +124,12 @@ The constants available in `params.star` are:
 
 ## Spec App Actions (`actions.star`, `action_params.star`)
 
-An app built from a [spec]({{< ref "docs/container/appspecs" >}}) has no `app.star` of its own. It can add [actions]({{< ref "docs/actions/#actions-for-spec-apps" >}}) with two optional files: `actions.star` sets the `actions` global to a list of `ace.action` entries (and optionally `permissions` to a list of `ace.permission` entries), using the same `ace` builtins and plugin loads as `app.star`; `action_params.star` declares the params shown on the action form with the same `param` function and constants as `params.star`. When `action_params.star` exists, only its params are shown for the actions, instead of the `params.star` params.
+An app built from a [spec]({{< ref "docs/container/appspecs" >}}) has no `app.star` of its own. It can add [actions]({{< ref "docs/actions/#actions-for-spec-apps" >}}) with two optional files:
+
+| File | Contents |
+| :--- | :--- |
+| `actions.star` | Sets the `actions` global to a list of `ace.action` entries (and optionally `permissions` to a list of `ace.permission` entries), using the same `ace` builtins and plugin loads as `app.star` |
+| `action_params.star` | Declares the params shown on the action form with the same `param` function and constants as `params.star`. When it exists, only its params are shown for the actions, instead of the `params.star` params |
 
 ## Store Schema (`schema.star`)
 

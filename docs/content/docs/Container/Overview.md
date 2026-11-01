@@ -4,9 +4,21 @@ weight: 100
 summary: "Overview of OpenRun containerized apps"
 ---
 
-OpenRun builds the image and manages the container lifecycle for containerized apps. OpenRun fetches the source code, creates the image, starts the container, proxies the API calls, does health checks on the container and stops the container when idle. Appspecs allow existing source code to be used with OpenRun with no code changes required. OpenRun supports both `Dockerfile` and `Containerfile` as the file name for the container specification file.
+OpenRun builds the image and manages the container lifecycle for containerized apps. Appspecs allow existing source code to be used with OpenRun with no code changes required. OpenRun supports both `Dockerfile` and `Containerfile` as the file name for the container specification file.
 
-For single node installations, OpenRun works with a local container manager (Docker/Podman/OrbStack etc). For multi-node installation on Kubernetes, OpenRun uses Kubernetes deployments to run each app.
+The container lifecycle managed by OpenRun:
+
+- Fetch the source code
+- Create the image
+- Start the container
+- Proxy the API calls
+- Health check the container
+- Stop the container when idle
+
+| Installation | Container runtime |
+| :--- | :--- |
+| Single node | A local container manager (Docker/Podman/OrbStack etc) |
+| Multi-node on Kubernetes | A Kubernetes deployment per app |
 
 <picture  class="responsive-picture" style="display: block; margin-left: auto; margin-right: auto;">
   <img alt="OpenRun Components" src="/d2/container_overview.svg">
@@ -17,9 +29,23 @@ Containers are initialized lazily, when the app API is accessed. The request flo
 <img alt="OpenRun Request Flow" src="/d2/container_sequence.svg">
 </picture>
 
+This page covers:
+
+- [App environment params](#app-environment-params): params passed to the container as env vars, and secrets
+- [Container build args](#container-build-args): `--carg` values for Containerfile `ARG`s
+- [Container options](#container-options): CPU/memory limits and raw runtime flags
+- [Volumes](#volumes): named volumes, bind mounts and mounted secrets
+- [Sidecar containers](#sidecar-containers): companion containers declared with the app
+
 ## App Environment Params
 
-For containerized apps, all params specified for the app (including ones not declared in the spec's `params.star`) are passed to the container at runtime as environment parameters. `CL_APP_PATH` is a special param passed to the container with the app installation path (without the domain name). `CL_APP_URL` contains the full app URL, including scheme, host and path. `PORT` is also set with the value of the port number the app is expected to bind to within the container.
+For containerized apps, all params specified for the app (including ones not declared in the spec's `params.star`) are passed to the container at runtime as environment parameters. These env params are always set:
+
+| Env param | Value |
+| :--- | :--- |
+| `CL_APP_PATH` | The app installation path (without the domain name) |
+| `CL_APP_URL` | The full app URL, including scheme, host and path |
+| `PORT` | The port number the app is expected to bind to within the container |
 
 For example, the command
 
@@ -37,9 +63,11 @@ To update params, run
 openrun param update APP_MODULE basic_app:app fasthtmlapp.localhost:/
 ```
 
-Param updates are staged, they can be promoted after verification. To delete a param, pass `-` as the value to the update. Use `openrun param list` to view app params.
+- **Staged:** param updates are staged, they can be promoted after verification.
+- **Delete:** pass `-` as the value to the update.
+- **List:** `openrun param list` views the app params.
 
-Params can be set to secrets, by setting the value as `{{secret "vault_prod" "MY_KEY_NAME"}}`. The secret is resolved when the container is started and the value is passed to the container in its env. The app has to declare the secrets it accesses and be approved for them: with the built-in specs, the `secrets` param holds the allowlist (empty by default), for example `--param secrets='[["MY_KEY_NAME"]]'`, and `openrun app approve <path>` (or `--approve`) records the access. See [plugin access to secrets]({{< ref "docs/configuration/secrets/#plugin-access-to-secrets" >}}).
+**Secrets as params.** Set the value as `{{secret "vault_prod" "MY_KEY_NAME"}}`. The secret is resolved when the container is started and the value is passed to the container in its env. The app has to declare the secrets it accesses and be approved for them: with the built-in specs, the `secrets` param holds the allowlist (empty by default), for example `--param secrets='[["MY_KEY_NAME"]]'`, and `openrun app approve <path>` (or `--approve`) records the access. See [plugin access to secrets]({{< ref "docs/configuration/secrets/#plugin-access-to-secrets" >}}).
 
 {{<callout type="info" >}}
 **Note:** Staged param updates are a powerful mechanism to ensure that config changes do not break your apps. For example, if BUCKET_NAME is a param pointing to a S3 bucket, the param change can be staged. The staging app can be tested to ensure that the new bucket is functional and there are no IAM/key related errors. Once the staging app is working, the app can be promoted. Code changes are easy to test, but config changes can cause env specific errors. Configuration related issues are a common cause of outages during deployment. OpenRun enables you to avoid such errors.
@@ -96,7 +124,18 @@ openrun app update copt cpus=3 fasthtmlapp.localhost:/
 
 Like all metadata updates, option updates are staged. Pass `--promote` to promote immediately or run `app promote` to promote from stage to prod.
 
-OpenRun parses `cpus` and `memory` before passing them to the container runtime. CPU values can be specified as cores (`2`, `0.5`) or millicores (`500m`). Memory values can be specified using Docker-style units (`512m`, `1g`) or Kubernetes quantities (`512Mi`, `1Gi`).
+OpenRun parses `cpus` and `memory` before passing them to the container runtime:
+
+| Option | Accepted values |
+| :--- | :--- |
+| `cpus` | Cores (`2`, `0.5`) or millicores (`500m`) |
+| `memory` | Docker-style units (`512m`, `1g`) or Kubernetes quantities (`512Mi`, `1Gi`) |
+
+{{<callout type="info" >}}
+**Note:** By default there are no limits set for the containers. That allows for full utilization of system resources. To avoid individual apps from utilizing too much of the system resources, CPU/memory limits can be set.
+{{</callout>}}
+
+### Raw runtime flags
 
 Additional Docker/Podman runtime flags are disabled by default, except `add-host`, which is allowed so local host mappings can be configured when needed. To allow an app to set any other raw runtime flag with `--copt`, the server admin must add the flag to `security.allowed_container_args` in `openrun.toml`.
 
@@ -108,11 +147,10 @@ label = "regex:^team=.+$"
 security-opt = "label=disable"
 ```
 
-The map key is the container runtime flag name without the leading `--`. An empty value allows only a valueless flag, such as `--init`. A non-empty value must match exactly unless it starts with `regex:`, in which case the user-provided value must match that regular expression in full (it is evaluated as if wrapped in `\A(?:...)\z`, so `regex:team=.+` does not accept `x,team=y`).
-
-{{<callout type="info" >}}
-**Note:** By default there are no limits set for the containers. That allows for full utilization of system resources. To avoid individual apps from utilizing too much of the system resources, CPU/memory limits can be set.
-{{</callout>}}
+- **Key:** the container runtime flag name without the leading `--`.
+- **Empty value:** allows only a valueless flag, such as `--init`.
+- **Non-empty value:** must match exactly, unless it starts with `regex:`.
+- **`regex:` value:** the user-provided value must match the regular expression in full. It is evaluated as if wrapped in `\A(?:...)\z`, so `regex:team=.+` does not accept `x,team=y`.
 
 ## Volumes
 
@@ -124,7 +162,12 @@ OpenRun automatically manages volumes for containers. Volumes definitions are pi
 
 For named and unnamed volumes, OpenRun creates a unique named volume for each app. This volume is mounted across app updates.
 
-Bind mounts are supported for source files and administrator-approved host paths. Relative bind mount sources such as `./config.yaml:/app/config.yaml` are resolved inside the app source directory and cannot use parent directory traversal. Absolute bind mount sources must be inside the app source directory, the app runtime directory, or one of the directories listed in `security.allowed_mounts`.
+### Bind mounts
+
+Bind mounts are supported for source files and administrator-approved host paths.
+
+- **Relative sources** such as `./config.yaml:/app/config.yaml` are resolved inside the app source directory and cannot use parent directory traversal.
+- **Absolute sources** must be inside the app source directory, the app runtime directory, or one of the directories listed in `security.allowed_mounts`.
 
 ```toml {filename="openrun.toml"}
 [security]
@@ -132,6 +175,8 @@ allowed_mounts = ["$OPENRUN_HOME/mounts", "/srv/openrun/shared"]
 ```
 
 Entries in `security.allowed_mounts` use environment variable expansion, so `$OPENRUN_HOME` can be used in the path.
+
+### Mounting generated secrets
 
 Bind mounts are also supported for mounting generated secrets into the container. If the source has a template file `secret.tmpl` which needs to be loaded into the container at `/app/secret.ini`, a volume can be defined like `cl_secret:secret.tmpl:/app/secret.ini`. The template file is passed the environment params and the generated file is bound into the container. For example, if the template file contains
 
@@ -162,7 +207,11 @@ multiple values are supported for `cvol`.
 
 ## Sidecar Containers
 
-A container app can declare sidecar containers: a background worker that runs the app's own image with a different command, or a companion service like memcached from another image. Sidecars start, in the declared order, before the app container and are ready before it starts. On Kubernetes they run as native sidecar containers in the app pod; on Docker/Podman they run as containers on a private per app network. A sidecar is part of the app version: changing a sidecar definition creates a new version, and promoting it rolls the app and its sidecars together.
+A container app can declare sidecar containers: a background worker that runs the app's own image with a different command, or a companion service like memcached from another image.
+
+- **Startup order:** sidecars start, in the declared order, before the app container and are ready before it starts.
+- **Where they run:** on Kubernetes, as native sidecar containers in the app pod; on Docker/Podman, as containers on a private per app network.
+- **Versioning:** a sidecar is part of the app version. Changing a sidecar definition creates a new version, and promoting it rolls the app and its sidecars together.
 
 In the app definition, sidecars are declared with `container.sidecar` and passed to `container.config`. Each sidecar call needs a `container.in sidecar` permission, with the sidecar name and image as the (positional) arguments, so the images a sidecar pulls in are visible during app approval:
 
@@ -192,7 +241,12 @@ app = ace.app("orders",
 - `always_on` (Docker/Podman): keep the sidecar running when the app container is stopped for idleness. Defaults to true for sidecars without a port (workers keep processing) and false for port'd sidecars, which are restarted before the app on the next request.
 - `options`: container options for the sidecar, same keys as `--copt` (`kubernetes.cpus`, `kubernetes.memory`, ...).
 
-Sidecars can also be set by the operator on any container app, without changes to the app definition, as JSON documents with the same fields. They are merged by name over the definition's sidecars (a metadata sidecar replaces a same-name definition sidecar entirely) and are bounded by the `security.allowed_sidecar_images` server config (exact references or `regex:` entries; empty allows any image):
+### Sidecars in app metadata
+
+Sidecars can also be set by the operator on any container app, without changes to the app definition, as JSON documents with the same fields.
+
+- **Merge rule:** metadata sidecars are merged by name over the definition's sidecars. A metadata sidecar replaces a same-name definition sidecar entirely.
+- **Allowed images:** bounded by the `security.allowed_sidecar_images` server config (exact references or `regex:` entries; empty allows any image).
 
 ```sh
 openrun app create --spec python-flask \
@@ -203,4 +257,9 @@ openrun app create --spec python-flask \
 openrun app update sidecars --promote @sidecars.json /myapp
 ```
 
-`--sidecar` and `app update sidecars` accept a JSON object, or `@file` holding a JSON object or a list of objects. In `apps.ace` declarations, use `sidecars=[sidecar("cache", image="image:memcached:1.6-alpine", port=11211), ...]` with the same fields (dict literals and JSON strings are accepted too); `openrun export` renders sidecars in this form. Finite work that runs from the app image on a schedule or before a deploy is a [job](/docs/applications/jobs/), not a sidecar. Sidecars are not service bindings: a sidecar cache is per app and per version (per replica on Kubernetes) and its data does not survive a deploy; use a `redis` service binding for a shared or durable cache.
+- `--sidecar` and `app update sidecars` accept a JSON object, or `@file` holding a JSON object or a list of objects.
+- In `apps.ace` declarations, use `sidecars=[sidecar("cache", image="image:memcached:1.6-alpine", port=11211), ...]` with the same fields (dict literals and JSON strings are accepted too). `openrun export` renders sidecars in this form.
+
+{{<callout type="info" >}}
+**What is not a sidecar:** Finite work that runs from the app image on a schedule or before a deploy is a [job](/docs/applications/jobs/), not a sidecar. Sidecars are not service bindings: a sidecar cache is per app and per version (per replica on Kubernetes) and its data does not survive a deploy; use a `redis` service binding for a shared or durable cache.
+{{</callout>}}

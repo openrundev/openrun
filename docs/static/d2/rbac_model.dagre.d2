@@ -1,0 +1,33 @@
+# https://d2lang.com diagram. Use make update-diagrams to generate SVG; the layout engine is the suffix in the file name.
+direction: down
+
+users: {
+  label: "Users and groups"
+  user: "User ids\nprovider prefixed:\ngithub_local:abc\noidc_okta:jane@example.com"
+  group: "groups\nconfig groups and\nsign-in groups"
+  user -> group: "member of"
+}
+
+roles: {
+  label: "Roles"
+  role: "roles\nviewer: [app:read]\nfullaccess: [role:accessor, app:read]"
+  perm: "Permissions\napp:access, app:read, ...\ncustom:reports_write"
+  role -> perm: "grants"
+}
+
+grant: {
+  label: "Grant"
+  style: {stroke-width: 2}
+  fields: "users\nroles\ntargets"
+}
+
+targets: {
+  label: "Targets"
+  apps: "Apps\nexample.com:/myapp\n/engg/**"
+  svc: "Services\nservice:postgres/*"
+  bind: "Bindings\nbinding:/apps/team1/**"
+}
+
+users -> grant
+roles -> grant
+grant -> targets: "permissions apply on"

@@ -4,34 +4,36 @@ weight: 300
 summary: "The Request structure passed into the handler function, handling argument and post data"
 ---
 
+The handler function receives one `req` argument with the details of the API call. This page lists its fields and shows how to read url parameters, query strings and form data from it.
+
 ## Request Structure
 
 The handler function is passed one argument which has the details about the API call. After the handler returns, the same request structure is passed to the template as the template context, with `Data` set to the handler response. The fields in this structure are:
 
-|    Property    |   Type   |                              Notes                              |
-| :------------: | :------: | :-------------------------------------------------------------: |
-|    AppName     |  string  |                   The app name in the config                    |
-|    AppPath     |  string  | The path where the app is installed. If root, then empty string |
-|     AppUrl     |  string  |                    The url for the app root                     |
-|    PagePath    |  string  |    The path for the current page. If root, then empty string    |
-|    PageUrl     |  string  |                  The url for the current page                   |
-|     Method     |  string  |                  The HTTP method, GET/POST etc                  |
-|     IsDev      |   bool   |                Is the app installed in dev mode                 |
-|   IsPartial    |   bool   |             Is this an HTMX driven partial request              |
-|   PushEvents   |   bool   |         Whether push events are enabled for this app            |
-|  HtmxVersion   |  string  |                 The HTMX version configured for the app         |
-|    Headers     |   dict   | The incoming HTTP headers. Incoming `X-Openrun-*` headers are dropped and replaced with the ones OpenRun sets for the authenticated user (`X-Openrun-User`, `X-Openrun-Perms` etc) |
-|    RemoteIP    |  string  | The resolved client IP address, honoring forwarded headers only from configured trusted proxies |
-|   UrlParams    |   dict   |           The url parameters, if used in the url spec           |
-|      Form      |   dict   |             The form data, including body and query             |
-|     Query      |   dict   |              The url query data, as a string array              |
-|    PostForm    |   dict   |                   The form data from the body                   |
-|     UserId     |  string  |                 The current user id for the request             |
-|  UserSubject   |  string  |              The provider user id claim, when available         |
-|   UserEmail    |  string  |                The provider email claim, when available         |
-|  CustomPerms   | string[] |            The custom permissions available to the user         |
-| AppRBACEnabled |   bool   |                Whether app RBAC is enabled for the request      |
-|      Data      |   dict   | The response from the handler function (passed to the template) |
+| Property | Type | Notes |
+| :--- | :--- | :--- |
+| AppName | string | The app name in the config |
+| AppPath | string | The path where the app is installed. If root, then empty string |
+| AppUrl | string | The url for the app root |
+| PagePath | string | The path for the current page. If root, then empty string |
+| PageUrl | string | The url for the current page |
+| Method | string | The HTTP method, GET/POST etc |
+| IsDev | bool | Is the app installed in dev mode |
+| IsPartial | bool | Is this an HTMX driven partial request |
+| PushEvents | bool | Whether push events are enabled for this app |
+| HtmxVersion | string | The HTMX version configured for the app |
+| Headers | dict | The incoming HTTP headers. Incoming `X-Openrun-*` headers are dropped and replaced with the ones OpenRun sets for the authenticated user (`X-Openrun-User`, `X-Openrun-Perms` etc) |
+| RemoteIP | string | The resolved client IP address, honoring forwarded headers only from configured trusted proxies |
+| UrlParams | dict | The url parameters, if used in the url spec |
+| Form | dict | The form data, including body and query |
+| Query | dict | The url query data, as a string array |
+| PostForm | dict | The form data from the body |
+| UserId | string | The current user id for the request |
+| UserSubject | string | The provider user id claim, when available |
+| UserEmail | string | The provider email claim, when available |
+| CustomPerms | string[] | The custom permissions available to the user |
+| AppRBACEnabled | bool | Whether app RBAC is enabled for the request |
+| Data | dict | The response from the handler function (passed to the template) |
 
 ## Accessing Inputs
 
@@ -91,10 +93,8 @@ The value for Form is a string array, since there can be multiple form parameter
 
 ## Client IP Resolution
 
-`req.RemoteIP` is the OpenRun-resolved client IP for the request.
+`req.RemoteIP` is the OpenRun-resolved client IP for the request. Apps should prefer `req.RemoteIP` over reading `X-Forwarded-For` or `X-Real-IP` directly from `req.Headers`.
 
-- By default, this is the IP address of the direct peer connection.
-- If the direct peer is listed in `security.trusted_proxies`, OpenRun will honor `X-Forwarded-For` and `X-Real-IP`.
-- For multi-hop `X-Forwarded-For` values, OpenRun walks the chain from right to left and returns the first IP that is not itself a trusted proxy.
-
-This means apps should prefer `req.RemoteIP` over reading `X-Forwarded-For` or `X-Real-IP` directly from `req.Headers`.
+- **Default:** the IP address of the direct peer connection.
+- **Trusted proxy:** if the direct peer is listed in `security.trusted_proxies`, OpenRun honors `X-Forwarded-For` and `X-Real-IP`.
+- **Multi-hop:** for multi-hop `X-Forwarded-For` values, OpenRun walks the chain from right to left and returns the first IP that is not itself a trusted proxy.

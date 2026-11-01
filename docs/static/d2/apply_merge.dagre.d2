@@ -1,0 +1,20 @@
+# https://d2lang.com diagram. Use make update-diagrams to generate SVG; the layout engine is the suffix in the file name.
+direction: down
+
+old: "Previous declaration\napps.ace at last apply" {shape: page}
+new: "New declaration\napps.ace now" {shape: page}
+live: "Live app config\nincludes CLI and\nconsole changes"
+
+openrun: {
+  label: "openrun apply"
+  style: {stroke-width: 2}
+  diff: "Three way merge\napply what changed between\nold and new declaration"
+  clobber: "--clobber\nnew declaration\noverwrites everything" {style.stroke-dash: 3}
+}
+
+result: "Staging app updated\nimperative changes kept\n--promote to update prod"
+
+old -> openrun.diff
+new -> openrun.diff
+live -> openrun.diff: "kept unless the same\nproperty changed"
+openrun.diff -> result

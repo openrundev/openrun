@@ -67,23 +67,37 @@ COMMANDS:
    help, h   Shows a list of commands or help for one command
 ```
 
-The app management subcommands are under `app`. The `preview` and `version` commands manage previews and versions, and `account` manages saved app login accounts. Other workflows include declarative `apply`/`delete`, scheduled `sync`, [export and formatting]({{< ref "export" >}}), [service bindings]({{< ref "servicebindings" >}}), [jobs]({{< ref "jobs" >}}) and [webhooks]({{< ref "webhooks" >}}).
+The app management subcommands are under `app`. The `preview` and `version` commands manage previews and versions, and `account` manages saved app login accounts. This page covers:
+
+- [App Management](#app-management) and the [glob pattern](#glob-pattern) used by multi-app commands
+- [App Listing](#app-listing): list output formats, listing and switching versions, version retention
+- [App Authentication](#app-authentication)
+- [Declarative App Management](#declarative-app-management): the `apply` and `delete` commands and the app declaration format
+- [Automated Sync](#automated-sync) from Git and its [frequency](#sync-frequency)
+
+Related workflows: [export and formatting]({{< ref "export" >}}), [service bindings]({{< ref "servicebindings" >}}), [jobs]({{< ref "jobs" >}}) and [webhooks]({{< ref "webhooks" >}}).
 
 ## App Management
 
-All the app management subcommands except `create` take a glob pattern, so multiple apps can be updated using one command. Use the `--dry-run` option with any update CLI call to verify if the options specified are correct before the actual run. No database changes are committed during dry-run and no changes are done in memory.
+- All the app management subcommands except `create` take a glob pattern, so multiple apps can be updated using one command.
+- Use the `--dry-run` option with any update CLI call to verify the options before the actual run. No database changes are committed during dry-run and no changes are done in memory.
 
 ## Glob Pattern
 
-The `reload/delete/promote/approve/list/update` commands accept a glob pattern. `example.com:**` will match apps under the example.com domain. `*:**` will match all apps in all domains, `all` is a shortcut for this. When using glob patterns, place the pattern inside double-quotes to avoid issues with shell star expansion. For example, `"example.com:**"`
+The `reload/delete/promote/approve/list/update` commands accept a glob pattern. Place the pattern inside double-quotes to avoid issues with shell star expansion, for example `"example.com:**"`.
 
-The default for `app list` command is to list all apps. All other commands require a glob pattern to be specified explicitly.
+| Pattern | Matches |
+| :--- | :--- |
+| `example.com:**` | Apps under the example.com domain |
+| `*:**` | All apps in all domains |
+| `all` | Shortcut for `*:**` |
 
-Multi-app operations commit app metadata atomically: if an app fails before the transaction commits, metadata changes for the operation are rolled back. This does not roll back external effects such as database migrations or commands run by deployment hooks.
+- `app list` lists all apps by default. All other commands require a glob pattern to be specified explicitly.
+- Multi-app operations commit app metadata atomically: if an app fails before the transaction commits, metadata changes for the operation are rolled back. This does not roll back external effects such as database migrations or commands run by deployment hooks.
 
 ## App Listing
 
-Use the `app list` command to list apps. If the `--internal` option is used, then the internal staging and preview apps for each matched prod app are also listed.
+Use the `app list` command to list apps. With the `--internal` option, the internal staging and preview apps for each matched prod app are also listed.
 
 ```shell
 $ openrun app list
@@ -108,13 +122,23 @@ Bookmarks                      PROD     5 NONE    utils.demo.clace.io:/bookmarks
 Bookmarks                      STG      5 NONE    stage.utils.demo.clace.io:/bookmarks
 ```
 
-The `Type` column is `PROD`, `STG` (staging), `VIEW` (preview) or `DEV`. The `table` format (`--format table`) adds the app id, source URL, spec and git branch/commit columns.
+| Type | Meaning |
+| :--- | :--- |
+| `PROD` | Production app |
+| `STG` | Staging app |
+| `VIEW` | Preview app |
+| `DEV` | Development app |
+| `PROD*` | A star indicates staged changes waiting to be promoted. It shows up any time the prod app is at a different version than the stage app |
+
+The `table` format (`--format table`) adds the app id, source URL, spec and git branch/commit columns.
 
 ### Output Formats
 
-The list commands (`app list`, `version list`, `version files`, `binding list`, `service list`, `secret list`, `job list`, `job runs`, `action list`, `action runs`, `apikey list`, `user list`, `sync list`, `app-webhook list`, `provider list`, `replication status`) take a `--format` option. The fixed formats are `basic` (the default, fewer columns), `table`, `csv`, `json`, `jsonl` and `jsonl_pretty`. The `client.default_format` config entry (default `basic`) sets the default. The `version list` examples on this page use the `table` format.
+The list commands (`app list`, `version list`, `version files`, `binding list`, `service list`, `secret list`, `job list`, `job runs`, `action list`, `action runs`, `apikey list`, `user list`, `sync list`, `app-webhook list`, `provider list`, `replication status`) take a `--format` option.
 
-Any other `--format` value which contains `{{` is treated as a [Go template](https://pkg.go.dev/text/template), the way `docker --format` works. The template is rendered once per entry, one line per entry, and the data is the entry in its JSON form, so the field names are the ones `--format json` shows:
+- **Fixed formats:** `basic` (the default, fewer columns), `table`, `csv`, `json`, `jsonl` and `jsonl_pretty`.
+- **Default format:** set by the `client.default_format` config entry (default `basic`). The `version list` examples on this page use the `table` format.
+- **Templates:** any other `--format` value which contains `{{` is treated as a [Go template](https://pkg.go.dev/text/template), the way `docker --format` works. The template is rendered once per entry, one line per entry. The data is the entry in its JSON form, so the field names are the ones `--format json` shows:
 
 ```shell
 $ openrun app list --format '{{.metadata.name}} v{{.metadata.version_metadata.version}} {{.source_url}}'
@@ -125,9 +149,19 @@ $ openrun version list --format '{{if .active}}* {{end}}{{.version}} {{.metadata
 * 2 ed7545ae
 ```
 
-The [sprig](https://masterminds.github.io/sprig/) functions are available in the template, along with `json`, which prints a value as compact JSON (`{{json .}}` prints the whole entry), and `relTime`, which renders a timestamp as a relative age like `3 hours ago`. A template which does not parse is reported as an error before the server is called.
+Functions available in the template:
 
-Use the `version list` command to list versions for particular apps. This command works on prod app or staging app specifically.
+| Function | Effect |
+| :--- | :--- |
+| [sprig](https://masterminds.github.io/sprig/) functions | The full sprig library |
+| `json` | Prints a value as compact JSON (`{{json .}}` prints the whole entry) |
+| `relTime` | Renders a timestamp as a relative age like `3 hours ago` |
+
+A template which does not parse is reported as an error before the server is called.
+
+### Listing Versions
+
+Use the `version list` command to list versions for particular apps. This command works on the prod app or, with `--stage`, on the staging app specifically.
 
 ```shell
 $ openrun version list --stage utils.demo.clace.io:/bookmarks
@@ -151,21 +185,34 @@ Active  Version Previous CreateTime                     GitCommit            Git
 =====>        5        2 2024-03-02 00:23:35 +0000 UTC  ed7545ae739dfe85140a Update styling for bookmarks app
 ```
 
-The `version switch` command can be used to switch versions, up or down or to particular version. The `version revert` command can be used to revert the last change. `app promote` makes the prod app run the same version as the current staging app.
+In this listing, the staging app has five versions. Three of those (1, 2 and 5) were promoted to prod.
 
-In the above listing, the staging app has five versions. Three of those (1,2 and 5) were promoted to prod. `version switch --stage previous utils.demo.clace.io:/bookmarks` will change the stage app to version 4. `version switch previous utils.demo.clace.io:/bookmarks` will change the prod app to version 2. After that, `app promote utils.demo.clace.io:/bookmarks` will change prod to also be at version 4, same as stage. The `version switch` command accepts `previous`, `next` and actual version number as version to switch to.
+### Switching Versions
 
-By default, OpenRun keeps the current version plus 5 older versions for each app. Version cleanup runs automatically after operations which create or promote new app versions, so the version list does not grow without bound. The retention count can be changed globally with `app_config.fs.retain_versions` in `openrun.toml`, or per app with `openrun app update conf --promote fs.retain_versions=<count> /myapp`.
+| Command | Effect |
+| :--- | :--- |
+| `version switch` | Switch versions, up or down or to a particular version. Accepts `previous`, `next` or an actual version number as the version to switch to |
+| `version revert` | Revert the last change |
+| `app promote` | Make the prod app run the same version as the current staging app |
 
-In Docker/Podman mode, the images of older versions are kept for quick version switches, the count being controlled by `container.retain_previous_images` (default `1`), see [container config]({{< ref "docs/container/config/#image-and-container-cleanup" >}}). Switching to a version whose image was removed rebuilds it.
+Continuing the listing above:
 
-A star, like `PROD*` in the `app list` output indicates that there are staged changes waiting to be promoted. That will show up any time the prod app is at a different version than the stage app.
+- `version switch --stage previous utils.demo.clace.io:/bookmarks` changes the stage app to version 4.
+- `version switch previous utils.demo.clace.io:/bookmarks` changes the prod app to version 2.
+- After that, `app promote utils.demo.clace.io:/bookmarks` changes prod to also be at version 4, same as stage.
+
+### Version Retention
+
+- By default, OpenRun keeps the current version plus 5 older versions for each app. Version cleanup runs automatically after operations which create or promote new app versions, so the version list does not grow without bound.
+- The retention count can be changed globally with `app_config.fs.retain_versions` in `openrun.toml`, or per app with `openrun app update conf --promote fs.retain_versions=<count> /myapp`.
+- In Docker/Podman mode, the images of older versions are kept for quick version switches. The count is controlled by `container.retain_previous_images` (default `1`), see [container config]({{< ref "docs/container/config/#image-and-container-cleanup" >}}). Switching to a version whose image was removed rebuilds it.
 
 ## App Authentication
 
-By default, apps are created with the no authentication type. `system` auth uses `admin` as the username. The password is displayed on the screen during the initial setup of the OpenRun server config.
-
-To change app auth type, add `--auth system` to the `app create` command. After an app is created, the auth type can be changed by running `app update auth --promote system /myapp`. OAuth based authentication is also supported, see [authentication]({{< ref "docs/configuration/authentication" >}}) for details.
+- By default, apps are created with the no authentication type.
+- `system` auth uses `admin` as the username. The password is displayed on the screen during the initial setup of the OpenRun server config.
+- To set the auth type at creation, add `--auth system` to the `app create` command. After an app is created, change it by running `app update auth --promote system /myapp`.
+- OAuth based authentication is also supported, see [authentication]({{< ref "docs/configuration/authentication" >}}) for details.
 
 {{<callout type="warning" >}}
 Changes done to the app settings using the `app settings` command are **NOT** staged or versioned, they apply immediately to the stage/prod/preview apps.
@@ -175,7 +222,7 @@ All other changes done to app metadata using `app update`, `app reload`, `param 
 
 ## Declarative App Management
 
-The CLI and management apps allow imperative management of OpenRun apps. OpenRun apps can also be managed declaratively. The apps have to be declared in an app declaration file and OpenRun can apply the configuration. This works similar to the Kubernetes `apply` functionality.
+The CLI and management apps allow imperative management of OpenRun apps. Apps can also be managed declaratively: declare them in an app declaration file and OpenRun applies the configuration, similar to the Kubernetes `apply` functionality.
 
 Create a Starlark declaration file containing one or more `app` definitions. Any filename is accepted; `apps.ace` and `apps.star` are conventions. For example, in `apps.ace`:
 
@@ -215,24 +262,37 @@ OPTIONS:
    --help, -h                  show help
 ```
 
-The branch/commit/git-auth arguments are for the apply file itself (if the file path is a Git URL). For the app source code, the git config has to be specified in the config file.
+| Option | Effect |
+| :--- | :--- |
+| `--branch`, `--commit`, `--git-auth` | Apply to the apply file itself, if the file path is a Git URL. For the app source code, the git config has to be specified in the config file |
+| `--promote` | By default, changes are applied to the stage app. Add `--promote` to promote the changes |
+| `--approve` | Approve any permission changes required by apps |
+| `--reload none` | No apps are reloaded |
+| `--reload updated` | Apps which have a config update are reloaded |
+| `--reload matched` | The default. All apps matched by the app glob are reloaded, even if there is no config update |
+| `--verify` | Verify reloads for every matched app, see [reload verification](#reload-verification) below |
+| `--clobber` | Overwrite any changes applied imperatively through the CLI or UI. The new declarative config overwrites any existing state |
+| `--dev` | Create the apps in dev mode. For apps with source path pointing to git, a local source folder is created under `$OPENRUN_HOME/app_src`. This allows for easy zero-config dev environment setup |
 
-By default, changes are applied to the stage app. Add the `--promote` option to promote the changes. Use the `--approve` option to approve any permission changes required by apps.
+The `--reload` option controls whether new source code is loaded for apps during the apply operation.
 
-The `--reload` option controls whether new source code is loaded for apps during the apply operation. Setting it to `none` means no apps are reloaded, `updated` means apps which have a config update are reloaded. `matched` (the default) means all apps matched by the app glob are reloaded, even if there is no config update.
+Without `--clobber`, changes are applied as a three way merge. The old config and new config are compared against the live config. If there are changes between old and new declarative config, those changes are applied. Changes done imperatively are not overwritten.
 
-Use the top-level `--verify` option to verify reloads for every matched app. Verification starts the reloaded app container and waits for it to become healthy before the metadata transaction opens; traffic switches to it only when the transaction commits. If verification fails for any app, the apply operation fails and the changes are reverted. Kubernetes apps with persistent volumes cannot start a second version: their objects are validated before the transaction and the rollout runs when it commits, see [Kubernetes]({{< ref "docs/container/kubernetes/" >}}). To verify specific apps in a declarative apply file, set `verify=True` on those app declarations:
+{{< theme-image light="/d2/apply_merge_light.svg" dark="/d2/apply_merge_dark.svg" alt="openrun apply compares the previous and new declarations and applies what changed between them to the live config, keeping imperative changes unless the same property changed; --clobber makes the new declaration overwrite everything" >}}
+
+#### Reload Verification
+
+- Verification starts the reloaded app container and waits for it to become healthy before the metadata transaction opens. Traffic switches to it only when the transaction commits.
+- If verification fails for any app, the apply operation fails and the changes are reverted.
+- Kubernetes apps with persistent volumes cannot start a second version: their objects are validated before the transaction and the rollout runs when it commits, see [Kubernetes]({{< ref "docs/container/kubernetes/" >}}).
+- When any apply verification runs successfully, OpenRun retries pending service binding grants for bindings in the current apply file after the app reload, so grants for tables created during startup can be applied. Grants already recorded in `grants_applied` are not retried.
+
+To verify specific apps in a declarative apply file instead of using the top-level `--verify` option, set `verify=True` on those app declarations:
 
 ```python {filename="apps.ace"}
 app("/todo/admin", "github.com/example/todo", bindings=["/todo-data/admin"], verify=True)
 app("/todo/app", "github.com/example/todo", bindings=["/todo-data/app"])
 ```
-
-When any apply verification runs successfully, OpenRun retries pending service binding grants for bindings in the current apply file after the app reload, so grants for tables created during startup can be applied. Grants already recorded in `grants_applied` are not retried.
-
-By default, changes are applied as a three way merge. The old config and new config are compared against the live config. If there are changes between old and new declarative config, those changes are applied. Changes done imperatively are not overwritten. Using the `--clobber` option will overwrite any changes applied imperatively through the CLI or UI. The new declarative config overwrites any existing state when `--clobber` is used.
-
-If `--dev` option is specified for the apply, the apps are created in dev mode. For apps with source path pointing to git, a local source folder is created under `$OPENRUN_HOME/app_src`. This allows for easy zero-config dev environment setup.
 
 ### Delete Command
 
@@ -243,33 +303,36 @@ openrun delete apps.ace
 openrun delete apps.ace "example.com:**"
 ```
 
-Any matching declared resource is deleted, regardless of whether it was created declaratively or imperatively. Declared resources that do not exist are skipped and reported. All deletes run in one transaction, apps before bindings: a blocked delete (for example a declared base binding that still has derived bindings not covered by the file) fails and rolls back the whole command. Deleted apps are fully removed, containers, images, volumes and networks included; deleted bindings drop their backend objects the same way `binding delete` does.
+- Any matching declared resource is deleted, regardless of whether it was created declaratively or imperatively.
+- Declared resources that do not exist are skipped and reported.
+- All deletes run in one transaction, apps before bindings. A blocked delete (for example a declared base binding that still has derived bindings not covered by the file) fails and rolls back the whole command.
+- Deleted apps are fully removed, containers, images, volumes and networks included. Deleted bindings drop their backend objects the same way `binding delete` does.
 
 ### App Configuration
 
 The declarative app configuration uses Starlark syntax. An app is defined using the `app` struct which has these properties:
 
-|    Property    | Optional |    Type     | Default |                                Notes                                |
-| :------------: | :------: | :---------: | :-----: | :-----------------------------------------------------------------: |
-|      path      |  false   |   string    |         |                  The app installation domain:path                   |
-|     source     |  false   |   string    |         |                       The app source code url                       |
-|      dev       |   true   |    bool     |  false  |                     Whether app is in dev mode                      |
-|      auth      |   true   |   string    | default | The app authentication type (none or system or default or <custom>) |
-|    git_auth    |   true   |   string    | default |                      The git auth entry to use                      |
-|   git_branch   |   true   |   string    |  main   |                        The git branch to use                        |
-|   git_commit   |   true   |   string    |         |                        The git commit to use                        |
-|     params     |   true   |    dict     |         |                       The params for the app                        |
-|      spec      |   true   |   string    |         |                   The app spec to use for the app                   |
-|   app_config   |   true   |    dict     |         |                   The config settings for the app                   |
-| container_opts |   true   |    dict     |         |                  The container options for the app                  |
-| container_args |   true   |    dict     |         |            The container build args options for the app             |
-| container_vols |   true   | list string |         |                  The container volumes for the app                  |
-|    stage_at    |   true   |   string    | system  | Staging location for new prod apps: `domain`, `path`, or a staging domain |
-|    sidecars    |   true   |  list dict  |         | The [sidecar containers]({{< ref "docs/container/overview/#sidecar-containers" >}}) for the app, same JSON fields as `--sidecar` |
-|    bindings    |   true   | list string |         | The paths of the [service bindings]({{< ref "docs/applications/servicebindings" >}}) to attach to the app |
-|      jobs      |   true   |    list     |   []    | [Jobs and deploy hooks]({{< ref "jobs" >}}), declared with `job(...)`, dictionaries or JSON strings |
-|     verify     |   true   |    bool     |  false  |                   Verify reload for this app only                   |
-|      mcp       |   true   | bool/string/dict |    | [MCP]({{< ref "mcp" >}}) setting: `True`, `False` (all MCP off), `"/path"` or a dict with the same fields as `--mcp` |
+| Property | Optional | Type | Default | Notes |
+| :--- | :--- | :--- | :--- | :--- |
+| path | false | string | | The app installation domain:path |
+| source | false | string | | The app source code url |
+| dev | true | bool | false | Whether app is in dev mode |
+| auth | true | string | default | The app authentication type (none or system or default or <custom>) |
+| git_auth | true | string | default | The git auth entry to use |
+| git_branch | true | string | main | The git branch to use |
+| git_commit | true | string | | The git commit to use |
+| params | true | dict | | The params for the app |
+| spec | true | string | | The app spec to use for the app |
+| app_config | true | dict | | The config settings for the app |
+| container_opts | true | dict | | The container options for the app |
+| container_args | true | dict | | The container build args options for the app |
+| container_vols | true | list string | | The container volumes for the app |
+| stage_at | true | string | system | Staging location for new prod apps: `domain`, `path`, or a staging domain |
+| sidecars | true | list dict | | The [sidecar containers]({{< ref "docs/container/overview/#sidecar-containers" >}}) for the app, same JSON fields as `--sidecar` |
+| bindings | true | list string | | The paths of the [service bindings]({{< ref "docs/applications/servicebindings" >}}) to attach to the app |
+| jobs | true | list | [] | [Jobs and deploy hooks]({{< ref "jobs" >}}), declared with `job(...)`, dictionaries or JSON strings |
+| verify | true | bool | false | Verify reload for this app only |
+| mcp | true | bool/string/dict | | [MCP]({{< ref "mcp" >}}) setting: `True`, `False` (all MCP off), `"/path"` or a dict with the same fields as `--mcp` |
 
 For example, a definition like
 
@@ -342,11 +405,21 @@ OPTIONS:
    --help, -h                  show help
 ```
 
-Scheduled sync takes all the same options as the `apply` command except `--dev` and `--commit`. The apply is done automatically by OpenRun on schedule. If `--verify` is set on a scheduled sync, each sync run verifies app reloads before promoting changes.
+Scheduled sync takes all the same options as the `apply` command except `--dev` and `--commit`. The apply is done automatically by OpenRun on schedule.
 
-If `--prune` is set, each sync run deletes the apps and bindings this sync itself created that are no longer present in the apply file, making the file the full source of truth for the resources it manages. Only resources originally created by the sync are pruned: apps and bindings created imperatively (or by another sync), even if they were later updated by this sync, are left alone. Pruned apps are fully deleted, containers, images, volumes and networks included; pruned bindings drop their backend objects the same way `binding delete` does. Pruning runs in the same transaction as the apply, so a blocked delete (for example a pruned base binding that still has derived bindings created outside the sync) fails and rolls back that sync run.
+- **`--verify`:** each sync run verifies app reloads before promoting changes.
+- **`--prune`:** each sync run deletes the apps and bindings this sync itself created that are no longer present in the apply file, making the file the full source of truth for the resources it manages.
+  - Only resources originally created by the sync are pruned. Apps and bindings created imperatively (or by another sync), even if they were later updated by this sync, are left alone.
+  - Pruned apps are fully deleted, containers, images, volumes and networks included. Pruned bindings drop their backend objects the same way `binding delete` does.
+  - Pruning runs in the same transaction as the apply, so a blocked delete (for example a pruned base binding that still has derived bindings created outside the sync) fails and rolls back that sync run.
 
-Use `openrun sync list` to list syncs, `openrun sync run <sync_id>` to run one immediately, and `openrun sync delete <sync_id>` to remove its schedule. Deleting a sync does not delete its deployed apps or bindings. A scheduled sync which fails `system.max_sync_failure_count` times in a row (default 5) is marked `Disabled` in `sync list` and skipped by the scheduler; a successful `openrun sync run <sync_id>` resets the failure count and re-enables it.
+| Command | Effect |
+| :--- | :--- |
+| `openrun sync list` | List syncs |
+| `openrun sync run <sync_id>` | Run a sync immediately. A successful run resets the failure count and re-enables a disabled sync |
+| `openrun sync delete <sync_id>` | Remove the schedule. Deleting a sync does not delete its deployed apps or bindings |
+
+A scheduled sync which fails `system.max_sync_failure_count` times in a row (default 5) is marked `Disabled` in `sync list` and skipped by the scheduler. A successful `openrun sync run <sync_id>` re-enables it.
 
 ## Sync Frequency
 
@@ -357,6 +430,9 @@ The default sync frequency is every 15 minutes. This can be changed for each syn
 default_schedule_mins = 10
 ```
 
-GitHub imposes a [rate limit](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api) for API calls. Every sync run makes one list API call to the apply file repo and one API call to each source file repo. So if apply files and source files are in the same repo, there is just one API call in total. If there are multiple sync operations, each runs independently. If a new commit is found, then a clone is done on the repo.
+GitHub imposes a [rate limit](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api) for API calls.
 
-Sync can be run more frequently, making sure rate limits are respected. If a [default git auth]({{< ref "/docs/configuration/security/#private-repository-access" >}}) entry is added, that will be used for all list API calls. The rate limits are higher for authenticated requests.
+- Every sync run makes one list API call to the apply file repo and one API call to each source file repo. If apply files and source files are in the same repo, there is just one API call in total.
+- If there are multiple sync operations, each runs independently.
+- If a new commit is found, then a clone is done on the repo.
+- Sync can be run more frequently, making sure rate limits are respected. If a [default git auth]({{< ref "/docs/configuration/security/#private-repository-access" >}}) entry is added, that will be used for all list API calls. The rate limits are higher for authenticated requests.

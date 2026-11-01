@@ -8,15 +8,30 @@ summary: "Controlling access to applications using RBAC"
 
 Role-based access control (RBAC) allows fine-grained control on which users are allowed to view, access and update apps. RBAC is supported using [OAuth]({{< ref "/docs/configuration/authentication/#oauth-authentication" >}}) based auth (like GitHub, GitLab etc). When using OAuth, users have to be explicitly added to groups in the OpenRun RBAC config. RBAC is also supported for [OpenID Connect]({{< ref "/docs/configuration/authentication/#openid-connect-oidc" >}}) and [SAML]({{< ref "/docs/configuration/authentication/#saml" >}}), like Okta and Microsoft Entra etc. With OIDC, the group information can be detected automatically through the user profile information or it can be explicitly configured in the OpenRun config.
 
+This page covers how RBAC relates to authentication, the config structure (groups, roles, grants), the built-in roles, how each permission is scoped, who may change the admin set, how background runs are authorized, and how to test policies with builtin users.
+
 ## Authentication versus Authorization
 
-RBAC is used for multiple authorization checks, like `app:read` (list apps and view basic app info), `app:read_detail` (view the full app info: source, config, files, logs), `app:access` (access the app) and various update related actions. RBAC is **always on** and applies to **every app**: a user needs an `app:access` grant to reach an app, in addition to passing the app's authentication. The default configuration ships a default grant giving every principal (including the `anonymous` user of `none`-auth apps) the `openrun-user` role — `app:access` and `app:read` on all apps — so out of the box, a user can reach an app if they can authenticate against it. Removing or narrowing that grant locks apps down; for example, if an app uses `google` for auth, a user who can log into the Google account still needs an `app:access` grant on the app to reach it. The `admin` user, and any user holding the `admin` permission, always have access.
+RBAC is used for multiple authorization checks, like `app:read` (list apps and view basic app info), `app:read_detail` (view the full app info: source, config, files, logs), `app:access` (access the app) and various update related actions.
 
-RBAC enforcement cannot be disabled through the dynamic config. The static config flag `security.unsafe_disable_rbac` turns all enforcement off for dev/test setups; it cannot be set through the dynamic config API and it excludes the remote API surfaces (`[api.rest]`/`[api.mcp]` `enable` is rejected while it is set).
+- **Always on, every app:** a user needs an `app:access` grant to reach an app, in addition to passing the app's authentication.
+- **Default grant:** the default configuration ships a grant giving every principal (including the `anonymous` user of `none`-auth apps) the `openrun-user` role, which is `app:access` and `app:read` on all apps. So out of the box, a user can reach an app if they can authenticate against it.
+- **Locking down:** removing or narrowing that grant locks apps down. For example, if an app uses `google` for auth, a user who can log into the Google account still needs an `app:access` grant on the app to reach it.
+- **Admins:** the `admin` user, and any user holding the `admin` permission, always have access.
+- **Disabling:** RBAC enforcement cannot be disabled through the dynamic config. The static config flag `security.unsafe_disable_rbac` turns all enforcement off for dev/test setups; it cannot be set through the dynamic config API and it excludes the remote API surfaces (`[api.rest]`/`[api.mcp]` `enable` is rejected while it is set).
 
-Management API calls made by app Starlark code are authorized as the authenticated request user, including read/list operations and mutations. List APIs filter out apps, services and bindings for which that user lacks the corresponding read permission. CLI calls over the unix domain socket are the transport-level administrative exception and run as trusted admin unless `--as` is used. Remote API calls authenticate with an API key or an OAuth token from browser login and run as that credential’s user identity with RBAC enforced. Enable REST with `[api.rest] enable = true` and MCP with `[api.mcp] enable = true`; see [Remote API and MCP]({{< ref "remoteaccess" >}}).
+Who a management API call runs as:
 
-The configured app owner permissions also apply when serving an app: the default `app:manage` owner permission includes `app:access`. Stage and git preview apps inherit the main app's owner; existing git previews are migrated on upgrade. Creating a git preview does not grant access to it. Owners must still pass the app's authentication. Set `owner_permissions.app` to an empty list to require explicit grants for owners too. Remote config reads and update responses redact credential fields, as the console does; trusted unix-socket config exports retain the full configuration.
+- **App Starlark code:** management API calls are authorized as the authenticated request user, including read/list operations and mutations. List APIs filter out apps, services and bindings for which that user lacks the corresponding read permission.
+- **CLI over the unix domain socket:** the transport-level administrative exception. Calls run as trusted admin unless `--as` is used.
+- **Remote API calls:** authenticate with an API key or an OAuth token from browser login and run as that credential's user identity with RBAC enforced. Enable REST with `[api.rest] enable = true` and MCP with `[api.mcp] enable = true`; see [Remote API and MCP]({{< ref "remoteaccess" >}}).
+
+App owners:
+
+- The configured app owner permissions also apply when serving an app: the default `app:manage` owner permission includes `app:access`. Owners must still pass the app's authentication.
+- Stage and git preview apps inherit the main app's owner; existing git previews are migrated on upgrade. Creating a git preview does not grant access to it.
+- Set `owner_permissions.app` to an empty list to require explicit grants for owners too.
+- Remote config reads and update responses redact credential fields, as the console does; trusted unix-socket config exports retain the full configuration.
 
 ## RBAC Configuration
 
@@ -53,48 +68,96 @@ The RBAC configuration is managed through [dynamic config]({{< ref "docs/configu
 }
 ```
 
-`groups` is a map of group name to group members. Members are user ids, prefixed with the auth provider name. Group composition is supported, for example group2 includes all group1 users. A `group:` member can also name a group that comes from the user's sign-in (see [Group Info](#group-info)) instead of a group defined in the config: `"reporting-users": ["group:finance-analysts", "group:sales-ops"]` matches any user whose login groups include `finance-analysts` or `sales-ops`, checked on each request. A `group:` member has the same meaning as in a grant: it matches the config group of that name if one is defined and the sign-in group of that name. `roles` is a map of role name to permissions. Roles also can be composed, for example role `fullaccess` gets all permissions of role `accessor`.
+- **`groups`** is a map of group name to group members. Members are user ids, prefixed with the auth provider name. Group composition is supported, for example group2 includes all group1 users.
+  - A `group:` member can also name a group that comes from the user's sign-in (see [Group Info](#group-info)) instead of a group defined in the config: `"reporting-users": ["group:finance-analysts", "group:sales-ops"]` matches any user whose login groups include `finance-analysts` or `sales-ops`, checked on each request.
+  - A `group:` member has the same meaning as in a grant: it matches the config group of that name if one is defined and the sign-in group of that name.
+- **`roles`** is a map of role name to permissions. Roles also can be composed, for example role `fullaccess` gets all permissions of role `accessor`.
+- **`grants`** assign roles to users on targets, see [Grants](#grants).
+
+{{< theme-image light="/d2/rbac_model_light.svg" dark="/d2/rbac_model_dark.svg" alt="A grant ties users and groups to roles, which carry permissions, and applies those permissions on its targets: apps, services and bindings" >}}
+
+### Grants
+
+Beyond the default grant (the `openrun-user` role for every principal), users have no permissions. Grants have to be added for each additional permission. The grant list can never be emptied through a dynamic config update: at least one grant is required while RBAC is enforced (an empty list would lock every user except `admin` out of every app).
+
+| Field | Meaning |
+| :--- | :--- |
+| `description` | A note about the grant. |
+| `users` | List of users or groups. |
+| `roles` | List of roles granted. |
+| `targets` | List of targets the grant's scoped permissions apply to (see below). |
+
+Target entries:
+
+| Entry | Matches |
+| :--- | :--- |
+| `domain:path` glob | Apps, using the app [glob path]({{< ref "/docs/applications/overview/#glob-pattern" >}}) format. |
+| `service:<glob>` | Service ids in the `<type>/<name>` form, without a leading slash: `service:postgres/*` matches `postgres/main`, `service:**` matches all services. |
+| `binding:<glob>` | Binding paths: `binding:/apps/team1/**`. |
+| `all` (or `*:**`) | Every app, service and binding. |
+
+The group name referenced in a grant (or as a `group:` member of a config group) can be a group which is seen at runtime in the user profile. This works for [OIDC]({{< ref "/docs/configuration/authentication/#openid-connect-oidc" >}}) based auth, like Okta.
 
 ## Built-in Roles
 
-In addition to any roles you define, OpenRun ships a set of built-in roles that are always available. Their names all use the reserved `openrun-` prefix — user-defined role names may not start with `openrun-`. They can be referenced directly in grants, or composed into your own roles with the `role:` prefix (for example `"team-lead": ["role:openrun-developer", "app:approve"]`). A role mixes scoped (`app:*`) and global permissions: the scoped ones apply to the grant's `targets`, the global ones apply regardless of the targets (see [Permission Scope](#permission-scope)).
+In addition to any roles you define, OpenRun ships a set of built-in roles that are always available. Their names all use the reserved `openrun-` prefix; user-defined role names may not start with `openrun-`. They can be referenced directly in grants, or composed into your own roles with the `role:` prefix (for example `"team-lead": ["role:openrun-developer", "app:approve"]`). A role mixes scoped (`app:*`) and global permissions: the scoped ones apply to the grant's `targets`, the global ones apply regardless of the targets (see [Permission Scope](#permission-scope)).
 
 | Role | Purpose | Highlights |
-|------|---------|------------|
+| :--- | :--- | :--- |
 | `openrun-admin` | Unrestricted super-user; bypasses every check | the `admin` permission |
 | `openrun-operator` | Runs the platform | full app lifecycle, `app:approve`, sync, services, bindings, provider management, container management, config, secrets (no reveal), audit, server stop, builder, own API keys |
-| `openrun-developer` | Builds and deploys apps | `app:manage`, services/bindings (no delete), `container:read`, `sync:run`/`read`, `secret:create`/`read`, `config:basic_read` (for the create/update forms), own API keys — no `app:approve`, full config, audit, secret delete/reveal, server stop, or builder |
+| `openrun-developer` | Builds and deploys apps | `app:manage`, services/bindings (no delete), `container:read`, `sync:run`/`read`, `secret:create`/`read`, `config:basic_read` (for the create/update forms), own API keys. No `app:approve`, full config, audit, secret delete/reveal, server stop, or builder |
 | `openrun-builder` | A developer who also uses the AI app builder | everything in `openrun-developer` plus `builder:*` |
 | `openrun-user` | Baseline authenticated user | `app:access` and `app:read` (list apps and see their basic info; no source, config, files or logs) |
-| `openrun-consumer` | Reach served apps only | `app:access` — no app listing or app info at all |
+| `openrun-consumer` | Reach served apps only | `app:access`, no app listing or app info at all |
 | `openrun-monitor` | Read-only observability | `app:read_detail` (full app info across apps), audit, containers, sync, services, bindings, providers, config, and secret metadata (no reveal, no writes) |
 
 `secret:reveal` (reading back stored secret values) and `binding:reveal` (reading back binding account credentials with `binding show-account`) are not included in any built-in role other than `openrun-admin` (whose `admin` permission bypasses every check). Users who need to read these values back must be granted `secret:reveal` / `binding:reveal` explicitly.
 
-Beyond the default grant (the `openrun-user` role for every principal), users have no permissions. Grants have to be added for each additional permission. The grant list can never be emptied through a dynamic config update: at least one grant is required while RBAC is enforced (an empty list would lock every user except `admin` out of every app). A grant has a:
-
-- `description` which is a note about the grant
-- `users` which is list of users or groups
-- `roles` which is list of roles granted
-- `targets` which is the list of targets the grant's scoped permissions apply to. A plain entry is an app [glob path]({{< ref "/docs/applications/overview/#glob-pattern" >}}) (`domain:path` format) matching apps. A `service:<glob>` entry matches service ids in the `<type>/<name>` form, without a leading slash: `service:postgres/*` matches `postgres/main`, `service:**` matches all services. A `binding:<glob>` entry matches binding paths: `binding:/apps/team1/**`. The `all` keyword (or `*:**`) matches every app, service and binding.
-
-The group name referenced in a grant (or as a `group:` member of a config group) can be a group which is seen at runtime in the user profile. This works for [OIDC]({{< ref "/docs/configuration/authentication/#openid-connect-oidc" >}}) based auth, like Okta.
-
 ## Permission Scope
 
-The `app:*` permissions are **scoped**: `app:access`, `app:read`, `app:read_detail`, `app:create`, `app:update`, `app:reload`, `app:apply`, `app:delete`, `app:promote`, `app:preview`, `app:token_read`, `app:token_manage` (list and create/delete [app webhook]({{< ref "docs/applications/webhooks" >}}) tokens), `app:approve`, `app:manage` (the composite of all app permissions except `app:approve`) apply only to the apps matched by the grant's app path `targets`. `app:update` implies `app:reload` and `app:apply`. Custom (`custom:`) app-level permissions are scoped the same way.
+| Scope | Permissions | Applies to |
+| :--- | :--- | :--- |
+| App (scoped) | `app:access`, `app:read`, `app:read_detail`, `app:create`, `app:update`, `app:reload`, `app:apply`, `app:delete`, `app:promote`, `app:preview`, `app:token_read`, `app:token_manage`, `app:approve`, `app:manage`, and `custom:` permissions | The apps matched by the grant's app path `targets`. |
+| Service (scoped) | `service:create`, `service:update`, `service:delete`, `service:read`, `service:bind`, `service:manage` | The services matched by the grant's `service:<glob>` targets. |
+| Binding (scoped) | `binding:create`, `binding:update`, `binding:delete`, `binding:read`, `binding:run_command`, `binding:use`, `binding:reveal`, `binding:manage` | The bindings matched by the grant's `binding:<glob>` targets. |
+| Global | `builder:list`/`create`/`publish`, `sync:create`/`run`/`delete`/`read`, `container:read`/`manage`, `provider:read`/`manage`, `config:basic_read`/`read`/`update`, `secret:create`/`read`/`delete`/`reveal`, `audit:read`, `server:stop`, `apikey:manage:self`, `admin`, `admin:manage` | Conferred by a grant **regardless of its `targets`**. |
 
-`app:read` covers listing apps and the **basic** app info: path, name, id, auth type, active version, timestamps and staging state. `app:read_detail` (which implies `app:read`) covers everything else an app exposes: the source url and git info, spec, config, parameters, bindings, requested plugin permissions, versions and their files and diffs, job run history and output, and the app's own containers (details and logs, without needing the platform-wide `container:read`). `app:update` implies `app:read_detail`, and `app:manage` includes it, so every built-in role except `openrun-user` and `openrun-consumer` sees the full app info. A user with `app:read` only gets the basic view from `app list`/`get_app` and the console's app detail page, and is denied the version, file, export and log operations.
+### App permissions
 
-The `service:*` and `binding:*` permissions are scoped too, against the grant's `service:<glob>` and `binding:<glob>` target entries: `service:create`, `service:update`, `service:delete`, `service:read`, `service:bind` (provision binding accounts on the service, needed to create base/auto bindings from it and to link it as the staging service of another service) and the `service:manage` composite apply to the services matched by the grant's `service:` targets; `binding:create`, `binding:update`, `binding:delete`, `binding:read`, `binding:run_command`, `binding:use` (attach the binding to an app, or derive a new binding from it), `binding:reveal` (read back the binding account credentials) and the `binding:manage` composite apply to the bindings matched by the grant's `binding:` targets. Like `app:approve`, `binding:reveal` is never implied by `binding:manage`: it needs an explicit grant, and binding owners do not hold it by default (add it to `owner_permissions.binding` to opt owners in). A grant whose targets only name app paths confers no service or binding permissions; use `service:**` / `binding:/**` entries (or `all`) to grant them broadly. Attaching a binding to an app requires `binding:use` on the binding (or `service:bind` on the service for auto bindings created from a service source), in addition to the app permission for the app update itself. Service and binding list operations return only the entries the user can read.
+- `app:token_read` and `app:token_manage` list and create/delete [app webhook]({{< ref "docs/applications/webhooks" >}}) tokens.
+- `app:manage` is the composite of all app permissions except `app:approve`.
+- `app:update` implies `app:reload` and `app:apply`.
+- Custom (`custom:`) app-level permissions are scoped the same way as the `app:*` permissions.
+- `app:read` covers listing apps and the **basic** app info: path, name, id, auth type, active version, timestamps and staging state. A user with `app:read` only gets the basic view from `app list`/`get_app` and the console's app detail page, and is denied the version, file, export and log operations.
+- `app:read_detail` (which implies `app:read`) covers everything else an app exposes: the source url and git info, spec, config, parameters, bindings, requested plugin permissions, versions and their files and diffs, job run history and output, and the app's own containers (details and logs, without needing the platform-wide `container:read`). `app:update` implies `app:read_detail`, and `app:manage` includes it, so every built-in role except `openrun-user` and `openrun-consumer` sees the full app info.
 
-Every other permission is **global** (`builder:list`/`create`/`publish`, `sync:create`/`run`/`delete`/`read`, `container:read`/`manage`, `provider:read`/`manage`, `config:basic_read`/`read`/`update`, `secret:create`/`read`/`delete`/`reveal`, `audit:read`, `server:stop`, `apikey:manage:self`, `admin`, `admin:manage`): a grant confers a global permission **regardless of its `targets`**. `container:manage` (start/stop managed containers) implies `container:read`. `provider:read` lists installed providers and `provider:manage` installs or removes provider executables (and implies `provider:read`). `config:basic_read` reads non-sensitive config metadata (auth and git auth entry names, specs, the permission catalog) and is implied by `config:read`. `apikey:manage:self` lets a user create, list and delete their own [API keys]({{< ref "remoteaccess/#api-keys" >}}). `admin` is the super-user permission that bypasses every check. `admin:manage` governs changes to who holds `admin` (see [Managing admins](#managing-admins)).
+### Service and binding permissions
 
-The creator of a service or binding holds the configured owner permissions on it (default `service:manage` / `binding:manage`) without needing a grant, like app and sync owners. Override with `owner_permissions.service` / `owner_permissions.binding`.
+- `service:bind` provisions binding accounts on the service. It is needed to create base/auto bindings from it and to link it as the staging service of another service.
+- `binding:use` attaches the binding to an app, or derives a new binding from it. `binding:reveal` reads back the binding account credentials.
+- Like `app:approve`, `binding:reveal` is never implied by `binding:manage`: it needs an explicit grant, and binding owners do not hold it by default (add it to `owner_permissions.binding` to opt owners in).
+- A grant whose targets only name app paths confers no service or binding permissions; use `service:**` / `binding:/**` entries (or `all`) to grant them broadly.
+- Attaching a binding to an app requires `binding:use` on the binding (or `service:bind` on the service for auto bindings created from a service source), in addition to the app permission for the app update itself.
+- Service and binding list operations return only the entries the user can read.
+- The creator of a service or binding holds the configured owner permissions on it (default `service:manage` / `binding:manage`) without needing a grant, like app and sync owners. Override with `owner_permissions.service` / `owner_permissions.binding`.
 
-The `builder:*` permissions are global because a builder session is not bound to an app path until it publishes. The app a session publishes, edits or removes is enforced separately with the app permissions on that path: publishing to a new path needs `app:create`, republishing an existing app needs `app:update`, and unpublishing needs `app:delete` (local mode publishes also run through the declarative apply, which enforces `app:apply` and `app:approve` before any file is staged). The preview dev app a session creates under the configured `preview_path` is authorized by `builder:create` itself — no app permission is needed for the preview mount — and is owned by the session creator, so the owner rule covers viewing the preview and deleting it with the session.
+### Global permissions
 
-`app:approve` is the operator-only permission that authorizes approving an app's plugin permissions (which run server-side code). It is scoped like the other `app:*` permissions — a grant confers it only on the apps matched by its `targets` — but it always needs an explicit grant: it is never implied by `app:manage`, never matched by a permission glob and never granted through ownership; it has to be granted by its literal name (or held via the `admin` super-user permission, e.g. the `openrun-admin` role). Setting the `--approve` flag on a create/reload/apply, or calling approve directly, requires this permission on every matched app. Creating a sync entry with `approve` set requires `app:approve` granted with target `all`, since the entry's glob can match apps created later.
+- `container:manage` (start/stop managed containers) implies `container:read`.
+- `provider:read` lists installed providers and `provider:manage` installs or removes provider executables (and implies `provider:read`).
+- `config:basic_read` reads non-sensitive config metadata (auth and git auth entry names, specs, the permission catalog) and is implied by `config:read`.
+- `apikey:manage:self` lets a user create, list and delete their own [API keys]({{< ref "remoteaccess/#api-keys" >}}).
+- `admin` is the super-user permission that bypasses every check. `admin:manage` governs changes to who holds `admin` (see [Managing admins](#managing-admins)).
+- The `builder:*` permissions are global because a builder session is not bound to an app path until it publishes. The app a session publishes, edits or removes is enforced separately with the app permissions on that path: publishing to a new path needs `app:create`, republishing an existing app needs `app:update`, and unpublishing needs `app:delete` (local mode publishes also run through the declarative apply, which enforces `app:apply` and `app:approve` before any file is staged). The preview dev app a session creates under the configured `preview_path` is authorized by `builder:create` itself (no app permission is needed for the preview mount) and is owned by the session creator, so the owner rule covers viewing the preview and deleting it with the session.
+
+### The `app:approve` permission
+
+`app:approve` is the operator-only permission that authorizes approving an app's plugin permissions (which run server-side code). It is scoped like the other `app:*` permissions, so a grant confers it only on the apps matched by its `targets`, but it always needs an explicit grant:
+
+- It is never implied by `app:manage`, never matched by a permission glob and never granted through ownership. It has to be granted by its literal name (or held via the `admin` super-user permission, e.g. the `openrun-admin` role).
+- Setting the `--approve` flag on a create/reload/apply, or calling approve directly, requires this permission on every matched app.
+- Creating a sync entry with `approve` set requires `app:approve` granted with target `all`, since the entry's glob can match apps created later.
 
 ## Managing admins
 
@@ -104,17 +167,22 @@ The `builder:*` permissions are global because a builder session is not bound to
 - the `users` and `roles` of the grants that use those roles
 - the membership of every config group those grants reference, through nested `group:` members
 
-A change to any of these requires the `admin:manage` permission, which holders of `admin` have implicitly; `force` does not bypass it. `admin:manage` grants are protected the same way as `admin` grants, so granting oneself `admin:manage` is not a route to `admin`. The rest of the config (other grants, roles and groups, the protected grants' `description` and `targets`, config entries and settings) stays editable with `config:update`. A grant's `description` and `targets` do not affect who holds `admin`, since `admin` is a global permission. The same rule applies to builtin users: `openrun user add` or `user update` placing a user in, or removing a user from, a group an admin grant references (directly or through a nested group) requires `admin:manage` in addition to `user:create`/`user:update`.
+A change to any of these requires the `admin:manage` permission, which holders of `admin` have implicitly; `force` does not bypass it.
 
-`admin:manage` is not part of any built-in role other than `openrun-admin`. Grant it explicitly to the users who administer the admin set without being admins themselves, for example `"admin-managers": ["role:openrun-operator", "admin:manage"]`. Like `admin` and `app:approve`, it is never matched by a permission glob in a role (`*` or `admin:*`) and must be named literally in [API key scopes]({{< ref "remoteaccess/#api-keys" >}}). Local CLI calls over the unix domain socket run as the trusted `admin` and are not subject to this check unless `--as` is used.
+- `admin:manage` grants are protected the same way as `admin` grants, so granting oneself `admin:manage` is not a route to `admin`.
+- The rest of the config (other grants, roles and groups, the protected grants' `description` and `targets`, config entries and settings) stays editable with `config:update`. A grant's `description` and `targets` do not affect who holds `admin`, since `admin` is a global permission.
+- The same rule applies to builtin users: `openrun user add` or `user update` placing a user in, or removing a user from, a group an admin grant references (directly or through a nested group) requires `admin:manage` in addition to `user:create`/`user:update`.
+- `admin:manage` is not part of any built-in role other than `openrun-admin`. Grant it explicitly to the users who administer the admin set without being admins themselves, for example `"admin-managers": ["role:openrun-operator", "admin:manage"]`.
+- Like `admin` and `app:approve`, it is never matched by a permission glob in a role (`*` or `admin:*`) and must be named literally in [API key scopes]({{< ref "remoteaccess/#api-keys" >}}).
+- Local CLI calls over the unix domain socket run as the trusted `admin` and are not subject to this check unless `--as` is used.
 
 ## Sync Jobs and Background Runs
 
-A [sync entry]({{< ref "/docs/applications/overview" >}}) runs declarative applies in the background, without an authenticated user. When a sync is created through an RBAC enforced request, the creator's authorization is frozen on the entry: the grants matching the creator (with group membership, including SSO provided groups, resolved at create time and role permissions flattened) are stored in the sync metadata. Every scheduled run is then authorized against that snapshot — each apply, reload and promote the run performs needs the corresponding permission (`app:apply`, `app:promote`, `app:approve`) on that app in the frozen grants, and a denied action fails the run (counting toward the sync failure backoff and eventual disable).
+A [sync entry]({{< ref "/docs/applications/overview" >}}) runs declarative applies in the background, without an authenticated user. When a sync is created through an RBAC enforced request, the creator's authorization is frozen on the entry: the grants matching the creator (with group membership, including SSO provided groups, resolved at create time and role permissions flattened) are stored in the sync metadata. Every scheduled run is then authorized against that snapshot. Each apply, reload and promote the run performs needs the corresponding permission (`app:apply`, `app:promote`, `app:approve`) on that app in the frozen grants, and a denied action fails the run (counting toward the sync failure backoff and eventual disable).
 
 Notes on the snapshot behavior:
 
-- The snapshot is frozen at create time. Later edits to roles, groups or grants do not change what an existing sync may do — delete and recreate the sync to pick up new grants.
+- The snapshot is frozen at create time. Later edits to roles, groups or grants do not change what an existing sync may do: delete and recreate the sync to pick up new grants.
 - Syncs created via the CLI (`admin` over the unix socket) or with RBAC disabled store no snapshot and run unrestricted, as before.
 - Disabling RBAC disables snapshot enforcement too; re-enabling it restores enforcement for entries that have a snapshot.
 - The creating credential's scope ceiling is frozen alongside the grants, including for users holding `admin`. Scheduled runs cannot exceed those scopes. Syncs created before scope ceilings were stored must be recreated to capture the credential's limits.
@@ -122,7 +190,12 @@ Notes on the snapshot behavior:
 - Manual `sync run` calls are authorized against the caller's own current grants, not the stored snapshot.
 - The creator of a sync entry keeps the `sync:run`, `sync:delete` and `sync:read` owner permissions on it.
 
-App jobs follow their execution context. Manual jobs and `before_deploy` jobs retain the caller's RBAC permissions, credential scope ceiling and any sync snapshot. Scheduled app jobs evaluate management API calls against the app owner's live RBAC grants and builtin groups. OAuth/OIDC and SAML logins refresh a stored IdP group snapshot, valid for `api.federated_identity_ttl`; existing browser sessions do not extend that lifetime. After upgrading, an SSO owner must sign in again to populate the snapshot. Unattributed scheduled jobs and deleted builtin or disabled owners have no management API authority. Owners without an API identity row retain direct principal grants; identity lookup failures fail the run before execution. They still run under the app's approved plugin permissions. Scheduling a job does not grant trusted server authority.
+App jobs follow their execution context:
+
+- **Manual jobs and `before_deploy` jobs** retain the caller's RBAC permissions, credential scope ceiling and any sync snapshot.
+- **Scheduled app jobs** evaluate management API calls against the app owner's live RBAC grants and builtin groups. Scheduling a job does not grant trusted server authority.
+- **SSO owners:** OAuth/OIDC and SAML logins refresh a stored IdP group snapshot, valid for `api.federated_identity_ttl`; existing browser sessions do not extend that lifetime. After upgrading, an SSO owner must sign in again to populate the snapshot.
+- **Missing owners:** unattributed scheduled jobs and deleted builtin or disabled owners have no management API authority. Owners without an API identity row retain direct principal grants; identity lookup failures fail the run before execution. The jobs still run under the app's approved plugin permissions.
 
 ## Group Info
 
@@ -135,7 +208,11 @@ To get the group info dynamically as part of the user login (instead of statical
 
 ## Testing RBAC with Builtin Users
 
-To try out RBAC policies with multiple users and groups without setting up an OAuth/SAML provider, use the [builtin auth type]({{< ref "Authentication#builtin-users" >}}). Create users with groups using `openrun user add alice --groups dev,qa` (no server restart needed; managing users needs `user:manage`), point an app at it with `--auth builtin`, and exercise grants with `curl -u alice:password`. The user id in grants is `builtin:alice`; the groups of the user are matched by `group:` references like SSO groups.
+To try out RBAC policies with multiple users and groups without setting up an OAuth/SAML provider, use the [builtin auth type]({{< ref "Authentication#builtin-users" >}}):
+
+- Create users with groups using `openrun user add alice --groups dev,qa` (no server restart needed; managing users needs `user:manage`).
+- Point an app at it with `--auth builtin`, and exercise grants with `curl -u alice:password`.
+- The user id in grants is `builtin:alice`; the groups of the user are matched by `group:` references like SSO groups.
 
 ### Testing management API grants with --as
 
@@ -146,7 +223,10 @@ openrun --as builtin:alice app list
 openrun --as builtin:alice service create --config url=... postgres/teamdb
 ```
 
-The call is authorized against the named user's current grants instead of running as the trusted `admin`, and audit events record that user. `--as` works only over the unix domain socket (the caller is already the administrator; impersonation only ever narrows authority, no password is needed). For `builtin:` users the user must exist (and not be disabled) and its groups feed `group:` matching; any other `<provider>:<username>` id (like `github:user1`) is taken literally with no groups, so grants for SSO identities can be tested without creating the users.
+- The call is authorized against the named user's current grants instead of running as the trusted `admin`, and audit events record that user.
+- `--as` works only over the unix domain socket (the caller is already the administrator; impersonation only ever narrows authority, no password is needed).
+- For `builtin:` users the user must exist (and not be disabled) and its groups feed `group:` matching.
+- Any other `<provider>:<username>` id (like `github:user1`) is taken literally with no groups, so grants for SSO identities can be tested without creating the users.
 
 ## Regex User Name
 
@@ -156,11 +236,13 @@ In the `groups.<group_name>` property and in `grant.users`, the username can be 
 
 Permissions like `app:access`, `app:read`, `app:update` are OpenRun-defined permissions. They control what actions can be performed by the user in OpenRun. In addition to these, custom permissions are supported. Custom permissions are defined in the config with the `custom:` prefix. These permissions are ignored by OpenRun. They are passed to the app. For apps where requests are proxied through OpenRun (like containerized apps), these permissions are available in the HTTP headers
 
-- `X-Openrun-User`: This is the user performing the request. The user ID is prefixed with the provider name (like `google:test@example.com`). The username is `anonymous` for anonymous requests and `admin` for admin requests.
-- `X-Openrun-User-Id`: The provider user ID claim, when available. For OIDC providers this is the `sub` claim.
-- `X-Openrun-User-Email`: The provider email claim, when available.
-- `X-Openrun-Perms`: The list of custom permissions available to this user on this app. The list is comma-separated, without the `custom:` prefix, like `appread,appdelete`.
-- `X-Openrun-Rbac-Enabled`: Whether RBAC is enabled for the app, `true` or `false`
+| Header | Value |
+| :--- | :--- |
+| `X-Openrun-User` | The user performing the request. The user ID is prefixed with the provider name (like `google:test@example.com`). The username is `anonymous` for anonymous requests and `admin` for admin requests. |
+| `X-Openrun-User-Id` | The provider user ID claim, when available. For OIDC providers this is the `sub` claim. |
+| `X-Openrun-User-Email` | The provider email claim, when available. |
+| `X-Openrun-Perms` | The list of custom permissions available to this user on this app. The list is comma-separated, without the `custom:` prefix, like `appread,appdelete`. |
+| `X-Openrun-Rbac-Enabled` | Whether RBAC is enabled for the app, `true` or `false`. |
 
 For [Action apps]({{< ref "Actions" >}}), custom perms can be used to limit which user can perform what operations. In the action definition, adding `permit=['appread']` means that the action will be available only to users who have any one of the custom permissions specified in the list. The default action should be available to everyone, other actions can be controlled using custom permissions. If no permits are set, all actions are available to authenticated users.
 
@@ -169,5 +251,5 @@ Plugin calls can use the same custom permissions with `ace.permission(..., permi
 ## Notes
 
 - RBAC applies to every app: users need an `app:access` grant to reach an app (the default grant provides it to every authenticated principal). The `rbac:` auth prefix is still accepted for backward compatibility but no longer has any special effect.
-- Local CLI calls over the Unix domain socket run as `admin` unless `--as` is used. Remote CLI calls run as the authenticated credential’s user, with RBAC enforced.
+- Local CLI calls over the Unix domain socket run as `admin` unless `--as` is used. Remote CLI calls run as the authenticated credential's user, with RBAC enforced.
 - For apps with no authentication (using `none` auth), the user ID to use in RBAC is `anonymous`, without the auth type prefix.

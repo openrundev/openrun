@@ -7,6 +7,14 @@ summary: "Deploy SQLite-backed web apps with persistent volumes, staged updates 
 
 SQLite is a good fit for internal tools and small web apps: no database server to run, one file to back up and excellent read performance. What SQLite hosting needs from a platform is persistent storage per app, safe updates that respect SQLite's single-writer model and backups. OpenRun provides all three: each app gets a persistent volume through a [SQLite service binding]({{< ref "docs/applications/servicebindings/#sqlite-config-and-behavior" >}}), updates go through staged deployment, and [Litestream replication]({{< ref "docs/applications/litestream/" >}}) continuously backs the database up to S3-compatible storage.
 
+What you will set up on this page:
+
+- A SQLite service and an app [bound to it](#deploying-a-sqlite-app), with the database path injected through environment variables
+- App settings that keep SQLite reliable in a container ([best practices](#app-best-practices))
+- Persistent [volumes](#how-volumes-are-handled) and stop-first [updates](#how-updates-work-on-a-single-node) with staging and promote
+- Continuous [backups](#backups-with-litestream) to S3-compatible storage with automatic restore
+- The same app on [Kubernetes](#sqlite-apps-on-kubernetes)
+
 ## Scenario
 
 This use case covers the scenario where you want to:
@@ -19,12 +27,18 @@ This use case covers the scenario where you want to:
 
 ## Deploying a SQLite App
 
+{{% steps %}}
+
+### Create the service and bind the app
+
 Create a SQLite service once, then bind apps to it:
 
 ```sh
 openrun service create sqlite/main --is-default
 openrun app create --bind sqlite --approve github.com/example/notes-app /notes
 ```
+
+### Open the database from the environment
 
 The app finds its database through environment variables injected by OpenRun:
 
@@ -36,6 +50,8 @@ SQLITE_DIR=/data
 
 The app opens the database at `SQLITE_DB_PATH` and needs no other configuration. Apps can also create additional database files under `SQLITE_DIR`, for example per-tenant databases.
 
+### Change the mount directory if needed
+
 The mount directory (default `/data`) can be changed per binding with the `path` [binding config key]({{< ref "docs/applications/servicebindings/#sqlite-config-and-behavior" >}}), either on the binding source when the app is created or on an explicitly created binding:
 
 ```sh
@@ -45,6 +61,8 @@ openrun binding create --config path=/var/lib/app sqlite/main /apps/notes-db
 ```
 
 The environment variables follow the configured path, so the app itself needs no change.
+
+{{% /steps %}}
 
 How the app opens and uses the database matters for reliability; see [App Best Practices](#app-best-practices) below.
 
@@ -77,7 +95,11 @@ An app can have at most one SQLite binding and a SQLite binding attaches to only
 
 ## How Updates Work on a Single Node
 
-App updates preserve the volume. When a new app version deploys, the running container is stopped first and a container for the new version then starts with the same volume attached, so the database carries over and there is never more than one app container on it. On Kubernetes this is the `Recreate` rollout of persistent-volume apps. On Docker/Podman it is the stop-first deploy that `container.blue_green_deploy = "auto"` (the default) selects for apps with a persistent volume, which a SQLite binding is: requests to the app are held while the new container starts (a delay, not errors) and, if the new one fails to start, the previous container is started again by the next request. An app can opt back into a blue-green deploy with `container.blue_green_deploy = true`; the two versions then briefly share the volume, which SQLite's file lock makes safe for the database itself. See [deploy strategy]({{< ref "docs/container/config/#deploy-strategy" >}}).
+App updates preserve the volume. When a new app version deploys, the running container is stopped first and a container for the new version then starts with the same volume attached, so the database carries over and there is never more than one app container on it.
+
+- **Kubernetes:** this is the `Recreate` rollout of persistent-volume apps.
+- **Docker/Podman:** this is the stop-first deploy that `container.blue_green_deploy = "auto"` (the default) selects for apps with a persistent volume, which a SQLite binding is. Requests to the app are held while the new container starts (a delay, not errors) and, if the new one fails to start, the previous container is started again by the next request.
+- **Opting back into blue-green:** an app can set `container.blue_green_deploy = true`; the two versions then briefly share the volume, which SQLite's file lock makes safe for the database itself. See [deploy strategy]({{< ref "docs/container/config/#deploy-strategy" >}}).
 
 [Staged deployment]({{< ref "docs/applications/lifecycle/#staging-apps" >}}) makes updates safe to verify first. The staging version of an app is a separate app with its own volume: staged changes run against staging data, not the production database. With replication enabled, production and staging replicate to separate locations. Verify the change at the staging URL, then promote:
 
@@ -85,11 +107,14 @@ App updates preserve the volume. When a new app version deploys, the running con
 openrun app reload --promote /notes
 ```
 
-Rollbacks switch the app back to a previous version; the volume is untouched. Schema migrations are the app's responsibility, so a rollback across a schema change needs the older version to tolerate the newer schema.
-
-When the app is idle, OpenRun stops the container to scale resource usage to zero; the volume persists and the next request starts the container against the same data. With replication enabled, the replication container performs a final sync before stopping.
+- **Rollbacks** switch the app back to a previous version; the volume is untouched. Schema migrations are the app's responsibility, so a rollback across a schema change needs the older version to tolerate the newer schema.
+- **Idle apps:** when the app is idle, OpenRun stops the container to scale resource usage to zero. The volume persists and the next request starts the container against the same data. With replication enabled, the replication container performs a final sync before stopping.
 
 ## Backups with Litestream
+
+{{% steps %}}
+
+### Define a Litestream config
 
 Enable continuous backup by referencing a [Litestream config]({{< ref "docs/applications/litestream/" >}}) on the service:
 
@@ -101,11 +126,17 @@ access_key_id = '{{secret_from "env" "LITESTREAM_KEY_ID"}}'
 secret_access_key = '{{secret_from "env" "LITESTREAM_KEY"}}'
 ```
 
+### Reference it on the service
+
 ```sh
 openrun service create sqlite/main --is-default --config litestream_config=mainbackup
 ```
 
-Changes replicate continuously to S3, Cloudflare R2, MinIO or other S3-compatible storage. The default sync interval is one second; upload delays and outages can increase the amount of unreplicated data. Litestream replicates every file in the binding directory that matches the binding's `pattern` config key, a file glob relative to the binding directory. The default pattern is `*.db`. Apps that use a different naming convention can change it per binding, either on an explicitly created binding or in the binding source (config keys after `;` are comma separated, so `path` and `pattern` can be set together):
+Changes replicate continuously to S3, Cloudflare R2, MinIO or other S3-compatible storage. The default sync interval is one second; upload delays and outages can increase the amount of unreplicated data.
+
+### Set the file pattern if the app uses other names
+
+Litestream replicates every file in the binding directory that matches the binding's `pattern` config key, a file glob relative to the binding directory. The default pattern is `*.db`. Apps that use a different naming convention can change it per binding, either on an explicitly created binding or in the binding source (config keys after `;` are comma separated, so `path` and `pattern` can be set together):
 
 ```sh
 openrun binding create --config "pattern=*.sqlite3" sqlite/main /apps/notes-db
@@ -114,9 +145,14 @@ openrun app create --bind "sqlite;path=/var/lib/app,pattern=*.sqlite3" \
   --approve github.com/example/notes-app /notes
 ```
 
-New files matching the pattern are discovered within seconds, so per-tenant databases created at runtime are picked up automatically. Note that the default database file is `data.db`, so a custom pattern should either match `data.db` or the app should use its own file names.
+- New files matching the pattern are discovered within seconds, so per-tenant databases created at runtime are picked up automatically.
+- The default database file is `data.db`, so a custom pattern should either match `data.db` or the app should use its own file names.
 
-Restore is automatic: if the app starts with an empty or recreated volume, the database is restored from the replica before the app starts. The server's own metadata can be replicated the same way. Recovery also requires the server config, credentials and encryption key; see [Recovery]({{< ref "docs/applications/litestream/#operational-notes" >}}). Monitor replication with `openrun replication status`.
+{{% /steps %}}
+
+- **Restore is automatic:** if the app starts with an empty or recreated volume, the database is restored from the replica before the app starts.
+- **Server metadata** can be replicated the same way. Recovery also requires the server config, credentials and encryption key; see [Recovery]({{< ref "docs/applications/litestream/#operational-notes" >}}).
+- **Monitoring:** `openrun replication status` shows the replication state.
 
 ## SQLite Apps on Kubernetes
 

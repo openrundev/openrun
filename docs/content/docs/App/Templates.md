@@ -10,21 +10,22 @@ The [Sprig template library functions](http://masterminds.github.io/sprig/) are 
 
 Two extra functions `static` and `fileNonEmpty` are added for handling static file paths. These helper functions are also added:
 
-|                   Function                   |                                                                     Notes                                                                     |
-| :------------------------------------------: | :-------------------------------------------------------------------------------------------------------------------------------------------: |
-| `pathEscape`, `pathUnescape`                 |                                                 URL path segment escaping (Go `url.PathEscape`)                                                 |
-| `queryEscape`, `queryUnescape`               |                                                URL query string escaping (Go `url.QueryEscape`)                                                 |
-| `safeHTML`                                   | Marks a string as pre-escaped HTML, opting it out of the template's contextual escaping. Any user input in the string must be escaped first |
-| `relTime`                                    | Renders a `time.Time` or RFC3339 string as a relative age, like `3 hours ago`. An optional resolution argument widens it: `{{ relTime .t 2 }}` gives `1 day 3 hours ago` |
-| `openrun_static`                             |                     Returns the content-hashed `/_openrun/static` url of a browser asset served by the OpenRun server, like `htmx.min.js`                     |
+| Function | Notes |
+| :--- | :--- |
+| `pathEscape`, `pathUnescape` | URL path segment escaping (Go `url.PathEscape`) |
+| `queryEscape`, `queryUnescape` | URL query string escaping (Go `url.QueryEscape`) |
+| `safeHTML` | Marks a string as pre-escaped HTML, opting it out of the template's contextual escaping. Any user input in the string must be escaped first |
+| `relTime` | Renders a `time.Time` or RFC3339 string as a relative age, like `3 hours ago`. An optional resolution argument widens it: `{{ relTime .t 2 }}` gives `1 day 3 hours ago` |
+| `openrun_static` | Returns the content-hashed `/_openrun/static` url of a browser asset served by the OpenRun server, like `htmx.min.js` |
 
 ## static function
 
 This function takes a file name and returns the url for a file in the static folder with a sha256 hash included in the file name. This approach is similar to the [hashfs library](https://github.com/benbjohnson/hashfs). If the `static` folder contains a file `file1` with the content `file1data`, then a call to `static "file1"` will return `/test/static/file1-ca9e40772ef9119c13100a8258bc38a665a0a1976bf81c96e69a353b6605f5a7`, assuming the app is installed at `/test`.
 
-The returned file name has a hash based on the file contents. The file server used by OpenRun will serve aggressive cache headers `Cache-Control: public, max-age=31536000` when this file is referenced by the browser. When the file contents change, the content hash will change and the file name will change. The files on disk are not renamed, only the filesystem used by the OpenRun server in memory sees the hashed file names.
-
-This approach allows for a build-less system with aggressive static asset caching. The usual approach for this requires the static file to be renamed to have the hash value in the file name on disk. This requires a build step to do the file renaming. The hashfs approach can avoid the build step. The file hash computation and compression are done once, during app installation in prod mode. There is no runtime penalty for this. In dev mode, the file hashing is done during the api serving.
+- **Caching:** the file name has a hash based on the file contents. The OpenRun file server serves aggressive cache headers `Cache-Control: public, max-age=31536000` when this file is referenced by the browser.
+- **Content changes:** when the file contents change, the content hash and the file name change. The files on disk are not renamed, only the filesystem used by the OpenRun server in memory sees the hashed file names.
+- **No build step:** the usual approach to aggressive static asset caching renames the static file on disk to include the hash, which requires a build step. The hashfs approach avoids the build step.
+- **Cost:** in prod mode, the file hash computation and compression are done once, during app installation. There is no runtime penalty. In dev mode, the file hashing is done during the api serving.
 
 ## fileNonEmpty function
 
@@ -57,13 +58,21 @@ settings={
 }
 ```
 
-the default is `["*.go.html"]`. If additional directories are added, `"*.go.html"` still needs to be present in the list since generated files are created in the app home directory. Also, all folders in the list need to contain at least one template file. File names have to be unique across folders. Files are referenced by their name, without the folder name, when used in template import directives.
+The default is `["*.go.html"]`. When adding directories:
+
+- `"*.go.html"` still needs to be present in the list, since generated files are created in the app home directory.
+- All folders in the list need to contain at least one template file.
+- File names have to be unique across folders. Files are referenced by their name, without the folder name, when used in template import directives.
 
 ## Structured Template Layout
 
-The default in OpenRun is to load all the templates in one parse operation. This is easy to get started with but can result in challenges when the same template block needs to be duplicated in different files. OpenRun also supports a structured template layout. See [this blog](https://philipptanlak.com/web-frontends-in-go/#how-i-structure-my-templates) for an explanation about the differences between the two layouts. The default in OpenRun is the WordPress layout, all template files are loaded in one go. To use the second, Django layout, use the structured format.
+The default in OpenRun is to load all the templates in one parse operation (the WordPress layout). This is easy to get started with but can result in challenges when the same template block needs to be duplicated in different files. OpenRun also supports a structured template layout (the Django layout). See [this blog](https://philipptanlak.com/web-frontends-in-go/#how-i-structure-my-templates) for an explanation about the differences between the two layouts.
 
-If there is a `base_templates` folder in the app main folder with one or more `*.go.html` files, the structured template layout is used. In the structured layout format, all the base template files are loaded in one parse operation. Each of the files in the app main folder is then individually loaded. Each top level file has access to its own template blocks plus the base templates.
+If there is a `base_templates` folder in the app main folder with one or more `*.go.html` files, the structured template layout is used:
+
+- All the base template files are loaded in one parse operation.
+- Each of the files in the app main folder is then individually loaded.
+- Each top level file has access to its own template blocks plus the base templates.
 
 This has the advantage that the main templates can have duplicate templates, with no conflicts because they are loaded individually. For example, if there is a `base_templates/base.go.html` file with
 
@@ -101,7 +110,7 @@ settings={
 
 ## App Layout
 
-When using custom layout with `custom_layout=True`, the app developer has to create the `index.go.html` file. Add a directive like:
+**Custom layout** (`custom_layout=True`): the app developer has to create the `index.go.html` file. Add a directive like:
 
 ```html
 {{ template "openrun_gen_import" . }}
@@ -109,7 +118,7 @@ When using custom layout with `custom_layout=True`, the app developer has to cre
 
 in the head section to ensure that the auto generated `openrun_gen_import` directives are loaded in the page. This will include the style files, HTMX library and the live reload functionality in dev mode.
 
-In the default layout mode, the auto generated `index_gen.go.html` file is used. The app developer has to provide a `openrun_body` block. It can be in any template file, the convention is to use `app.go.html`. For example:
+**Default layout**: the auto generated `index_gen.go.html` file is used. The app developer has to provide a `openrun_body` block. It can be in any template file, the convention is to use `app.go.html`. For example:
 
 <!-- prettier-ignore -->
 ```html
@@ -139,8 +148,14 @@ For example:
 
 ## Static Root Files
 
-The `static` folder is used for files which are served under the `/static` path. Content based hashing is supported for these files.
+| Folder | Served at | Content based hashing | Use for |
+| :--- | :--- | :--- | :--- |
+| `static` | `/static` under the app path | Supported | Most regular static file serving |
+| `static_root` | The root path of the app | Not supported | Well known files like `favicon.ico` and `robots.txt` |
 
-For files which need to be served under the root level, the `static_root` folder is used. Files in this folder are served at the root path. For example, if an app is installed at `example.com:` and a robots.txt file needs to be served, a file `static_root/robots.txt` can be added to the app. This will be automatically served at `example.com/robots.txt`. Note that the static folder path is stripped from the route name. The file name should not conflict with any of the API routes defined in the app. Nested folders are looked up in the static root folder.
+For example, if an app is installed at `example.com:` and a robots.txt file needs to be served, a file `static_root/robots.txt` can be added to the app. This is automatically served at `example.com/robots.txt`.
 
-Content based hashing is not supported for static root files. These files are expected to be used for well known files like `favicon.ico`. Most regular static file serving use cases should use the `static` folder, not the `static_root` folder.
+- The static folder path is stripped from the route name.
+- The file name should not conflict with any of the API routes defined in the app.
+- Nested folders are looked up in the static root folder.
+- Most regular static file serving use cases should use the `static` folder, not the `static_root` folder.

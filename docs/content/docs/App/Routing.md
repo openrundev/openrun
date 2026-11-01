@@ -4,7 +4,15 @@ weight: 200
 summary: "Defining API routes, handling pages and fragments"
 ---
 
-The request routing layer in OpenRun is built on top of the [chi](https://github.com/go-chi/chi) routing library. API requests (JSON or text), HTML requests and proxied requests are supported. For HTML requests, the routing is built for hypermedia exchange, so all routes are defined in terms of pages and fragments within the pages. This grouping of requests helps make it clear which API does what and provide an easy mechanism to deal with partial HTMX driven requests and full page refreshes. Simpler application might have one page with some interactions within that. Larger applications can be composed of multiple pages, each page having some interactive fragments.
+OpenRun routes requests with the [chi](https://github.com/go-chi/chi) routing library. An app declares its routes in the `routes` array of `ace.app`. There are three route types:
+
+| Route | Function | Response |
+| :--- | :--- | :--- |
+| [HTML]({{< ref "#html-route" >}}) | `ace.html` | A page, with optional fragments for partial HTMX updates |
+| [API]({{< ref "#api-route" >}}) | `ace.api` | JSON (default) or plain text |
+| [Proxy]({{< ref "#proxy-route" >}}) | `ace.proxy` | Forwarded to another service |
+
+HTML routing is built for hypermedia exchange: routes are defined in terms of pages and fragments within the pages. This makes it clear which API does what and gives an easy way to deal with partial HTMX driven requests and full page refreshes. A simple application might have one page with some interactions within it. Larger applications are composed of multiple pages, each with some interactive fragments.
 
 ## Routes
 
@@ -29,25 +37,25 @@ An HTML route can have fragments defined within it. These are sub-APIs used for 
 
 The parameters for `ace.html` are:
 
-| Property  | Optional |      Type      |                        Default                         |                                Notes                                 |
-| :-------: | :------: | :------------: | :----------------------------------------------------: | :------------------------------------------------------------------: |
-|   path    |  False   |     string     |                                                        |                   The route, should start with a /                   |
-|   full    |   True   |     string     | index.go.html if custom layout, else index_gen.go.html |              The template to use for full page requests              |
-|  partial  |   True   |     string     |                          None                          |            The template to use for partial page requests             |
-|  handler  |   True   |    function    |                  handler (if defined)                  |              The handler function to use for the route               |
-| fragments |   True   | ace.fragment[] |                           []                           |                          The fragment array                          |
-|  method   |   True   |     string     |                          GET                           | The HTTP method type: GET,POST,PUT,DELETE etc, for example `ace.GET` |
+| Property | Optional | Type | Default | Notes |
+| :--- | :--- | :--- | :--- | :--- |
+| path | False | string | | The route, should start with a / |
+| full | True | string | index.go.html if custom layout, else index_gen.go.html | The template to use for full page requests |
+| partial | True | string | None | The template to use for partial page requests |
+| handler | True | function | handler (if defined) | The handler function to use for the route |
+| fragments | True | ace.fragment[] | [] | The fragment array |
+| method | True | string | GET | The HTTP method type: GET,POST,PUT,DELETE etc, for example `ace.GET` |
 
 ## Fragment
 
 The fragments array in the html page definition defines the API interactions within the page. The parameters for `ace.fragment` are:
 
-| Property | Optional |   Type   |       Default       |                                Notes                                 |
-| :------: | :------: | :------: | :-----------------: | :------------------------------------------------------------------: |
-|   path   |  False   |  string  |                     |                 The route, should not start with a /                 |
-| partial  |   True   |  string  | Inherited from page |               The template to use for partial requests               |
-| handler  |   True   | function | Inherited from page |              The handler function to use for the route               |
-|  method  |   True   |  string  |         GET         | The HTTP method type: GET,POST,PUT,DELETE etc, for example `ace.GET` |
+| Property | Optional | Type | Default | Notes |
+| :--- | :--- | :--- | :--- | :--- |
+| path | False | string | | The route, should not start with a / |
+| partial | True | string | Inherited from page | The template to use for partial requests |
+| handler | True | function | Inherited from page | The handler function to use for the route |
+| method | True | string | GET | The HTTP method type: GET,POST,PUT,DELETE etc, for example `ace.GET` |
 
 {{<callout type="info" >}}
 `partial` and `handler` are inherited from the page level, unless overridden for the fragment.
@@ -78,20 +86,22 @@ ace.html("/game/{game_id}", full="game.go.html", partial="game_info_tmpl", handl
 
 there are three APIs defined:
 
-- GET /game/{game_id} : game_handler is the handler function, full page request returns game.go.html, partial HTMX request returns game_info_tmpl template.
-- POST /game/{game_id}/submit : The handler is a lambda function. The game_info_tmpl template partial is inherited from the page as the response for the POST.
-- GET /game/{game_id}/refresh : game_handler is inherited from the page. For full page, it returns the game.go.html response. For partial HTMX requests, refresh_tmpl template is returned.
+| API | Handler | Full page response | Partial (HTMX) response |
+| :--- | :--- | :--- | :--- |
+| GET /game/{game_id} | game_handler | game.go.html | game_info_tmpl template |
+| POST /game/{game_id}/submit | The lambda function | | game_info_tmpl template, inherited from the page |
+| GET /game/{game_id}/refresh | game_handler, inherited from the page | game.go.html | refresh_tmpl template |
 
 ## API Route
 
 An API route defines a route which returns JSON (default) or plain text response. The handler response is converted to the desired format and returned. The parameters for `ace.api` are:
 
-| Property | Optional |   Type   |       Default        |                                Notes                                 |
-| :------: | :------: | :------: | :------------------: | :------------------------------------------------------------------: |
-|   path   |  False   |  string  |                      |                   The route, should start with a /                   |
-| handler  |   True   | function | handler (if defined) |              The handler function to use for the route               |
-|  method  |   True   |  string  |         GET          | The HTTP method type: GET,POST,PUT,DELETE etc, for example `ace.GET` |
-|   type   |   True   |  string  |         JSON         |             The response type, `ace.JSON` or `ace.TEXT`              |
+| Property | Optional | Type | Default | Notes |
+| :--- | :--- | :--- | :--- | :--- |
+| path | False | string | | The route, should start with a / |
+| handler | True | function | handler (if defined) | The handler function to use for the route |
+| method | True | string | GET | The HTTP method type: GET,POST,PUT,DELETE etc, for example `ace.GET` |
+| type | True | string | JSON | The response type, `ace.JSON` or `ace.TEXT` |
 
 For example
 
@@ -113,20 +123,20 @@ A GET request to `/myapi` endpoint will return JSON `{"a": 1}`.
 
 A Proxy route defines a route which has to be proxied to another service. All API calls under that route are proxied (all methods and all sub-routes). Websocket connections are also proxied. Proxy uses a plugin based config, the app has to be authorized to do the proxying. The parameters for `ace.proxy` are:
 
-| Property | Optional |    Type     | Default |              Notes               |
-| :------: | :------: | :---------: | :-----: | :------------------------------: |
-|   path   |  False   |   string    |         | The route, should start with a / |
-|  config  |  False   | ProxyConfig |         |  The proxy configuration to use  |
+| Property | Optional | Type | Default | Notes |
+| :--- | :--- | :--- | :--- | :--- |
+| path | False | string | | The route, should start with a / |
+| config | False | ProxyConfig | | The proxy configuration to use |
 
 The proxy configuration `proxy.config` has the options:
 
-|   Property    | Optional |  Type   | Default |                                                  Notes                                                   |
-| :-----------: | :------: | :-----: | :-----: | :------------------------------------------------------------------------------------------------------: |
-|      url      |  False   | string  |         |                                    The url to forward the requests to                                    |
-|  strip_path   |   True   | string  |         | Additional path components to strip from the request path. The app installation path is always stripped. |
-| preserve_host |  True    | boolean |  false  |   Whether to preserve the Host header. Default false, the Host header is set to the target host value    |
-|   strip_app   |   True   | boolean |  true   |      Whether to strip the app installation path from the proxied request path. Default true      |
-| response_headers | True  |  dict   |   {}    | Headers to set on the proxied response, header name to string value. `$url` in a value is replaced with the request path |
+| Property | Optional | Type | Default | Notes |
+| :--- | :--- | :--- | :--- | :--- |
+| url | False | string | | The url to forward the requests to |
+| strip_path | True | string | | Additional path components to strip from the request path. The app installation path is always stripped. |
+| preserve_host | True | boolean | false | Whether to preserve the Host header. Default false, the Host header is set to the target host value |
+| strip_app | True | boolean | true | Whether to strip the app installation path from the proxied request path. Default true |
+| response_headers | True | dict | {} | Headers to set on the proxied response, header name to string value. `$url` in a value is replaced with the request path |
 
 For example, an app which forwards requests to `www.google.com` is
 
@@ -144,11 +154,16 @@ app = ace.app("Proxy",
 
 ```
 
-The plugin is authorized to allow proxying to `https://www.google.com`. Any request to the app will be forwarded after stripping the app path. So if app is installed at `/test`, a request to `/test/abc/def` will be forwarded to `/abc/def`. In addition, if the proxy is configured with `strip_path="/abc"`, then the request will be sent to `/def`. Setting `strip_app=False` keeps the app path in the forwarded request (`/test/abc/def` is forwarded as is).
+The plugin is authorized to allow proxying to `https://www.google.com`. Any request to the app is forwarded after stripping the app path. With the app installed at `/test`:
 
-If proxying is enabled for `/` route, then `/static` file serving is disabled for the app since requests to static path are also forwarded to the upstream service. `/static_root` serving is available and overrides the proxy config.
+| Config | Request | Forwarded as |
+| :--- | :--- | :--- |
+| Default | `/test/abc/def` | `/abc/def` |
+| `strip_path="/abc"` | `/test/abc/def` | `/def` |
+| `strip_app=False` | `/test/abc/def` | `/test/abc/def` (the app path is kept) |
 
-OpenRun sanitizes forwarding headers before proxying. Inbound `Forwarded` and `X-Forwarded-*` / `X-Real-IP` headers are not passed through as-is. Instead, OpenRun computes the client IP using `security.trusted_proxies` and sends a clean forwarding header set to the upstream service.
+- **Static files:** if proxying is enabled for the `/` route, `/static` file serving is disabled for the app since requests to the static path are also forwarded to the upstream service. `/static_root` serving is available and overrides the proxy config.
+- **Forwarding headers:** OpenRun sanitizes forwarding headers before proxying. Inbound `Forwarded` and `X-Forwarded-*` / `X-Real-IP` headers are not passed through as-is. OpenRun computes the client IP using `security.trusted_proxies` and sends a clean forwarding header set to the upstream service.
 
 See [proxy plugin]({{< ref "docs/plugins/proxy" >}}) for details about the proxy config.
 
@@ -170,6 +185,6 @@ The API flow is
 ## Notes
 
 - For HTMX requests, the `partial` template is used. For regular requests, the page-level `full` template is used
-- With structured templates (a `base_templates` folder is present), `full` normally names a template file. It can instead name a `{{define}}` block from the base templates — useful for endpoints whose response is only a fragment (for example an HTMX component update), so no dedicated template file is needed. Template names passed to `ace.response` resolve the same way
+- With structured templates (a `base_templates` folder is present), `full` normally names a template file. It can instead name a `{{define}}` block from the base templates, which is useful for endpoints whose response is only a fragment (for example an HTMX component update), so no dedicated template file is needed. Template names passed to `ace.response` resolve the same way
 - If there is a function called `handler` defined, that is the default handler function for all APIs
 - For non-HTMX update requests (POST/PUT/DELETE), the [Post-Redirect-Get](https://en.wikipedia.org/wiki/Post/Redirect/Get) pattern is automatically implemented by redirecting to the location pointed to by the `Referer` header.

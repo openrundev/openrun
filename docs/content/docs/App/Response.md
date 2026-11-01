@@ -4,6 +4,14 @@ weight: 400
 summary: "The response from the handler function, custom response and redirects"
 ---
 
+A handler returns one of:
+
+| Return value | Effect |
+| :--- | :--- |
+| Any Starlark value | Passed to the route template as `.Data` (or returned as JSON for API routes) |
+| [`ace.redirect`]({{< ref "#redirect-response" >}}) | HTTP redirect, for the Post-Redirect-Get pattern after an update |
+| [`ace.response`]({{< ref "#custom-response" >}}) | Custom status code, headers, template block, type or [file download]({{< ref "#file-downloads" >}}) |
+
 ## Response Data
 
 The response from the handler function is passed to the template to be converted to HTML. The handler response is accessible through `.Data`, or `$.Data` from a nested template scope such as `range` or `with`. Any supported Starlark value can be used as the return value. Using a dictionary is recommended, so that error handling is easier. Adding an `Error` key in the response dict can indicate to the template that an error condition needs to be handled.
@@ -42,11 +50,11 @@ allows the template to handle the error by doing
 
 If the API needs to redirect the client to another location after a POST/PUT/DELETE operation, the handler function can return an `ace.redirect` structure. The fields in this structure are:
 
-| Property | Optional |  Type  | Default |              Notes               |
-| :------: | :------: | :----: | :-----: | :------------------------------: |
-|   url    |  false   | string |         |      The url to redirect to      |
-|   code   |   true   |  int   |   303   | The HTTP status code, 303 or 302 |
-| refresh  |   true   |  bool  |  False  | If True, the `HX-Refresh: true` header is set, so HTMX does a full page refresh |
+| Property | Optional | Type | Default | Notes |
+| :--- | :--- | :--- | :--- | :--- |
+| url | false | string | | The url to redirect to |
+| code | true | int | 303 | The HTTP status code, 303 or 302 |
+| refresh | true | bool | False | If True, the `HX-Refresh: true` header is set, so HTMX does a full page refresh |
 
 For example, this code does a 303 redirect after a POST API, which provides [handling](https://en.wikipedia.org/wiki/Post/Redirect/Get) for update requests.
 
@@ -61,14 +69,14 @@ def create_game(req):
 
 In some cases, a custom response needs to be generated, with special headers. Or the response needs to use a template different from the one defined in the route, which could happen in the case of an error. For such cases, an `ace.response` structure can be returned by the handler. The fields in this structure are:
 
-| Property | Optional |  Type  |                 Default                  |                                                                                Notes                                                                                 |
-| :------: | :------: | :----: | :--------------------------------------: | :------------------------------------------------------------------------------------------------------------------------------------------------------------------: |
-|   data   |  false   | object |                                          |                                                                          The response data                                                                           |
-|  block   |   true   | string |                                          |                                                                   Template block override; otherwise uses the route block                                                                    |
-|   type   |   true   | string | inherited from the route type definition |                                  `"html"`, `"json"` (`ace.JSON`) or `"text"` (`ace.TEXT`). For json and text, block is ignored                                   |
-|   code   |   true   |  int   |                   200                    |                                                                           HTTP status code                                                                           |
-| retarget |   true   | string |                                          | [HX-Retarget](https://htmx.org/reference/#:~:text=for%20possible%20values-,HX%2DRetarget,-a%20CSS%20selector) header value, CSS selector to target, like "#error_id" |
-|  reswap  |   true   | string |                                          |                       [HX-Reswap](https://htmx.org/reference/#:~:text=the%20location%20bar-,HX%2DReswap,-allows%20you%20to), like "outerHTML"                        |
+| Property | Optional | Type | Default | Notes |
+| :--- | :--- | :--- | :--- | :--- |
+| data | false | object | | The response data |
+| block | true | string | | Template block override; otherwise uses the route block |
+| type | true | string | inherited from the route type definition | `"html"`, `"json"` (`ace.JSON`) or `"text"` (`ace.TEXT`). For json and text, block is ignored |
+| code | true | int | 200 | HTTP status code |
+| retarget | true | string | | [HX-Retarget](https://htmx.org/reference/#:~:text=for%20possible%20values-,HX%2DRetarget,-a%20CSS%20selector) header value, CSS selector to target, like "#error_id" |
+| reswap | true | string | | [HX-Reswap](https://htmx.org/reference/#:~:text=the%20location%20bar-,HX%2DReswap,-allows%20you%20to), like "outerHTML" |
 | redirect | true | string | | Set `HX-Redirect` on an HTML response. |
 | download | true | string | | Attachment filename; see File Downloads below. |
 | content_type | true | string | `application/octet-stream` for downloads | Download MIME type. |
@@ -89,7 +97,9 @@ if challenge.get("Error"):
     return ace.response(challenge, "invalid_challenge_block", code=404)
 ```
 
+{{<callout type="info" >}}
 htmx 4 swaps error responses (4xx and 5xx) into the target like any other response, so the block above is shown in place of the target; htmx 2 did not swap them. To keep an error response out of the page, or to route it elsewhere, use the [hx-status](https://four.htmx.org/docs/whats-new-in-htmx-4/) attribute on the requesting element, like `hx-status:404="swap:none"` or `hx-status:4xx="target:#errors"`, or set `htmx.config.noSwap` for the whole app.
+{{</callout>}}
 
 ## File Downloads
 

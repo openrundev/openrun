@@ -5,22 +5,20 @@ description: "Deploy SQLite-backed web apps with continuous Litestream replicati
 summary: "Continuous SQLite replication to S3-compatible storage with Litestream and automatic restore."
 ---
 
-OpenRun is an open-source web app deployment platform with built-in [Litestream](https://litestream.io/) support for SQLite applications. App SQLite databases are continuously replicated to AWS S3 or S3-compatible object storage such as Cloudflare R2, MinIO and SeaweedFS, and are automatically restored before the app starts if its local volume is lost.
-
-Applications do not need to package, configure or run Litestream themselves. OpenRun manages the replication and restore lifecycle on Docker, Podman and Kubernetes.
+OpenRun is an open-source web app deployment platform with built-in [Litestream](https://litestream.io/) support for SQLite applications. App SQLite databases are continuously replicated to AWS S3 or S3-compatible object storage such as Cloudflare R2, MinIO and SeaweedFS, and are automatically restored before the app starts if its local volume is lost. Applications do not need to package, configure or run Litestream themselves: OpenRun manages the replication and restore lifecycle on Docker, Podman and Kubernetes.
 
 Two types of SQLite data can be replicated:
 
 - **App data**: the SQLite databases behind [SQLite service bindings]({{< ref "/docs/applications/servicebindings/#sqlite-config-and-behavior" >}}).
 - **Server metadata**: OpenRun's own metadata and audit databases (single node, SQLite metadata).
 
-Replication is continuous (changes upload within about a second) and restore is automatic: a new node, a lost volume or a re-attached binding is repopulated from the replica before the app starts. With metadata and app replication configured, a replacement server can recover the replicated databases. It also needs the server config, credentials and encryption keys described below.
+This page covers the [litestream configs](#litestream-configs), [metadata replication](#metadata-replication), [app data replication](#app-data-replication), [monitoring](#monitoring) and the [operational notes](#operational-notes) for disaster recovery.
 
 ## Automatic SQLite Backup and Restore
 
-OpenRun continuously replicates SQLite app databases to S3 using Litestream. If an app volume is lost or recreated, OpenRun restores the database from object storage before starting the application.
-
-Server metadata can also be replicated and restored, allowing a new OpenRun server to recover apps, bindings, services, versions and audit history after a complete node loss.
+- **Backup:** replication is continuous; changes upload within about a second.
+- **Restore:** automatic. A new node, a lost volume or a re-attached binding is repopulated from the replica before the app starts.
+- **Metadata:** with server metadata replicated as well, a new OpenRun server can recover apps, bindings, services, versions and audit history after a complete node loss. It also needs the server config, credentials and encryption keys described in [Operational Notes](#operational-notes).
 
 ## S3-Compatible Storage
 
@@ -69,7 +67,7 @@ litestream_config = "mainbackup"           # replicate the server's own database
 | :------------------ | :-------- | :---------------------------------------------------------------------------------------------------------------- |
 | `type`              | `s3`      | Replica type. `file` replicates to a local directory (metadata only; not usable for app bindings)                  |
 | `endpoint`          |           | S3-compatible endpoint URL; leave empty for AWS S3                                                                |
-| `container_endpoint`|           | Endpoint as reachable from inside app containers, when it differs from `endpoint` (see below)                     |
+| `container_endpoint`|           | Endpoint as reachable from inside app containers, when it differs from `endpoint` (see [Container-visible endpoints](#container-visible-endpoints)) |
 | `bucket`            |           | Bucket name (required for `s3`)                                                                                   |
 | `region`            |           | S3 region                                                                                                         |
 | `path_prefix`       |           | Key prefix inside the bucket                                                                                      |
@@ -84,17 +82,21 @@ litestream_config = "mainbackup"           # replicate the server's own database
 | `checkpoint_interval`, `min_checkpoint_page_count`, `truncate_page_n` | `1m`, `1000`, ~500MB of pages (Litestream defaults) | Checkpoint tuning, see [Litestream's guide](https://litestream.io/guides/wal-truncate-threshold/). Apps with long-running reads should set `truncate_page_n = 0` to disable the blocking TRUNCATE checkpoint |
 | `storage_class`, `sse_kms_key_id` | | Optional S3 storage class and server-side encryption settings                                     |
 
-Credentials cannot use the `db` secret provider: metadata replication must be resolvable before the metadata database is opened. All configured entries are validated at server startup.
-
-The verbosity of replication logs (the embedded metadata replication, written to the server log, and the app sidecar containers' own logs) is set with `logging.litestream_log_level`. It defaults to `WARN` independent of the main `logging.level`, since litestream logs every compaction and snapshot at `INFO`; set it to `INFO` or `DEBUG` to see those.
+- **Credentials:** cannot use the `db` secret provider, since metadata replication must be resolvable before the metadata database is opened.
+- **Validation:** all configured entries are validated at server startup.
+- **Log level:** `logging.litestream_log_level` sets the verbosity of replication logs (the embedded metadata replication, written to the server log, and the app sidecar containers' own logs). It defaults to `WARN` independent of the main `logging.level`, since litestream logs every compaction and snapshot at `INFO`; set it to `INFO` or `DEBUG` to see those.
 
 ## Metadata Replication
 
 Set `metadata.litestream_config` to a config name to replicate the server's metadata and audit databases (the file cache is a rebuildable cache and is not replicated). This applies when the metadata database is SQLite; with PostgreSQL metadata there is nothing to do.
 
-On startup, if a metadata database file is missing and a replica exists, it is restored before the server opens it. To rebuild a lost node: install OpenRun on a new machine, use the same config file, start the server. Apps, bindings, services, versions and audit history are restored from the replica; containerized apps then redeploy on first request, restoring their SQLite data the same way.
+Replication runs inside the OpenRun server process (Litestream is embedded as a library); no separate binary or process is needed. On startup, if a metadata database file is missing and a replica exists, it is restored before the server opens it.
 
-Replication runs inside the OpenRun server process (Litestream is embedded as a library); no separate binary or process is needed.
+To rebuild a lost node:
+
+1. Install OpenRun on a new machine.
+2. Use the same config file.
+3. Start the server. Apps, bindings, services, versions and audit history are restored from the replica; containerized apps then redeploy on first request, restoring their SQLite data the same way.
 
 ## App Data Replication
 
@@ -119,9 +121,9 @@ s3://<bucket>/<path_prefix>/bindings/<binding-id>/prod/...
 s3://<bucket>/<path_prefix>/bindings/<binding-id>/staged/...
 ```
 
-Production and staging apps replicate to separate locations. Because the replica follows the binding (not the app), detaching a binding and attaching it to a new app restores the data into the new app's fresh volume. To use different buckets or credentials per environment, link a [staging service]({{< ref "/docs/applications/servicebindings/#staging-services" >}}) whose config names a different litestream config.
-
-Changing a service's `litestream_config` takes effect on the next app reload: replication starts fresh in the new location, and the old location stops advancing but keeps its history.
+- **Prod and staging** apps replicate to separate locations. To use different buckets or credentials per environment, link a [staging service]({{< ref "/docs/applications/servicebindings/#staging-services" >}}) whose config names a different litestream config.
+- **The replica follows the binding**, not the app: detaching a binding and attaching it to a new app restores the data into the new app's fresh volume.
+- **Changing a service's `litestream_config`** takes effect on the next app reload: replication starts fresh in the new location, and the old location stops advancing but keeps its history.
 
 ### Container-visible endpoints
 
@@ -143,7 +145,7 @@ app        /auto/app_prd_.../sqlite (staged)   mainbackup   pending   -         
 Use `-f json` for full detail, including the per-file breakdown and replica transaction ids. The same data is available to apps through the read-only `replication_status` function of the `openrun.in` plugin.
 
 | State           | Meaning                                                                                                  |
-| :-------------- | :-------------------------------------------------------------------------------------------------------- |
+| :-------------- | :------------------------------------------------------------------------------------------------------- |
 | `healthy`       | Replica advanced within the last 10 × `sync_interval` (at least 2 minutes); for metadata, local and replica are in sync |
 | `idle`          | Replica is reachable but has not advanced recently; normal for an app that is not writing                 |
 | `syncing`       | Metadata only: the local database is ahead of the replica and the upload is in progress                   |
@@ -156,7 +158,9 @@ App states combine the replica listing in object storage with the replication co
 
 ## Operational Notes
 
+{{< callout type="warning" >}}
 For disaster recovery, preserve `openrun.toml`, object-store credentials and the encryption key for the embedded secrets store (`$OPENRUN_HOME/config/secret.key` when using the default). Metadata replication does not back up that key, local dev source directories, arbitrary mounted files or the `store.in` database. Keep separate backups of those assets as needed. Restore the configuration and keys before starting a replacement server against the replicas.
+{{< /callout >}}
 
 - **Data loss window**: replication is asynchronous. `sync_interval` (1s by default) is an upload interval, not a guaranteed recovery point. Network failures, object-store outages or replication lag can increase the amount of data lost on host failure.
 - **Restore window**: bounded by `retention`. Increase it (and consider `snapshot_interval`) if you need to restore older states.

@@ -14,17 +14,19 @@ OpenRun can proxy API calls to external endpoints or to backend APIs implemented
 
 The `proxy.in` plugin has just one api, `config`
 
-|    API     | Type |                   Notes                    |
-| :--------: | :--: | :----------------------------------------: |
+| API | Type | Notes |
+| :--- | :--- | :--- |
 | **config** | Read | Configures the proxy details for the route |
 
-The `config` API supports the following parameter:
+The `config` API supports the following parameters:
 
-- **url** (string, required) : The url to proxy to. Use `container.URL` to proxy to backend container
-- **strip_path** (string, optional) : extra path values to strip from the proxied API call
-- **preserve_host** (bool, optional) : whether to preserve the Host header. Default false, the Host header is set to the target host value. Setting this requires the app domain or `system.default_domain` to be configured
-- **strip_app** (bool, optional) : whether to strip the app path from the proxied API call. Default true.
-- **response_headers** (dict, optional) : HTTP headers to set on the proxied responses, header name to string value. `$url` in a value is replaced with the request URL path
+| Parameter | Type | Required | Notes |
+| :--- | :--- | :--- | :--- |
+| **url** | string | yes | The url to proxy to. Use `container.URL` to proxy to backend container |
+| **strip_path** | string | no | Extra path values to strip from the proxied API call |
+| **preserve_host** | bool | no | Whether to preserve the Host header. Default false, the Host header is set to the target host value. Setting this requires the app domain or `system.default_domain` to be configured |
+| **strip_app** | bool | no | Whether to strip the app path from the proxied API call. Default true |
+| **response_headers** | dict | no | HTTP headers to set on the proxied responses, header name to string value. `$url` in a value is replaced with the request URL path |
 
 With the default server config, `proxy.config(container.URL, ...)` is approved implicitly for all apps. Explicit app permissions are still required when proxying to other upstream URLs.
 

@@ -12,11 +12,11 @@ libraries=[ace.library("d3", "7.8.5")]
 
 in the app definition. The fields in the `ace.library` structure are:
 
-| Property | Optional |   Type   | Default |               Notes               |
-| :------: | :------: | :------: | :-----: | :-------------------------------: |
-|   name   |  false   |  string  |         | The name of the library to import |
-| version  |  false   |  string  |         |    The version of the library     |
-|   args   |   true   | string[] |   []    |   Arguments to pass to esbuild    |
+| Property | Optional | Type | Default | Notes |
+| :--- | :--- | :--- | :--- | :--- |
+| name | false | string | | The name of the library to import |
+| version | false | string | | The version of the library |
+| args | true | string[] | [] | Arguments to pass to esbuild |
 
 The args array uses the [esbuild cli syntax](https://pkg.go.dev/github.com/evanw/esbuild/pkg/cli). For example, passing args as `["--minify"]` will enable minification for the imported module.
 
@@ -26,7 +26,14 @@ To directly download a library from a CDN to the static folder, add the URL dire
 libraries=["https://unpkg.com/jquery@3.3.1/dist/jquery.min.js"]
 ```
 
-URL libraries are downloaded into `static/gen/lib`, from public hosts only: hosts resolving to loopback, private or link-local addresses are refused, at most five redirects are followed (never from https to http) and a download is capped at 128MB. When the server is configured with `HTTPS_PROXY`, a host which is or resolves on the server to such an address is refused before the request is sent to the proxy; the proxy's own egress policy should block internal addresses, since the proxy does its own name lookup. The HTMX library (`htmx.min.js`) and its SSE extension (`sse.js`) are automatically downloaded into the same folder. The htmx version is set by the `htmx.version` [app setting]({{< ref "docs/develop#app-settings" >}}) (default `4.0.0`); an htmx runtime url listed explicitly in `libraries` pins the version instead.
+URL libraries are downloaded into `static/gen/lib`, from public hosts only:
+
+- Hosts resolving to loopback, private or link-local addresses are refused.
+- At most five redirects are followed (never from https to http).
+- A download is capped at 128MB.
+- When the server is configured with `HTTPS_PROXY`, a host which is or resolves on the server to such an address is refused before the request is sent to the proxy. The proxy's own egress policy should block internal addresses, since the proxy does its own name lookup.
+
+The HTMX library (`htmx.min.js`) and its SSE extension (`sse.js`) are automatically downloaded into the same folder. The htmx version is set by the `htmx.version` [app setting]({{< ref "docs/develop#app-settings" >}}) (default `4.0.0`); an htmx runtime url listed explicitly in `libraries` pins the version instead.
 
 ## JavaScript Modules
 
@@ -36,24 +43,43 @@ JavaScript modules (also called ESM or ECMAScript Modules) are a way to import J
 
 The workflow when using modules in OpenRun for an app in dev mode is:
 
-- Ensure [Node.js](https://nodejs.org/en/download) is installed
-- Using npm, install the package you want to use as a module. For example, `npm install d3`
-- Add the ace.library entry in the app config. OpenRun will automatically run esbuild and import the package as a module into `static/gen/esm`
-- Add an importmap in the head section of the html. Like [here](https://github.com/openrundev/openrun/blob/8b7f0d7d0c692e0ca3c6a74e97d1913031b954a1/examples/memory_usage/index.go.html#L10).
-  ```html
-  <script type="importmap">
-    {
-      "imports": {
-          "d3": "{{ static "gen/esm/d3-7.8.5.js"}}"
-      }
+{{% steps %}}
+
+### Install Node.js
+
+Ensure [Node.js](https://nodejs.org/en/download) is installed.
+
+### Install the package
+
+Using npm, install the package you want to use as a module. For example, `npm install d3`
+
+### Add the library entry
+
+Add the ace.library entry in the app config. OpenRun will automatically run esbuild and import the package as a module into `static/gen/esm`
+
+### Add an importmap
+
+Add an importmap in the head section of the html. Like [here](https://github.com/openrundev/openrun/blob/8b7f0d7d0c692e0ca3c6a74e97d1913031b954a1/examples/memory_usage/index.go.html#L10).
+
+```html
+<script type="importmap">
+  {
+    "imports": {
+        "d3": "{{ static "gen/esm/d3-7.8.5.js"}}"
     }
-  </script>
-  ```
-- Use the library as required in your client. Like [here](https://github.com/openrundev/openrun/blob/8b7f0d7d0c692e0ca3c6a74e97d1913031b954a1/examples/memory_usage/static/js/app.js#L4)
+  }
+</script>
+```
+
+### Use the library
+
+Use the library as required in your client. Like [here](https://github.com/openrundev/openrun/blob/8b7f0d7d0c692e0ca3c6a74e97d1913031b954a1/examples/memory_usage/static/js/app.js#L4)
 
 ```javascript
 import * as d3 from "d3";
 ```
+
+{{% /steps %}}
 
 Creating the module is a one-time step. The generated module can be checked into source code. On a new machine, to make code changes to the app, you do not need Node.js or npm to be installed.
 
@@ -68,11 +94,9 @@ OpenRun includes esbuild, there is no need to install esbuild manually. The Open
 node_path = ""
 ```
 
-The node_path property is used by esbuild, these paths are searched for packages in addition to the node_modules directories in all parent directories. See [esbuild docs](https://esbuild.github.io/api/#node-paths) for details. Paths should be separated with : on Unix and ; on Windows.
-
-If you install the npm packages in your home directory, esbuild will pick up those without any additional configuration. Since each OpenRun project is importing the npm package as a module, you do not need to maintain separate node_modules for each OpenRun project.
-
-If you do not want esbuild to create modules, set the node_path property in the server config to `disable`. You will have to manually download the module file into the static folder.
+- **What it does:** `node_path` is used by esbuild, these paths are searched for packages in addition to the node_modules directories in all parent directories. See [esbuild docs](https://esbuild.github.io/api/#node-paths) for details. Paths should be separated with : on Unix and ; on Windows.
+- **Home directory installs:** if you install the npm packages in your home directory, esbuild will pick up those without any additional configuration. Since each OpenRun project is importing the npm package as a module, you do not need to maintain separate node_modules for each OpenRun project.
+- **Disabling esbuild:** if you do not want esbuild to create modules, set the node_path property in the server config to `disable`. You will have to manually download the module file into the static folder.
 
 ## Notes
 

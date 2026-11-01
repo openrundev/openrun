@@ -1,0 +1,23 @@
+# https://d2lang.com diagram. Use make update-diagrams to generate SVG; the layout engine is the suffix in the file name.
+direction: down
+
+user: "Browser" {shape: person}
+idp: "Identity provider\nOAuth, OIDC or SAML" {style.stroke-dash: 3}
+
+openrun: {
+  label: "OpenRun server"
+  style: {stroke-width: 2}
+  login: "1. Login\napp auth type"
+  rbac: "2. Platform RBAC\ngrant with app:access?"
+  hdr: "3. Headers\nstrip incoming X-Openrun-*\nset user and perms"
+  login -> rbac -> hdr
+}
+
+app: {
+  label: "App container"
+  check: "4. App level RBAC\nX-Openrun-User\nX-Openrun-Perms:\nreports_read,reports_write"
+}
+
+user -> openrun.login
+openrun.login <-> idp: {style.stroke-dash: 3}
+openrun.hdr -> app.check: "proxied request"

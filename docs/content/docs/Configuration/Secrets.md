@@ -6,9 +6,19 @@ summary: "Details about working with secret managers"
 
 OpenRun supports secret management when working with apps. Secrets can be passed to containerized apps through the environment params. Secrets can also be passed to any plugin as argument. For OAuth config, the client secrets can be configured as secret in the config file.
 
+{{< theme-image light="/d2/secrets_resolution_light.svg" dark="/d2/secrets_resolution_dark.svg" alt="Secret references in app params, server config and plugin arguments are resolved by OpenRun when used, from the AWS Secrets Manager, AWS SSM, Vault, Kubernetes, embedded store, env or properties providers" >}}
+
 ## Supported Providers
 
-OpenRun currently supports AWS Secrets Manager (ASM), AWS Systems Manager (SSM), HashiCorp Vault and Kubernetes Secrets as providers for secrets management. Secrets can also be read from the environment of the OpenRun server, which can be used in development and testing. Secrets can also be read from a local properties file. In addition, OpenRun has an embedded secrets store (the `db` provider) which encrypts secret values and saves them in the metadata database, with no external service required.
+| Provider | Config name | Required properties |
+| :--- | :--- | :--- |
+| [AWS Secrets Manager](#aws-secrets-manager) | `asm` or `asm_*` | none (`profile` optional) |
+| [AWS Systems Manager](#aws-systems-manager-ssm) | `ssm` or `ssm_*` | none (`profile` optional) |
+| [HashiCorp Vault](#hashicorp-vault) | `vault` or `vault_*` | `address`, `token` |
+| [Environment](#environment-secrets) of the OpenRun server, for development and testing | `env` or `env_*` | none |
+| [Properties file](#properties-secrets) | `prop` or `prop_*` | `file_name` |
+| [Kubernetes Secrets](#kubernetes-secrets) | `kubernetes` or `kubernetes_*` | none (`namespace`, `kubeconfig` optional) |
+| [Embedded secrets store](#embedded-secrets-store-db), which encrypts secret values and saves them in the metadata database, with no external service required | `db` | `key` |
 
 ### AWS Secrets Manager
 
@@ -38,7 +48,7 @@ profile = "myaccount"
 
 ```
 
-creates two SSM configs. `ssm` uses the default profile and `ssm_prod` uses the `myaccount` profile. The default config is read from the home directory ~/.aws/config and ~/.aws/credentials as documented in [AWS docs](https://docs.aws.amazon.com/sdkref/latest/guide/file-location.html). The user id under which the OpenRun server was started is looked up for the aws config file.
+creates two SSM configs. `ssm` uses the default profile and `ssm_prod` uses the `myaccount` profile. The AWS config and credentials files are read the same way as for ASM above.
 
 To access a secret in app parameters from `ssm_prod` config, use `--param MYPARAM='{{secret_from "ssm_prod" "MY_SECRET_KEY"}}'` as the param value. Use `--param MYPARAM='{{secret "MY_SECRET_KEY"}}'` to read from the default provider.
 
@@ -81,11 +91,15 @@ file_name = "/etc/props.properties"
 
 ### Kubernetes Secrets
 
-Add a provider named `kubernetes` (or beginning with `kubernetes_`) to read native Kubernetes Secrets. In a cluster, OpenRun uses its pod service account and the namespace from `[kubernetes]`; `namespace` can be set on the provider to override it. Outside a cluster, `kubeconfig` can be set to the path of a kubeconfig file (the default kubeconfig loading rules apply otherwise).
+Add a provider named `kubernetes` (or beginning with `kubernetes_`) to read native Kubernetes Secrets:
 
 ```toml {filename="openrun.toml"}
 [secret.kubernetes]
 ```
+
+- **In a cluster:** OpenRun uses its pod service account and the namespace from `[kubernetes]`; `namespace` can be set on the provider to override it.
+- **Outside a cluster:** `kubeconfig` can be set to the path of a kubeconfig file (the default kubeconfig loading rules apply otherwise).
+- The OpenRun service account needs `get` access to Secrets in the selected namespace.
 
 Pass the Secret name and data key as separate arguments. They are joined with `/`, so these forms are equivalent:
 
@@ -94,20 +108,30 @@ Pass the Secret name and data key as separate arguments. They are joined with `/
 {{ secret_from "kubernetes" "my-secret/password" }}
 ```
 
-If the Secret contains exactly one data item, the data-key argument can be omitted. The OpenRun service account needs `get` access to Secrets in the selected namespace.
+If the Secret contains exactly one data item, the data-key argument can be omitted.
 
 ### Embedded Secrets Store (db)
 
-The `db` provider stores secrets in the OpenRun metadata database. Values are encrypted with AES-256-GCM before being saved; the master encryption key lives outside the database, so a database backup alone does not expose secrets. The provider is enabled by default with
+The `db` provider stores secrets in the OpenRun metadata database. Values are encrypted with AES-256-GCM before being saved; the master encryption key lives outside the database, so a database backup alone does not expose secrets. At most one `db` provider can be configured. The provider is enabled by default with
 
 ```toml {filename="openrun.toml"}
 [secret.db]
 key = "auto"
 ```
 
-With `key = "auto"` (the default), a master key is generated on first use and saved in `$OPENRUN_HOME/config/secret.key` (file mode 0600). The file normally contains one or more `<key_id>:<base64 encoded 32 byte key>` entries, separated by newlines or commas. A bare base64 key is also accepted and uses the key ID `default`; blank lines and lines beginning with `#` are ignored. The first key is used to encrypt new values and all listed keys can decrypt.
+With `key = "auto"` (the default), a master key is generated on first use and saved in `$OPENRUN_HOME/config/secret.key` (file mode 0600).
 
-Instead of containing key material directly, `secret.key` can contain a `{{secret ...}}` or `{{secret_from ...}}` reference. OpenRun resolves the file through another configured provider before parsing the returned key material. For example, a Kubernetes Secret named `openrun-metadata-key` with a `key` data item can be referenced with:
+{{<callout type="warning" >}}
+Back up the key material separately from the database: if it is lost, the stored secrets cannot be recovered. If the key does not match the stored secrets, the server still starts (apps that do not use stored secrets are unaffected) but logs an error and the `db` provider is disabled until the key is restored.
+{{</callout>}}
+
+{{% details title="Key file format" closed="true" %}}
+
+- The file normally contains one or more `<key_id>:<base64 encoded 32 byte key>` entries, separated by newlines or commas.
+- A bare base64 key is also accepted and uses the key ID `default`.
+- Blank lines and lines beginning with `#` are ignored.
+- The first key is used to encrypt new values and all listed keys can decrypt.
+- Instead of containing key material directly, `secret.key` can contain a `{{secret ...}}` or `{{secret_from ...}}` reference. OpenRun resolves the file through another configured provider before parsing the returned key material. For example, a Kubernetes Secret named `openrun-metadata-key` with a `key` data item can be referenced with:
 
 ```gotemplate {filename="$OPENRUN_HOME/config/secret.key"}
 {{ secret_from "kubernetes" "openrun-metadata-key" "key" }}
@@ -115,7 +139,7 @@ Instead of containing key material directly, `secret.key` can contain a `{{secre
 
 The Kubernetes provider joins the last two arguments as `openrun-metadata-key/key`. The referenced value must use the same key-material format described above. The `db` provider cannot reference itself because its master key is required before database secrets can be read.
 
-Back up the key material separately from the database: if it is lost, the stored secrets cannot be recovered. If the key does not match the stored secrets, the server still starts (apps that do not use stored secrets are unaffected) but logs an error and the `db` provider is disabled until the key is restored. At most one `db` provider can be configured.
+{{% /details %}}
 
 The key can instead be resolved through another configured secret provider, which is the recommended setup for Kubernetes and multi-node deployments (all nodes share the metadata database and must use the same key):
 
@@ -126,7 +150,9 @@ The key can instead be resolved through another configured secret provider, whic
 key = '{{secret_from "env" "OPENRUN_SECRET_KEY"}}'
 ```
 
-On Kubernetes, mount the env value from a native Kubernetes Secret. Any provider other than `db` itself can be referenced. To rotate the master key, prepend a new entry, restart the server, run `openrun secret rekey` to re-encrypt all values with the new key, then remove the old entry.
+On Kubernetes, mount the env value from a native Kubernetes Secret. Any provider other than `db` itself can be referenced.
+
+To rotate the master key: prepend a new entry, restart the server, run `openrun secret rekey` to re-encrypt all values with the new key, then remove the old entry.
 
 Secrets are stored with the `openrun secret` commands:
 
@@ -149,9 +175,18 @@ $ openrun secret show --reveal myapp_token   # print the value
 $ openrun secret delete myapp_token
 ```
 
-The printed reference is used like any other secret, for example `--param MYPARAM='{{secret_from "db" "myapp_dbpass_x7f2ka9c"}}'`. `--description` adds a description shown in `secret list`/`secret show`, and `--provider` (default `db`) names the secret provider to use. The same operations are available through the `openrun_admin` plugin (`create_secret`, `get_secret`, `list_secrets`, `delete_secret`, `rekey_secrets`).
+- The printed reference is used like any other secret, for example `--param MYPARAM='{{secret_from "db" "myapp_dbpass_x7f2ka9c"}}'`.
+- `--description` adds a description shown in `secret list`/`secret show`, and `--provider` (default `db`) names the secret provider to use.
+- The same operations are available through the `openrun_admin` plugin (`create_secret`, `get_secret`, `list_secrets`, `delete_secret`, `rekey_secrets`).
 
-With [RBAC]({{< ref "/docs/configuration/rbac" >}}) enforced (the default), the operations are gated by the `secret:create`, `secret:read`, `secret:delete` and `secret:reveal` permissions. Create, update and rekey are all gated by `secret:create`. `secret:reveal` (reading back a stored value) is separate from `secret:read` (listing and metadata), so day to day operators can store and manage secrets without being able to read values back. No [built-in role]({{< ref "/docs/configuration/rbac/#built-in-roles" >}}) other than `openrun-admin` includes `secret:reveal` — it must be granted explicitly.
+With [RBAC]({{< ref "/docs/configuration/rbac" >}}) enforced (the default), the operations are gated by permissions:
+
+| Permission | Gates |
+| :--- | :--- |
+| `secret:create` | Create, update and rekey. |
+| `secret:read` | Listing and metadata. |
+| `secret:delete` | Delete. |
+| `secret:reveal` | Reading back a stored value. Separate from `secret:read`, so day to day operators can store and manage secrets without being able to read values back. No [built-in role]({{< ref "/docs/configuration/rbac/#built-in-roles" >}}) other than `openrun-admin` includes it; it must be granted explicitly. |
 
 ## Secrets Usage
 
@@ -175,12 +210,14 @@ Secrets are always resolved late. Starlark code does not get access to the plain
 
 Only template values are evaluated when they reach a plugin call, at any depth inside list, tuple and dict arguments. A plain Starlark string is passed to the plugin as is, even if it contains `{{secret ...}}`, so text taken from a request (query params, form fields, action arguments, uploaded or stored data) can never resolve the app's secrets. A value is a template when:
 
-- It is an app level param value containing `{{`: the default in `params.star`, or the value set with `--param API_KEY='{{secret "API_KEY"}}'`. These are static and set by the developer or operator, so `param.API_KEY` is wrapped automatically and `headers={"X-Key": param.API_KEY}` resolves with no code change. A param value which contains `{{` without being a template referencing a secret passes through literally.
-- It was wrapped with `ace.eval("...")` in app code, for a template the app builds itself: `ace.eval('Bearer {{secret "API_TOKEN"}}')`. This is explicit, so it is the only way request data could be evaluated: never wrap request data. `ace.eval` on a value which is already a template returns it unchanged, so `ace.eval(param.API_KEY)` is always safe. A wrapped template must parse, a template error fails the plugin call. Besides `secret` and `secret_from`, the [template functions]({{< ref "/docs/app/templates" >}}) are available.
+- **It is an app level param value containing `{{`**: the default in `params.star`, or the value set with `--param API_KEY='{{secret "API_KEY"}}'`. These are static and set by the developer or operator, so `param.API_KEY` is wrapped automatically and `headers={"X-Key": param.API_KEY}` resolves with no code change. A param value which contains `{{` without being a template referencing a secret passes through literally.
+- **It was wrapped with `ace.eval("...")` in app code**, for a template the app builds itself: `ace.eval('Bearer {{secret "API_TOKEN"}}')`. This is explicit, so it is the only way request data could be evaluated: never wrap request data. `ace.eval` on a value which is already a template returns it unchanged, so `ace.eval(param.API_KEY)` is always safe. A wrapped template must parse, a template error fails the plugin call. Besides `secret` and `secret_from`, the [template functions]({{< ref "/docs/app/templates" >}}) are available.
 
-A template value is not a string. It supports `+` with strings and other templates: the strings are kept literally and never evaluated, so `"Bearer " + param.API_KEY` works and user text joined to a param cannot introduce a template. `str(param.API_KEY)` and `%` formatting give the unevaluated reference text as a plain string, which is not resolved. Other string methods are type errors.
+How a template value behaves:
 
-In an action handler, `args.NAME` is the value the caller submitted, a plain string, or the app level template when the caller did not supply the param. Use `param.NAME` when the configured secret is always the one to resolve.
+- A template value is not a string. It supports `+` with strings and other templates: the strings are kept literally and never evaluated, so `"Bearer " + param.API_KEY` works and user text joined to a param cannot introduce a template.
+- `str(param.API_KEY)` and `%` formatting give the unevaluated reference text as a plain string, which is not resolved. Other string methods are type errors.
+- In an action handler, `args.NAME` is the value the caller submitted, a plain string, or the app level template when the caller did not supply the param. Use `param.NAME` when the configured secret is always the one to resolve.
 
 ```python {filename="app.star"}
 load("http.in", "http")
@@ -226,9 +263,8 @@ app = ace.app("test",
              )
 ```
 
-The secrets accessible are specified as a list of list of strings. In this case, the `{{secret "c1" "c2"}}` and `{{secret "TESTENV"}}` calls are allowed. Additional keys are also permitted.
-
-If the key is specified as a string starting with `regex:`, then the subsequent part is a regex which is matched against the specified value. For example, `ace.permission("exec.in", "run", ["ls"], secrets=[["regex:TEST_.*"]])` allows accessing any secret starting with `TEST_`.
+- The secrets accessible are specified as a list of list of strings. In this case, the `{{secret "c1" "c2"}}` and `{{secret "TESTENV"}}` calls are allowed. Additional keys are also permitted.
+- If the key is specified as a string starting with `regex:`, then the subsequent part is a regex which is matched against the specified value. For example, `ace.permission("exec.in", "run", ["ls"], secrets=[["regex:TEST_.*"]])` allows accessing any secret starting with `TEST_`.
 
 For a containerized app, the permission usually looks like:
 
@@ -236,7 +272,9 @@ For a containerized app, the permission usually looks like:
 ace.permission("container.in", "config", [container.AUTO], secrets=[["DB_PASSWORD"]])
 ```
 
-The app must then be approved with that permission before `{{secret "DB_PASSWORD"}}` can be resolved for the container. Since the default server config allows the `container.config` call (without secrets), the app deploys without approval even with this permission declared; `openrun app create`, `app reload` and `param update` print a warning that the declared secret access is not approved, and the container fails to start with the same guidance until `openrun app approve <path>` (or `--approve`) records it. With the built-in specs, the permission's allowlist is the `secrets` param, empty by default: set it to declare the access, e.g. `--param secrets='[["DB_PASSWORD"]]'`.
+- The app must then be approved with that permission before `{{secret "DB_PASSWORD"}}` can be resolved for the container.
+- Since the default server config allows the `container.config` call (without secrets), the app deploys without approval even with this permission declared. `openrun app create`, `app reload` and `param update` print a warning that the declared secret access is not approved, and the container fails to start with the same guidance until `openrun app approve <path>` (or `--approve`) records it.
+- With the built-in specs, the permission's allowlist is the `secrets` param, empty by default: set it to declare the access, e.g. `--param secrets='[["DB_PASSWORD"]]'`.
 
 ## Revealing Secrets to HTML Templates
 
@@ -279,9 +317,11 @@ Like `openrun_admin.get_secret(name, reveal=True)`, `secret_reveal` enforces the
 
 If the `KEY_NAME` is a single string, it is passed as is to the provider. If multiple keys are specified, they are concatenated and passed to the provider. For example, `{{secret_from "env" "ABC" "DEF"}}` will get converted to a env lookup for `ABC_DEF`. The delimiter used depends on the provider. The defaults are:
 
-- ASM, SSM, Vault, Kubernetes and db : `/`
-- Env : `_`
-- Properties: `.`
+| Provider | Delimiter |
+| :--- | :--- |
+| ASM, SSM, Vault, Kubernetes and db | `/` |
+| Env | `_` |
+| Properties | `.` |
 
 The formatter used to concatenate the keys can be customized by setting the `keys_printf` property. For example,
 

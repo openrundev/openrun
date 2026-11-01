@@ -9,6 +9,14 @@ OpenRun provides a self-hosted PaaS-style workflow for internal tools without mo
 
 Teams replacing a low-code builder can build [code-first internal tools]({{< ref "blog/code-first-internal-tools" >}}) with any AI coding tool; see [OpenRun vs Retool, Appsmith and Budibase]({{< ref "compare/retool-appsmith-budibase" >}}).
 
+What you will set up on this page:
+
+- A Linux machine behind the VPN with OpenRun [installed](#installation) as a systemd service
+- Server [configuration](#configuration) with OIDC login for every app and a GitHub token for source access
+- Manually managed [TLS certificates](#tls-certificates), since the node is not reachable from the public Internet
+- [RBAC grants](#rbac-config) that give each team its own set of apps
+- An `apps.star` declaration in git with a scheduled [sync](#app-installation) that creates and updates apps
+
 ## Scenario
 
 This use-case documents the scenario where you want to:
@@ -24,28 +32,51 @@ For this use case, we will use a GitHub account for source control.
 
 To get OpenRun running, the initial setup involves:
 
-- Create a Linux machine, accessible by your team through the VPN on port 443.
-- Create a DNS entry pointing to the machine's IP address, for example an `A` record for `apps.example.com`. A wildcard DNS entry `*.apps.example.com` will make it easier to install apps at the domain level.
-- Create an [OIDC]({{< ref "docs/configuration/authentication/#openid-connect-oidc" >}}) app in the IdP console. Set up `groups` scope such that [group info]({{< ref "docs/configuration/rbac/#group-info" >}}) is available. Note the client ID and secret. The callback URL would be `https://apps.example.com/_openrun/auth/oidc/callback`.
-- Create a GitHub Personal Access Token in [GitHub settings](https://github.com/settings/personal-access-tokens). Set the scope to the repositories you want to use for your apps. Note the token. SSH key based auth is an alternative.
+{{% steps %}}
+
+### Create the machine
+
+Create a Linux machine, accessible by your team through the VPN on port 443.
+
+### Create the DNS entry
+
+Create a DNS entry pointing to the machine's IP address, for example an `A` record for `apps.example.com`. A wildcard DNS entry `*.apps.example.com` will make it easier to install apps at the domain level.
+
+### Create the OIDC app
+
+Create an [OIDC]({{< ref "docs/configuration/authentication/#openid-connect-oidc" >}}) app in the IdP console. Set up `groups` scope such that [group info]({{< ref "docs/configuration/rbac/#group-info" >}}) is available. Note the client ID and secret. The callback URL would be `https://apps.example.com/_openrun/auth/oidc/callback`.
+
+### Create a GitHub token
+
+Create a GitHub Personal Access Token in [GitHub settings](https://github.com/settings/personal-access-tokens). Set the scope to the repositories you want to use for your apps. Note the token. SSH key based auth is an alternative.
+
+{{% /steps %}}
 
 ## Installation
 
-On openSUSE Tumbleweed, Fedora and Debian, install the [native package]({{< ref "docs/installation#install-on-linux-native-packages" >}}) and start the service:
+{{< tabs >}}
+{{< tab name="openSUSE, Fedora, Debian" >}}
+Install the [native package]({{< ref "docs/installation#install-on-linux-native-packages" >}}) and start the service:
 
 ```sh
 sudo systemctl enable --now openrun
 ```
-
-On other systemd based Linux systems, to install OpenRun and start the service, run
+{{< /tab >}}
+{{< tab name="Other systemd Linux" >}}
+To install OpenRun and start the service, run
 
 ```sh
 curl -sSL https://raw.githubusercontent.com/openrundev/openrun/refs/heads/main/deploy/setup_systemd.sh | sudo sh
 ```
+{{< /tab >}}
+{{< /tabs >}}
 
 Both approaches create a user `openrun` and install the service under `/var/lib/openrun`.
 
-To run [containerized apps]({{< ref "docs/container/overview/" >}}), ensure that Docker or Podman is installed and running on the machine. For Docker, the `openrun` user should be added to the docker group. As `openrun` user, run `docker ps` or `podman ps` to verify that the container manager is functional.
+To run [containerized apps]({{< ref "docs/container/overview/" >}}), ensure that Docker or Podman is installed and running on the machine:
+
+- For Docker, the `openrun` user should be added to the docker group.
+- As `openrun` user, run `docker ps` or `podman ps` to verify that the container manager is functional.
 
 ## Configuration
 
@@ -82,22 +113,36 @@ discovery_url = "https://integrator-33xxxxx-admin.okta.com/.well-known/openid-co
 scopes = ["openid", "profile", "email", "groups"]
 ```
 
-This sets the default ports to 80 and 443, sets the apps to use OIDC for auth, requires every app to have authentication enabled, and sets the GitHub PAT. As the regular user (since `openrun` user might not have sudo access), run `sudo systemctl restart openrun` to pick up the config update. The `admin_password_bcrypt` is not used in this scenario, it can be kept at its original value or changed.
+This config:
+
+- Sets the default ports to 80 and 443
+- Sets the apps to use OIDC for auth and requires every app to have authentication enabled
+- Sets the GitHub PAT
+- Leaves `admin_password_bcrypt` unused in this scenario; it can be kept at its original value or changed
+
+As the regular user (since `openrun` user might not have sudo access), run `sudo systemctl restart openrun` to pick up the config update.
 
 ## TLS Certificates
 
 OpenRun supports automatic [TLS certificates]({{< ref "docs/configuration/networking/#enable-automatic-signed-certificate" >}}) using TLS-ALPN on port 443 or HTTP-01 on port 80. Public certificate authorities must be able to reach the selected challenge port. For private deployments, use your own certificates or an [internal ACME CA]({{< ref "docs/configuration/networking/#custom-acme-server" >}}) that can reach the server.
 
-In this scenario, since the node is behind a VPN, TLS certs will have to be [managed manually]({{< ref "docs/configuration/networking/#tls-certificates" >}}). Create the cert files and place them in `/var/lib/openrun/config/certificates`. Files with the name `default.crt` and `default.key` are used as the default certificate file and key file for all domains. If a file is found with the name `example.com.pem` and `example.com.key`, that is used as the cert for the `example.com` domain.
+In this scenario, since the node is behind a VPN, TLS certs will have to be [managed manually]({{< ref "docs/configuration/networking/#tls-certificates" >}}). Create the cert files and place them in `/var/lib/openrun/config/certificates`:
+
+| Files | Used for |
+| :--- | :--- |
+| `default.crt` and `default.key` | Default certificate file and key file for all domains |
+| `example.com.pem` and `example.com.key` | Certificate for the `example.com` domain |
 
 ## RBAC Config
 
 At this point, all apps are authenticated by OIDC, but every logged-in user can access all apps. To restrict which user has access to which apps, [RBAC]({{< ref "docs/configuration/rbac/" >}}) can be used. RBAC uses the [dynamic config]({{< ref "docs/configuration/overview/#dynamic-config" >}}), which does not require restarting the OpenRun server. We will set up a RBAC schema where:
 
-- Apps under /it will be available to the IT team
-- Apps under /engg will be available to the engineering team
-- Apps under /shared will be available to everyone
-- All other apps will be available only to the admin.
+| Apps under | Available to |
+| :--- | :--- |
+| `/it` | The IT team |
+| `/engg` | The engineering team |
+| `/shared` | Everyone |
+| All other paths | Only the admin |
 
 To set the RBAC config, change to the `openrun` account by running `sudo su -l openrun`. Edit `/var/lib/openrun/config/dynamic_config.json` to have:
 
@@ -149,7 +194,12 @@ This will upload the RBAC config to the metadata server (and also update the fil
 
 ## SAML instead of OIDC
 
-If [SAML]({{< ref "docs/configuration/authentication/#saml" >}}) needs to be used instead of OIDC, much of the setup remains the same. Create the SAML app in the IdP. The Single sign-on URL should be set to `https://apps.example.com/_openrun/sso/saml_okta_test/acs` and the Audience URI (SP Entity ID) should be set to `https://apps.example.com/_openrun/sso/saml_okta_test/metadata`.
+If [SAML]({{< ref "docs/configuration/authentication/#saml" >}}) needs to be used instead of OIDC, much of the setup remains the same. Create the SAML app in the IdP with these settings:
+
+| IdP setting | Value |
+| :--- | :--- |
+| Single sign-on URL | `https://apps.example.com/_openrun/sso/saml_okta_test/acs` |
+| Audience URI (SP Entity ID) | `https://apps.example.com/_openrun/sso/saml_okta_test/metadata` |
 
 In the `openrun.toml`, instead of the `[auth.oidc_okta]` section, add a section like
 
@@ -194,8 +244,13 @@ If this file is checked into the main branch in the `myorg/myrepo` repo, then ru
 openrun sync schedule --minutes 1 --approve --promote github.com/myorg/myrepo/apps.star
 ```
 
-will set up a [sync]({{< ref "docs/applications/overview/#automated-sync" >}}) which checks every minute for new updates to the file. When RBAC is enabled it applies to every app: who can reach an app is controlled by the `app:access` grants, not by the app's auth type. The grant on `/shared/**` makes those apps accessible to everyone who logs in via OIDC. In this team setup, `auth_required = true` is enabled at the server level, so `auth="none"` apps are blocked from being served even if they are defined in app metadata.
+will set up a [sync]({{< ref "docs/applications/overview/#automated-sync" >}}) which checks every minute for new updates to the file.
 
-Any new apps declared will be automatically created. Any code changes in the repos referenced or config changes in the apps will also automatically be applied on the existing apps. No further manual updates are required on the machine. All updates can be done by just checking in changes into the declarative config - **Full GitOps CI/CD, in one command.**
+- **RBAC applies to every app:** who can reach an app is controlled by the `app:access` grants, not by the app's auth type. The grant on `/shared/**` makes those apps accessible to everyone who logs in via OIDC.
+- **No unauthenticated apps:** in this team setup, `auth_required = true` is enabled at the server level, so `auth="none"` apps are blocked from being served even if they are defined in app metadata.
+- **New apps** declared will be automatically created.
+- **Code changes** in the repos referenced or config changes in the apps will also automatically be applied on the existing apps.
+
+No further manual updates are required on the machine. All updates can be done by just checking in changes into the declarative config - **Full GitOps CI/CD, in one command.**
 
 The operational tasks around these apps, restarts, re-runs and lookups, can be deployed the same way as [actions]({{< ref "docs/use-cases/jenkins-rundeck-alternative/" >}}), usable from a form, the CLI and by AI agents, in place of Jenkins or Rundeck jobs.

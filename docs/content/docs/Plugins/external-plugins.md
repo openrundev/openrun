@@ -6,12 +6,21 @@ summary: "How to build external plugin providers and use .ex plugins in apps"
 
 External plugins extend OpenRun with new Starlark APIs **without changing the OpenRun binary**. A plugin is written once against the OpenRun plugin SDK (`pkg/plugin`) and the same implementation can run two ways:
 
-- **internal**: compiled into the OpenRun binary and called in-process — no gRPC, no serialization. All of OpenRun's builtin plugins (`store`, `http`, `exec`, `fs`, ...) are SDK plugins running this way, and custom builds can compile additional plugins in for performance.
-- **external**: built as a standalone _plugin provider_ executable that the server runs as a separate process per app and talks to over gRPC — for distributing plugins without rebuilding OpenRun.
+| Mode | How it runs | Use it for |
+| :--- | :--- | :--- |
+| **internal** | Compiled into the OpenRun binary and called in-process, no gRPC, no serialization | All of OpenRun's builtin plugins (`store`, `http`, `exec`, `fs`, ...) are SDK plugins running this way; custom builds can compile additional plugins in for performance |
+| **external** | A standalone _plugin provider_ executable that the server runs as a separate process per app and talks to over gRPC | Distributing plugins without rebuilding OpenRun |
 
 Apps always load plugins with the `.in` suffix (`load("myplugin.in", "myplugin")`). Resolution prefers a compiled-in module of that name and falls back to an installed external provider serving it, so **an app does not change when a plugin moves between internal and external**. The `.ex` suffix remains available to explicitly require the external build.
 
 The store plugin ships in both forms as the reference implementation: the module in `internal/app/store` is compiled in as `store.in`, and `internal/app/store/storeprovider` in the OpenRun repo is the same module built as an external provider, passing the same test suite. Use it as a working example for everything on this page.
+
+This page covers:
+
+- [Using a plugin in an app](#using-a-plugin-in-an-app): loading, permissions and settings
+- [Building a plugin provider](#building-a-plugin-provider): the SDK, functions, sessions, cursors and compiling in
+- [How it works](#how-it-works-the-complete-flow): registration, load, call and lifecycle
+- [Installing a provider](#installing-a-provider): CLI, config-managed, Kubernetes and dev installs
 
 ## Using a plugin in an app
 
@@ -42,10 +51,10 @@ app = ace.app("myapp",
 
 Everything in the [plugin overview]({{< ref "docs/plugins/overview" >}}) applies unchanged to `.ex` plugins:
 
-- Calls return the same `plugin_response` (`value` / `error` / `error_code`), and **automatic error handling** works identically — an unchecked error fails the value access, the next plugin call (to _any_ plugin, builtin or external), or the handler return.
-- The security model is identical: the server checks approvals, `permissions.disallow` rules, RBAC `permit` lists, and stage/preview write access **before** the call reaches the provider, and expands approved secrets in arguments. A provider never sees a call that policy would have blocked.
-- Account linking works the same: `load("myplugin.in#staging", "myplugin")` selects the `[plugin."myplugin.in#staging"]` settings block from `openrun.toml`.
-- Deferred cleanup works the same: resources a plugin leaves open (an uncommitted transaction, an unread result cursor) are released at the end of the request, and strictly-tracked resources that were never consumed fail the request with a `resource has not be closed` error.
+- **Responses:** calls return the same `plugin_response` (`value` / `error` / `error_code`), and **automatic error handling** works identically. An unchecked error fails the value access, the next plugin call (to _any_ plugin, builtin or external), or the handler return.
+- **Security:** the server checks approvals, `permissions.disallow` rules, RBAC `permit` lists, and stage/preview write access **before** the call reaches the provider, and expands approved secrets in arguments. A provider never sees a call that policy would have blocked.
+- **Account linking:** `load("myplugin.in#staging", "myplugin")` selects the `[plugin."myplugin.in#staging"]` settings block from `openrun.toml`.
+- **Deferred cleanup:** resources a plugin leaves open (an uncommitted transaction, an unread result cursor) are released at the end of the request. Strictly-tracked resources that were never consumed fail the request with a `resource has not be closed` error.
 
 Plugin settings are configured in `openrun.toml` under the full module path the app loads (an app loading `myplugin.ex` explicitly uses `[plugin."myplugin.ex"]` blocks instead):
 
@@ -59,7 +68,7 @@ api_url = "https://staging.example.com/api"
 
 ## Building a plugin provider
 
-A provider is a Go `main` package that depends only on the plugin SDK module `github.com/openrundev/openrun/pkg/plugin`. The SDK has a small dependency tree (go-plugin, gRPC, zerolog) and **no Starlark dependency**: plugin functions are plain Go functions over plain Go values; the server converts Starlark values at the process boundary with full fidelity (big ints stay exact, int and float stay distinct, dict order is preserved).
+A provider is a Go `main` package that depends only on the plugin SDK module `github.com/openrundev/openrun/pkg/plugin`. The SDK has a small dependency tree (go-plugin, gRPC, zerolog) and **no Starlark dependency**: plugin functions are plain Go functions over plain Go values. The server converts Starlark values at the process boundary with full fidelity (big ints stay exact, int and float stay distinct, dict order is preserved).
 
 ```go {filename="main.go"}
 package main
@@ -127,7 +136,7 @@ Every function declared in `FuncDef` must be an exported method with this exact 
 func (m *NotesModule) Add(ctx context.Context, call *plugin.Call) (any, error)
 ```
 
-`plugin.UnpackArgs` binds positional and keyword arguments with the same rules Starlark apps expect — alternating name/pointer pairs, a trailing `?` marks a parameter optional. The supported pointer types are `*string`, `*bool`, `*int64`, `*[]string`, `*[]any`, `*map[string]any`, `**plugin.Struct` and `*any`:
+`plugin.UnpackArgs` binds positional and keyword arguments with the same rules Starlark apps expect: alternating name/pointer pairs, a trailing `?` marks a parameter optional. The supported pointer types are `*string`, `*bool`, `*int64`, `*[]string`, `*[]any`, `*map[string]any`, `**plugin.Struct` and `*any`:
 
 ```go {filename="module.go"}
 func (m *NotesModule) Add(ctx context.Context, call *plugin.Call) (any, error) {
@@ -148,29 +157,32 @@ func (m *NotesModule) Add(ctx context.Context, call *plugin.Call) (any, error) {
 
 The return value maps to Starlark automatically:
 
-| Go value returned                 | Starlark value in the app                       |
-| --------------------------------- | ----------------------------------------------- |
-| `nil`                             | `None`                                          |
-| `bool`, `string`, int/uint widths | `bool`, `string`, `int`                         |
-| `*big.Int`                        | `int` (arbitrary precision)                     |
-| `float32/64`                      | `float`                                         |
-| `[]byte`                          | `bytes`                                         |
-| `[]any`, `[]string`, `[]int`, ... | `list`                                          |
-| `map[string]any`                  | `dict`                                          |
-| `plugin.Tuple` / `plugin.Set`     | `tuple` / `set`                                 |
-| `plugin.Dict`                     | `dict` with controlled entry order              |
-| `*plugin.Struct`                  | typed record with attribute access (`row.name`) |
-| `time.Time`                       | `time.time`                                     |
-| `*plugin.Download`                | download stream, usable as the data of a download response (the `Producer` writes the file content when the response is sent) |
-| `*plugin.Cursor`                  | lazy iterable (see below)                       |
+| Go value returned | Starlark value in the app |
+| :--- | :--- |
+| `nil` | `None` |
+| `bool`, `string`, int/uint widths | `bool`, `string`, `int` |
+| `*big.Int` | `int` (arbitrary precision) |
+| `float32/64` | `float` |
+| `[]byte` | `bytes` |
+| `[]any`, `[]string`, `[]int`, ... | `list` |
+| `map[string]any` | `dict` |
+| `plugin.Tuple` / `plugin.Set` | `tuple` / `set` |
+| `plugin.Dict` | `dict` with controlled entry order |
+| `*plugin.Struct` | typed record with attribute access (`row.name`) |
+| `time.Time` | `time.time` |
+| `*plugin.Download` | download stream, usable as the data of a download response (the `Producer` writes the file content when the response is sent) |
+| `*plugin.Cursor` | lazy iterable (see below) |
 
 Arguments arrive through the same mapping in reverse: typed records passed by the app arrive as `*plugin.Struct`, string-keyed dicts as `map[string]any`, and so on.
 
-Errors: returning a plain `error` produces `response.error` with `error_code` 1; `plugin.ErrorWithCode(429, err)` sets an explicit code. Both feed OpenRun's normal response and automatic error handling flow.
+Errors feed OpenRun's normal response and automatic error handling flow:
+
+- Returning a plain `error` produces `response.error` with `error_code` 1.
+- `plugin.ErrorWithCode(429, err)` sets an explicit code.
 
 ### Sessions: state across calls in one request
 
-All calls made during one app request share a `call.Session`. Use it for state that spans calls — the canonical example is a transaction:
+All calls made during one app request share a `call.Session`. Use it for state that spans calls; the canonical example is a transaction:
 
 ```go {filename="module.go"}
 func (m *NotesModule) Begin(ctx context.Context, call *plugin.Call) (any, error) {
@@ -190,9 +202,14 @@ func (m *NotesModule) Begin(ctx context.Context, call *plugin.Call) (any, error)
 }
 ```
 
-`Session.Defer` registers cleanup that runs when the request ends (in reverse registration order), unless removed first with `ClearDefer` — e.g. after a successful commit. This is the external equivalent of the deferred-cleanup mechanism builtin plugins use, and it drains at the same point in the request lifecycle. The `strict` argument controls leak reporting: a strict entry still registered when the request ends does not just get cleaned up — it **fails the request** as a leaked resource (`resource has not be closed ...`), so use `strict=true` for resources the app is required to consume or release explicitly, and `strict=false` for silent safety nets like an automatic rollback.
+`Session.Defer` registers cleanup that runs when the request ends. It is the external equivalent of the deferred-cleanup mechanism builtin plugins use, and it drains at the same point in the request lifecycle.
 
-`Module.Close` is called on every initialized module instance when the app is closed or reloaded, before the provider process exits — release long-lived resources (connection pools, flush buffers) there.
+- **Order:** defers run in reverse registration order.
+- **Removal:** `ClearDefer` removes an entry before it runs, e.g. after a successful commit.
+- **`strict=true`:** a strict entry still registered when the request ends does not just get cleaned up, it **fails the request** as a leaked resource (`resource has not be closed ...`). Use it for resources the app is required to consume or release explicitly.
+- **`strict=false`:** a silent safety net, like an automatic rollback.
+
+`Module.Close` is called on every initialized module instance when the app is closed or reloaded, before the provider process exits. Release long-lived resources (connection pools, flush buffers) there.
 
 ### Cursors: lazy result iteration
 
@@ -209,16 +226,22 @@ return &plugin.Cursor{
 }, nil
 ```
 
-Cursor semantics match builtin plugins exactly: iterating the value (a `for` loop, even with `break`) closes the cursor; a cursor the app never touches is closed at request end **and fails the request** with `resource has not be closed, check handler code: myplugin.in:<LeakKey>`. As with sessions, back the cursor's query with `call.Session.Context()`, not the per-call context.
+Cursor semantics match builtin plugins exactly:
 
+- Iterating the value (a `for` loop, even with `break`) closes the cursor.
+- A cursor the app never touches is closed at request end **and fails the request** with `resource has not be closed, check handler code: myplugin.in:<LeakKey>`.
+- As with sessions, back the cursor's query with `call.Session.Context()`, not the per-call context.
+
+{{% details title="Stream cursors" closed="true" %}}
 A cursor with `Stream: true` is instead returned by the app handler as a **streaming HTTP response** (`response.is_stream`): the server pulls batches and writes them to the client as they arrive, after the request's plugin cleanup has run. `plugin.PushCursor` adapts a push-style (yield-based) producer into a cursor. Stream cursors are supported for in-process modules only.
+{{% /details %}}
 
 ### Callable members: Thunk and FuncRef
 
 A returned `*plugin.Struct` can carry members the app calls as functions:
 
 - `plugin.Thunk{Name, Value}` materializes as a zero-argument callable returning the pre-computed value (`Thunk{Error: "..."}` makes the call fail instead).
-- `plugin.FuncRef{Function, Args}` materializes as a zero-argument callable that dispatches the named plugin function with those arguments, in the same module, account, and session — for members computed lazily against live plugin state. Function names starting with `_` are internal: declared in `Functions` (so the binding is validated) but not exposed as module attributes, callable only through a FuncRef.
+- `plugin.FuncRef{Function, Args}` materializes as a zero-argument callable that dispatches the named plugin function with those arguments, in the same module, account, and session, for members computed lazily against live plugin state. Function names starting with `_` are internal: declared in `Functions` (so the binding is validated) but not exposed as module attributes, callable only through a FuncRef.
 
 The http plugin's `response.body()` and `response.json()` are FuncRefs into an internal `_read_body` function, reading a response held open in the session; an unread body is closed by the session cleanup at request end.
 
@@ -232,7 +255,7 @@ Providers are conventionally named `openrun-plugin-<name>`. Test the provider en
 
 ### Compiling a plugin into OpenRun
 
-The same module runs in-process — no gRPC, no serialization — when compiled into an OpenRun binary. Move the `ServeConfig` into an importable package that registers it from `init`:
+The same module runs in-process (no gRPC, no serialization) when compiled into an OpenRun binary. Move the `ServeConfig` into an importable package that registers it from `init`:
 
 ```go {filename="notes.go"}
 package notes
@@ -252,18 +275,23 @@ The provider executable's `main` shrinks to `plugin.Serve(notes.Config())`, and 
 import _ "example.com/notes"
 ```
 
-The server picks up embedded providers at startup and serves their modules in-process under the same `<module>.in` names, taking precedence over an external provider serving the same module — apps do not change. This is the recommended workflow: develop and test the plugin compiled in, distribute it as an external provider.
+The server picks up embedded providers at startup and serves their modules in-process under the same `<module>.in` names, taking precedence over an external provider serving the same module; apps do not change. This is the recommended workflow: develop and test the plugin compiled in, distribute it as an external provider.
 
 ## How it works: the complete flow
 
-1. **Registration**: the server launches the provider binary briefly, performs the go-plugin handshake (a magic cookie distinguishes plugin providers from binding providers), and calls `Describe`. The provider reports its version and a **manifest** per module: function names, read/write classification, and constants. The manifest is registered under both the `<module>.in` and `<module>.ex` paths — after this, no provider process is needed for loading or auditing.
+{{< theme-image light="/d2/external_plugin_flow_light.svg" dark="/d2/external_plugin_flow_dark.svg" alt="The app calls a plugin through the OpenRun plugin hook, which uses the registered manifest and runs the standard checks, then calls the plugin provider process for the app over gRPC on a unix socket with mutual TLS" >}}
+
+1. **Registration**: the server launches the provider binary briefly, performs the go-plugin handshake (a magic cookie distinguishes plugin providers from binding providers), and calls `Describe`. The provider reports its version and a **manifest** per module: function names, read/write classification, and constants. The manifest is registered under both the `<module>.in` and `<module>.ex` paths. After this, no provider process is needed for loading or auditing.
 2. **Load and audit**: `load("notes.in", "notes")` resolves the module from the registered manifest (unless a compiled-in module of that name takes precedence), binding one hooked function per manifest entry (plus constants). `openrun app audit`/`approve` work from the manifest alone, without launching anything.
-3. **First call**: the server lazily launches **one provider process per app** — mutual-TLS gRPC over a unix socket, with the binary's sha256 verified at every launch when a checksum is registered. `InitApp` sends the app identity and the raw `schema.star` bytes once; `InitModule` then initializes each (module, account) instance with its settings.
+3. **First call**: the server lazily launches **one provider process per app**: mutual-TLS gRPC over a unix socket, with the binary's sha256 verified at every launch when a checksum is registered. `InitApp` sends the app identity and the raw `schema.star` bytes once; `InitModule` then initializes each (module, account) instance with its settings.
 4. **Per call**: the hook runs the standard checks (approval, disallow rules, RBAC, write gating, secret expansion), encodes the Starlark arguments to the wire format, and sends `Call` with the request's thread state and a session id. The provider decodes to Go values, dispatches to your method, and the result flows back and is rewrapped as a normal `plugin_response`.
 5. **Request end**: the server ends the session; remaining session defers run (transactions roll back, cursors close), and strictly-tracked leaks fail the request.
-6. **Lifecycle**: the provider process is stopped when the app is closed, deleted, or reloaded (so schema and settings changes take effect), and respawns on the next call. If a provider crashes, in-flight calls fail like any plugin error, session state is lost, and the next request gets a fresh process — calls are never retried automatically.
+6. **Lifecycle**: the provider process is stopped when the app is closed, deleted, or reloaded (so schema and settings changes take effect), and respawns on the next call. If a provider crashes, in-flight calls fail like any plugin error, session state is lost, and the next request gets a fresh process. Calls are never retried automatically.
 
-Two error channels keep failures unambiguous: an error _returned by your function_ travels inside the response and becomes `response.error` in the app; a _transport_ error (process crash, protocol mismatch) kills the provider process and fails the request server-side.
+Two error channels keep failures unambiguous:
+
+- An error _returned by your function_ travels inside the response and becomes `response.error` in the app.
+- A _transport_ error (process crash, protocol mismatch) kills the provider process and fails the request server-side.
 
 ## Installing a provider
 
@@ -276,7 +304,10 @@ openrun provider list
 openrun provider uninstall plugin/pdftool
 ```
 
-The module manifest captured at install time is stored with the provider record, so module loading and app audit work on every replica without launching the provider — a provider process only runs when an app actually calls one of its modules. Checksums are pinned per platform at install and verified at every process launch.
+- The module manifest captured at install time is stored with the provider record, so module loading and app audit work on every replica without launching the provider. A provider process only runs when an app actually calls one of its modules.
+- Checksums are pinned per platform at install and verified at every process launch.
+
+### Config-managed installs
 
 For config-managed deployments, declare installs in `openrun.toml` (these providers cannot be modified with the CLI):
 
@@ -287,9 +318,19 @@ pdftool = "v0.1.0"
 # pdftool = "v0.1.0@sha256:8f4e...,a1b2..."
 ```
 
-`plugin_providers` also supports `release_url_template` (mirror downloads), `cache_dir`, `unsafe_allow_http` and `disable_install`, mirroring the `bindings` config section.
+`plugin_providers` also supports these settings, mirroring the `bindings` config section:
 
-On Kubernetes without egress, use the OCI image path instead: provider images are `FROM scratch` with the provider binary as the entrypoint, and an init container per provider runs `<provider> export <dir>` to copy the binary into a shared volume that the server scans at startup (`plugin_providers.preinstalled_dir`). The OpenRun Helm chart wires this up from values:
+| Setting | Purpose |
+| :--- | :--- |
+| `release_url_template` | Mirror downloads |
+| `cache_dir` | Local cache directory for provider binaries |
+| `unsafe_allow_http` | Allow plain HTTP downloads |
+| `disable_install` | Disable provider installs |
+| `preinstalled_dir` | Directory scanned at startup for preinstalled provider binaries (see Kubernetes below) |
+
+### Kubernetes without egress
+
+Use the OCI image path instead: provider images are `FROM scratch` with the provider binary as the entrypoint, and an init container per provider runs `<provider> export <dir>` to copy the binary into a shared volume that the server scans at startup (`plugin_providers.preinstalled_dir`). The OpenRun Helm chart wires this up from values:
 
 ```yaml {filename="values.yaml"}
 pluginProviders:
@@ -300,7 +341,9 @@ pluginProviders:
   #   pdftool: v0.1.0
 ```
 
-For development, register a provider executable directly from a local path — no database registration, no checksum verification (a startup log warns about this):
+### Development
+
+Register a provider executable directly from a local path. There is no database registration and no checksum verification (a startup log warns about this):
 
 ```toml {filename="openrun.toml"}
 [plugin_providers.dev_providers.notes]

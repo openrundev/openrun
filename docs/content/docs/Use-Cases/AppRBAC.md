@@ -10,7 +10,16 @@ OpenRun provides self-hosted, open-source role-based access control (RBAC) for e
 - **Platform level**: OpenRun checks whether a user is allowed to reach an app at all, using grants defined in the RBAC config. No app code is involved.
 - **App level**: OpenRun passes the user identity and the user's custom permissions to the app through HTTP headers on every request. The app uses these to implement its own app-specific RBAC, such as read-only versus editor roles inside the app.
 
+{{< theme-image light="/d2/app_rbac_headers_light.svg" dark="/d2/app_rbac_headers_dark.svg" alt="OpenRun logs the user in, checks the platform RBAC grant for app:access, strips incoming X-Openrun headers and sets the user and custom permission headers, and the app enforces its own rules from those headers" >}}
+
 This guide walks through configuring RBAC grants, defining custom permissions and reading the permission headers in application code. See the [RBAC reference]({{< ref "docs/configuration/rbac/" >}}) for the full config format.
+
+What you will set up on this page:
+
+- [RBAC grants](#configuring-rbac) that control which teams reach which apps
+- [Custom permissions](#custom-permissions) that model viewer and editor roles for one app
+- App code that reads the [permission headers](#permission-headers-passed-to-apps) and [enforces its own rules](#implementing-app-specific-rbac)
+- A way to [test the policies](#testing-without-an-identity-provider) with builtin users, without an identity provider
 
 ## Scenario
 
@@ -25,7 +34,13 @@ Authentication comes from the [OAuth, OIDC or SAML provider]({{< ref "docs/confi
 
 ## Configuring RBAC
 
-RBAC is always on: the default configuration grants every authenticated principal app access and read. The grants live in the [dynamic config]({{< ref "docs/configuration/overview/#dynamic-config" >}}), so changing them does not require a server restart. A minimal config with app access rules (replacing the default all-principals grant):
+RBAC is always on: the default configuration grants every authenticated principal app access and read. The grants live in the [dynamic config]({{< ref "docs/configuration/overview/#dynamic-config" >}}), so changing them does not require a server restart.
+
+{{% steps %}}
+
+### Define the grants
+
+A minimal config with app access rules (replacing the default all-principals grant):
 
 ```json {filename="dynamic_config.json"}
 {
@@ -46,7 +61,7 @@ RBAC is always on: the default configuration grants every authenticated principa
 }
 ```
 
-Apply it with:
+### Apply the config
 
 ```sh
 openrun server update-config dynamic_config.json
@@ -54,7 +69,13 @@ openrun server update-config dynamic_config.json
 
 The RBAC config can also be managed through the [Console management UI]({{< ref "/console-tour#role-based-access-control" >}}): the configuration page has an RBAC section for editing groups, roles and grants, and changes take effect immediately without a server restart.
 
-When RBAC is enabled, it applies to every app: a user needs an `app:access` grant to reach an app, in addition to passing the app's authentication. Group membership can come from the IdP (OIDC/SAML [group info]({{< ref "docs/configuration/rbac/#group-info" >}})) or be defined statically in the config. The `admin` user always has access.
+{{% /steps %}}
+
+When RBAC is enabled, it applies to every app:
+
+- A user needs an `app:access` grant to reach an app, in addition to passing the app's authentication.
+- Group membership can come from the IdP (OIDC/SAML [group info]({{< ref "docs/configuration/rbac/#group-info" >}})) or be defined statically in the config.
+- The `admin` user always has access.
 
 ## Custom Permissions
 
@@ -95,14 +116,16 @@ Custom permissions are scoped like the other `app:*` permissions: a grant confer
 For apps where requests are proxied through OpenRun (like containerized apps), OpenRun sets these headers on every request it forwards to the app:
 
 | Header | Content |
-| --- | --- |
+| :--- | :--- |
 | `X-Openrun-User` | The user making the request, prefixed with the provider name, like `oidc_okta:jane@example.com`. `anonymous` for anonymous requests, `admin` for admin requests |
 | `X-Openrun-User-Id` | The provider user ID claim when available; for OIDC providers this is the `sub` claim |
 | `X-Openrun-User-Email` | The provider email claim, when available |
 | `X-Openrun-Perms` | Comma-separated list of the custom permissions this user holds on this app, without the `custom:` prefix, like `reports_read,reports_write` |
 | `X-Openrun-Rbac-Enabled` | Whether RBAC is enabled for the app, `true` or `false` |
 
+{{< callout type="warning" >}}
 OpenRun strips any `X-Openrun-*` headers from the incoming request before setting its own values, so clients cannot inject identity or permissions. The app container should only be reachable through OpenRun (the default for OpenRun-managed containers); do not separately publish the app's port on the network.
+{{< /callout >}}
 
 ## Implementing App-Specific RBAC
 
@@ -132,15 +155,17 @@ def create_report(request: Request):
     return save_report(created_by=user)
 ```
 
-The same pattern works in any language or framework: read `X-Openrun-Perms` for authorization decisions and `X-Openrun-User` for attribution, audit records or per-user data. In a Streamlit app, use `st.context.headers` to read the same values and hide or show UI elements based on the permission list.
+The same pattern works in any language or framework:
 
-Since the permission names are opaque to OpenRun, apps define whatever vocabulary fits: `reports_read`/`reports_write`, `approve`, `tenant_admin` and so on. Changing who holds a permission is a config change in the RBAC grants, applied without touching the app or restarting the server.
+- Read `X-Openrun-Perms` for authorization decisions and `X-Openrun-User` for attribution, audit records or per-user data.
+- In a Streamlit app, use `st.context.headers` to read the same values and hide or show UI elements based on the permission list.
+- Since the permission names are opaque to OpenRun, apps define whatever vocabulary fits: `reports_read`/`reports_write`, `approve`, `tenant_admin` and so on.
+- Changing who holds a permission is a config change in the RBAC grants, applied without touching the app or restarting the server.
 
 ## Custom Permissions in Actions and Plugins
 
-For [Action apps]({{< ref "docs/actions/" >}}), the permission check is declarative. Setting `permit=["reports_write"]` on an action definition makes that action visible and runnable only for users holding one of the listed custom permissions. If no permits are set, or RBAC is not enabled for the app, all actions are available to authenticated users.
-
-For Starlark apps, plugin calls can be gated the same way with `ace.permission(..., permit=["reports_write"])`: when RBAC is enabled, the call is allowed only if the user holds one of the listed custom permissions.
+- **Action apps:** for [Action apps]({{< ref "docs/actions/" >}}), the permission check is declarative. Setting `permit=["reports_write"]` on an action definition makes that action visible and runnable only for users holding one of the listed custom permissions. If no permits are set, or RBAC is not enabled for the app, all actions are available to authenticated users.
+- **Starlark plugin calls:** for Starlark apps, plugin calls can be gated the same way with `ace.permission(..., permit=["reports_write"])`: when RBAC is enabled, the call is allowed only if the user holds one of the listed custom permissions.
 
 ## Testing Without an Identity Provider
 
@@ -152,7 +177,9 @@ openrun app update auth --promote builtin /engg/reports
 curl -u alice:password https://localhost:25223/engg/reports/api/reports
 ```
 
-The user id in grants is `builtin:alice`, and the groups of the user are matched by `group:` references like SSO groups. To test management API grants, run CLI commands as another user with `openrun --as builtin:alice app list`. See [Testing RBAC with Builtin Users]({{< ref "docs/configuration/rbac/#testing-rbac-with-builtin-users" >}}) for details.
+- The user id in grants is `builtin:alice`, and the groups of the user are matched by `group:` references like SSO groups.
+- To test management API grants, run CLI commands as another user with `openrun --as builtin:alice app list`.
+- See [Testing RBAC with Builtin Users]({{< ref "docs/configuration/rbac/#testing-rbac-with-builtin-users" >}}) for details.
 
 ## Frequently Asked Questions
 
