@@ -7,6 +7,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [v0.20.8] - 2026-11-01
+
 ### Security
 
 - Failed admin and builtin user password checks are limited per client IP by the new `security.login_failure_rate_limit` (default 100 per minute), across HTTP Basic, the login form and the OAuth authorization server password page. A wrong admin username now costs the same bcrypt check as a wrong password.
