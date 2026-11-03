@@ -185,6 +185,12 @@ func (s *OAuthManager) buildProvider(providerName string, auth types.AuthConfig,
 	providerSplit := strings.SplitN(providerName, PROVIDER_NAME_DELIMITER, 2)
 	providerType := providerSplit[0]
 
+	if auth.TrustUnverifiedEmail && providerType != "oidc" {
+		// The goth providers already trust an address without a claim
+		// (emailVerifiedClaim), so the option would be silently meaningless
+		return nil, fmt.Errorf("trust_unverified_email is supported for oidc providers only, not for %s", providerName)
+	}
+
 	var provider goth.Provider
 	switch providerType {
 	case "github":
@@ -215,9 +221,14 @@ func (s *OAuthManager) buildProvider(providerName string, auth types.AuthConfig,
 		if auth.DiscoveryUrl == "" {
 			return nil, fmt.Errorf("discovery_url is required for OIDC provider")
 		}
-		op, err := newOIDCProvider(key, secret, callbackUrl, auth.DiscoveryUrl, scopes, ssoAllowPrivateHosts(s.config))
+		op, err := newOIDCProvider(key, secret, callbackUrl, auth.DiscoveryUrl, scopes, ssoAllowPrivateHosts(s.config), auth.TrustUnverifiedEmail)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create OIDC provider: %w", err)
+		}
+		if auth.TrustUnverifiedEmail {
+			// At every startup and config reload, so the setting is not forgotten
+			s.Warn().Str("provider", providerName).Msg(
+				"provider trusts the ID token email without a verification claim (trust_unverified_email): appropriate for a single-tenant IdP only")
 		}
 		provider = op
 	default:
@@ -587,22 +598,40 @@ func (s *OAuthManager) authCallback(w http.ResponseWriter, r *http.Request) {
 	// Only trust the email as an identity when the IdP vouches for it:
 	// otherwise a user on a permissive IdP could assert an arbitrary address
 	// (e.g. someone else's) and match RBAC grants for it. The OIDC adapter
-	// (oidc.go) decides this itself and leaves Email empty for an address
-	// that is not marked verified; the goth providers are gated on the
-	// claim here. An address that was dropped is logged: the user is then
-	// identified by subject, which an operator with email-keyed grants
-	// would otherwise only see as access denied
+	// (oidc.go) applies the policy itself (per-source verdicts, xms_edov,
+	// trust_unverified_email) and its Email is final: its merged raw claims
+	// cannot be re-evaluated here, since a userinfo true overwrites an ID
+	// token false in them. The goth providers are gated on the claim here.
+	// An address that was dropped is logged with the adapter's reason: the
+	// user is then identified by subject, which an operator with
+	// email-keyed grants would otherwise only see as access denied
+	emailDropped, _ := user.RawData[oidcEmailDroppedKey].(string)
+	delete(user.RawData, oidcEmailDroppedKey)
 	email := ""
 	if azureEmail, isAzure := azureVerifiedEmail(providerName, user); isAzure {
 		email = azureEmail
-	} else if emailVerifiedClaim(user.RawData) {
+	} else if strings.HasPrefix(providerName, "oidc") || emailVerifiedClaim(user.RawData) {
 		email = user.Email
 	}
 	if email != "" {
 		stateMap[USER_EMAIL_KEY] = email
-	} else if rawEmail, _ := user.RawData["email"].(string); rawEmail != "" {
-		s.Warn().Str("provider", providerName).Str("subject", user.UserID).Msg(
-			"the identity provider's email claim is not marked verified: the user is identified by subject, grants keyed by the email will not match")
+	} else if rawEmail, _ := user.RawData["email"].(string); rawEmail != "" || emailDropped != "" {
+		event := s.Warn().Str("provider", providerName).Str("subject", user.UserID)
+		switch emailDropped {
+		case oidcEmailDroppedAbsent:
+			event.Msg("the identity provider sent no email verification claim: the user is identified by subject, grants keyed by the email will not match. " +
+				"For a single-tenant IdP set trust_unverified_email on the auth entry; for Microsoft Entra ID add the xms_edov optional claim to the app registration")
+		case oidcEmailDroppedFalse:
+			event.Msg("the identity provider marks the email as unverified: the user is identified by subject, grants keyed by the email will not match. " +
+				"Fix the verification status at the identity provider (Keycloak: Trust Email on the federation provider; Cognito: the email_verified attribute mapping)")
+		case oidcEmailDroppedMalformed:
+			event.Interface("email_verified", user.RawData["email_verified"]).Interface("xms_edov", user.RawData["xms_edov"]).Msg(
+				"the identity provider sent an email verification claim that is neither true nor false: the user is identified by subject, grants keyed by the email will not match")
+		case oidcEmailDroppedMismatch:
+			event.Msg("the userinfo email differs from the ID token email and carries no verification claim of its own: the user is identified by subject, grants keyed by the email will not match")
+		default:
+			event.Msg("the identity provider's email claim is not marked verified: the user is identified by subject, grants keyed by the email will not match")
+		}
 	}
 
 	lookupKeys := []string{USER_EMAIL_KEY, USER_ID_KEY, USER_NICKNAME_KEY}

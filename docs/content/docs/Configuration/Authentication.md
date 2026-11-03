@@ -272,6 +272,7 @@ The config details depend on the provider type. The `key` is generally the Clien
 | `okta` | `org_url` (required) | The tenant URL to verify |
 | `auth0` | `domain` (required) | The Auth0 domain |
 | `oidc` | `discovery_url` (required) | The OIDC discovery document. For example, with Okta, use `https://YOURDOMAIN-admin.okta.com/.well-known/openid-configuration` |
+| `oidc` | `trust_unverified_email` (optional) | `true` makes the ID token's email the user identity when the IdP sends no `email_verified` claim at all. An explicit `false` still drops the email. For a single-tenant IdP whose admins own the email attribute only; see [Identity providers that do not send `email_verified`]({{< ref "#identity-providers-that-do-not-send-email_verified" >}}) |
 
 {{<callout type="warning" >}}
 The first time a new provider is added, it is important to manually verify an app, to verify if the required authentication restrictions are in place. For example, with google, any valid google user can log in, including gmail.com accounts. The `hosted_domain` config has to be used to restrict this.
@@ -298,8 +299,48 @@ How OIDC logins are validated:
 
 - **Tokens:** ID token signatures are validated using the provider's `jwks_uri`, each login is bound to a nonce, and an S256 PKCE challenge is sent. The provider must return the login nonce in the ID token.
 - **Discovery:** the `discovery_url` must be the issuer's `/.well-known/openid-configuration` document, and the issuer it declares must match.
-- **Identity:** an email address is used as the OpenRun identity only when its `email_verified` claim is `true` (a boolean, or the string `"true"` some providers send); otherwise the ID token's `sub` identifies the user, and the dropped email is logged at login. Providers that omit email verification therefore need RBAC grants for the subject or IdP groups instead of email-based grants. An email supplied by UserInfo must have its own verification claim if it differs from the ID token's email.
+- **Identity:** an email address is used as the OpenRun identity only when the IdP vouches for it: `email_verified` is `true` (a boolean, or the string `"true"` some providers send) in the ID token or in the UserInfo response for the address that response names, or Microsoft Entra ID's `xms_edov` claim is `true` (see below). The ID token and the UserInfo response each keep their own verdict: a `false` from either, or a value that is neither `true` nor `false`, drops the email even if the other says `true`. Otherwise the ID token's `sub` identifies the user as `<provider>:<sub>` and the dropped email is logged at login with the reason. Providers that send no verification claim therefore need RBAC grants for the subject or IdP groups instead of email-based grants, or `trust_unverified_email`. An email supplied by UserInfo must have its own verification claim if it differs from the ID token's email.
 - **Addresses:** the discovery document, JWKS, token and userinfo endpoints must be on public addresses. An IdP on a private, loopback or link-local address is refused unless `security.sso_allow_private_hosts = true` is set in the static config (see [SAML]({{< ref "#saml" >}})).
+
+The `oidc` provider type is stricter than the named providers (`google`, `github`, ...): those are known IdPs whose email semantics are known (GitHub API emails are verified, Google sends `verified_email`, the `azuread` provider derives the email from the verified principal name), while `oidc` talks to an unknown IdP, so an address without a verification claim is not trusted by default.
+
+### Identity providers that do not send `email_verified`
+
+Some IdPs never send the claim. Their users are identified by subject since v0.20.6, so grants, the `X-Openrun-User` header and apps keyed on the email stop matching after an upgrade. Two cases, with different remedies:
+
+**The claim is absent.** The IdP has no opinion either way.
+
+| IdP | Why | Remedy |
+| :--- | :--- | :--- |
+| Microsoft Entra ID | There is no `email_verified` claim | Add the `xms_edov` optional claim to the app registration (below). Or set `trust_unverified_email = true` on the auth entry |
+| ADFS | The default issuance rules omit it | Add a custom issuance rule emitting `email_verified` with the value `true`, or set `trust_unverified_email = true` |
+| OneLogin | Off by default | Enable the `email_verified` claim on the app |
+
+**The claim is explicitly `false`.** The IdP says the address is not verified, usually because of its own federation defaults. OpenRun honors that, `trust_unverified_email` does not override it, and the fix is at the IdP:
+
+| IdP | Why | Remedy |
+| :--- | :--- | :--- |
+| Keycloak, LDAP or brokered users | "Trust Email" defaults to off on the federation provider, and already-imported users keep `email_verified: false` | Enable Trust Email and re-sync the users, or set Email verified per user |
+| Amazon Cognito, federated users | Without an `email_verified` attribute mapping the attribute defaults to false | Map the IdP's verification attribute in the user pool |
+
+**Microsoft Entra ID: the `xms_edov` claim.** Entra sets `xms_edov` ("email domain owner verified") to `true` when the address belongs to the user's own tenant on a domain that tenant has proven to own. OpenRun accepts it as verification. This is a policy decision: OIDC's `email_verified` asserts that the user controlled the address, `xms_edov` asserts that the tenant owns the domain and assigned the address, which is the assurance that matters for an organisation's own IdP. The claim is emitted only when the `email` claim is also requested, and the portal's Token configuration page does not list it, so edit the app registration's Manifest (Microsoft Graph format):
+
+```json
+"optionalClaims": {
+    "idToken": [
+        { "name": "email", "source": null, "essential": false, "additionalProperties": [] },
+        { "name": "xms_edov", "source": null, "essential": false, "additionalProperties": [] }
+    ]
+}
+```
+
+The portal may warn that `xms_edov` is not recognised; the claim is documented in Microsoft's optional claims reference and the warning can be ignored. Sign in once and check the server log: a login that still reports "sent no email verification claim" means the claim did not arrive. Guest (B2B) accounts and accounts on domains the tenant has not verified get `xms_edov: false` or no claim and stay identified by subject. This route needs no OpenRun setting, and it holds even if the app registration is later made multi-tenant.
+
+**`trust_unverified_email`.** When the IdP cannot be made to send a verification claim, this option on the `[auth.oidc_<name>]` entry makes the signed ID token's email the identity when neither the ID token nor the UserInfo response carries `email_verified` or `xms_edov`. An explicit `false` from either still drops the email, and an address that only appears in, or differs in, the UserInfo response is never trusted. The server logs a warning at every start while the option is on. Enable it only for a single-tenant IdP whose directory admins own the email attribute: on a multi-tenant or self-service IdP it lets a user log in as any address their IdP admin assigns. The option is refused on the named provider types.
+
+{{<callout type="warning" >}}
+**Switching from subject to email identities.** Adding `xms_edov` or enabling `trust_unverified_email` changes a user's identity at their next login from `<provider>:<sub>` to `<provider>:<email>`. That string is the RBAC user id, the `X-Openrun-User` header (and `X-Openrun-User-Stripped` without the prefix) and the audit log user. `X-Openrun-User-Id` carries the `sub` claim and `X-Openrun-User-Email` the bare address; the subject header does not change, and the email header is empty while the email is dropped. List both forms in grants during the switch, `"users": ["oidc_entra:abc123", "oidc_entra:alice@corp.example"]`, and remove the subject form once the login log stops reporting dropped emails. App data keyed on the subject identity can be re-keyed using the Starlark `UserSubject` value, which is the same before and after. A bare address in a grant never matches: the provider prefix is part of the identity.
+{{</callout>}}
 
 ## SAML
 

@@ -30,6 +30,80 @@ type oidcProvider struct {
 	provider *oidc.Provider
 	verifier *oidc.IDTokenVerifier
 	ctx      context.Context // carries the http client for go-oidc and oauth2 calls
+	// trustUnverifiedEmail is the entry's trust_unverified_email: the ID
+	// token's email identifies the user when no source sends a verification
+	// claim (see FetchUser)
+	trustUnverifiedEmail bool
+}
+
+// oidcEmailDroppedKey is set in the user's RawData by FetchUser when the
+// adapter dropped the IdP's email, with one of the oidcEmailDropped*
+// reasons. It is OpenRun's own, never an IdP claim: the login callback
+// reads it for the operator's log line and removes it before the raw
+// data is kept
+const oidcEmailDroppedKey = "_openrun_email_dropped"
+
+const (
+	oidcEmailDroppedAbsent    = "absent"    // no source sent a verification claim
+	oidcEmailDroppedFalse     = "false"     // a source marks the email unverified
+	oidcEmailDroppedMalformed = "malformed" // a verification claim is neither true nor false
+	oidcEmailDroppedMismatch  = "mismatch"  // userinfo named another address nobody vouches for
+)
+
+// oidcClaimVerdict is one source's answer on whether its email is verified
+type oidcClaimVerdict int
+
+const (
+	oidcVerdictAbsent    oidcClaimVerdict = iota // no verification claim sent
+	oidcVerdictTrue                              // marked verified
+	oidcVerdictFalse                             // marked unverified
+	oidcVerdictMalformed                         // a claim is present but neither true nor false: fails closed, like false
+)
+
+// oidcEmailClaim reads one verification claim: a boolean, or the strings
+// "true"/"false" that some providers send (go-oidc's UserInfo parsing
+// accepts the same). Any other value that is present is malformed, never
+// absent, so it cannot pass for "no claim" under trust_unverified_email
+func oidcEmailClaim(claims map[string]any, name string) oidcClaimVerdict {
+	v, present := claims[name]
+	if !present {
+		return oidcVerdictAbsent
+	}
+	switch t := v.(type) {
+	case bool:
+		if t {
+			return oidcVerdictTrue
+		}
+		return oidcVerdictFalse
+	case string:
+		if strings.EqualFold(t, "true") {
+			return oidcVerdictTrue
+		}
+		if strings.EqualFold(t, "false") {
+			return oidcVerdictFalse
+		}
+	}
+	return oidcVerdictMalformed
+}
+
+// oidcEmailVerdict combines the verification claims of one source (the ID
+// token or the userinfo response). email_verified is the OIDC claim.
+// xms_edov is Microsoft Entra ID's "email domain owner verified" claim,
+// set when the address belongs to the user's own tenant on a domain that
+// tenant has proven to own; Entra never sends email_verified, and the
+// tenant's assertion is accepted as sufficient for an organisation's own
+// IdP. Within a source a false or malformed value vetoes a true one
+func oidcEmailVerdict(claims map[string]any) oidcClaimVerdict {
+	a, b := oidcEmailClaim(claims, "email_verified"), oidcEmailClaim(claims, "xms_edov")
+	switch {
+	case a == oidcVerdictFalse || b == oidcVerdictFalse:
+		return oidcVerdictFalse
+	case a == oidcVerdictMalformed || b == oidcVerdictMalformed:
+		return oidcVerdictMalformed
+	case a == oidcVerdictTrue || b == oidcVerdictTrue:
+		return oidcVerdictTrue
+	}
+	return oidcVerdictAbsent
 }
 
 // oidcDiscoveryPath is where OIDC Discovery 4.1 places the provider
@@ -56,7 +130,7 @@ const oidcFetchTimeout = 30 * time.Second
 // provider (JWKS, token, userinfo): with allowPrivate false it refuses
 // private or local targets, since discovery_url is config:update settable
 // and the document names the other endpoints
-func newOIDCProvider(key, secret, callbackURL, discoveryURL string, scopes []string, allowPrivate bool) (*oidcProvider, error) {
+func newOIDCProvider(key, secret, callbackURL, discoveryURL string, scopes []string, allowPrivate, trustUnverifiedEmail bool) (*oidcProvider, error) {
 	client := ssoHTTPClient("OIDC provider", allowPrivate, oidcFetchTimeout)
 	resp, err := client.Get(discoveryURL)
 	if err != nil {
@@ -113,8 +187,9 @@ func newOIDCProvider(key, secret, callbackURL, discoveryURL string, scopes []str
 	}
 	return &oidcProvider{
 		name: "oidc", ctx: ctx, provider: provider,
-		verifier: provider.Verifier(&oidc.Config{ClientID: key}),
-		config:   oauth2.Config{ClientID: key, ClientSecret: secret, RedirectURL: callbackURL, Endpoint: provider.Endpoint(), Scopes: scopes},
+		verifier:             provider.Verifier(&oidc.Config{ClientID: key}),
+		config:               oauth2.Config{ClientID: key, ClientSecret: secret, RedirectURL: callbackURL, Endpoint: provider.Endpoint(), Scopes: scopes},
+		trustUnverifiedEmail: trustUnverifiedEmail,
 	}, nil
 }
 
@@ -202,6 +277,26 @@ func (p *oidcProvider) FetchUser(session goth.Session) (goth.User, error) {
 			return goth.User{}, err
 		}
 	}
+	stringClaim := func(keys ...string) string {
+		for _, key := range keys {
+			if value, ok := claims[key].(string); ok && value != "" {
+				return value
+			}
+		}
+		return ""
+	}
+	// The email identifies the user only when a source vouches for the
+	// address it names: a missing claim is not evidence that the address
+	// belongs to the subject, so the user then carries no email and the
+	// login falls back to the subject. Each source (the signed ID token,
+	// the userinfo response) keeps its own verdict, taken before the
+	// userinfo claims are merged over the ID token's: a false from either
+	// vetoes before anything is accepted, so a userinfo true cannot
+	// overwrite an ID token false. The raw claims pass through as the IdP
+	// sent them; the decision is made here, not by rewriting them
+	idEmail := stringClaim("email")
+	idVerdict := oidcEmailVerdict(claims)
+	uiEmail, uiVerdict := idEmail, oidcVerdictAbsent // a userinfo verdict with no address applies to the record's address
 	if p.provider.UserInfoEndpoint() != "" {
 		info, err := p.provider.UserInfo(p.ctx, oauth2.StaticTokenSource(s.Token))
 		if err != nil {
@@ -214,35 +309,37 @@ func (p *oidcProvider) FetchUser(session goth.Session) (goth.User, error) {
 		if err := info.Claims(&profile); err != nil {
 			return goth.User{}, err
 		}
-		// Verification applies to the email from the same response. Do not carry
-		// a true ID-token flag onto a different, unverified UserInfo email.
-		if email, present := profile["email"]; present {
-			profileEmail, valid := email.(string)
-			tokenEmail, _ := claims["email"].(string)
-			if !valid || profileEmail != tokenEmail {
-				delete(claims, "email_verified")
-			}
+		if value, present := profile["email"]; present {
+			uiEmail, _ = value.(string) // userinfo may update the address; a non-string one is no address
 		}
+		uiVerdict = oidcEmailVerdict(profile)
 		for key, value := range profile {
 			claims[key] = value
 		}
 	}
-	stringClaim := func(keys ...string) string {
-		for _, key := range keys {
-			if value, ok := claims[key].(string); ok && value != "" {
-				return value
-			}
-		}
-		return ""
+	email, dropped := uiEmail, ""
+	switch {
+	case idVerdict == oidcVerdictFalse || uiVerdict == oidcVerdictFalse:
+		dropped = oidcEmailDroppedFalse
+	case idVerdict == oidcVerdictMalformed || uiVerdict == oidcVerdictMalformed:
+		dropped = oidcEmailDroppedMalformed
+	case email == "":
+		// no address to decide on
+	case (email == idEmail && idVerdict == oidcVerdictTrue) || uiVerdict == oidcVerdictTrue:
+		// the source that vouches names this address
+	case email != idEmail:
+		// userinfo supplied another address and nothing vouches for it;
+		// trust_unverified_email covers the signed ID token's email only
+		dropped = oidcEmailDroppedMismatch
+	case p.trustUnverifiedEmail:
+		// No source sent a verification claim at all, the signed ID token
+		// names the address, and the entry opts in (single-tenant IdP)
+	default:
+		dropped = oidcEmailDroppedAbsent
 	}
-	// The email identifies the user only when the IdP vouches for it
-	// (oidcEmailVerified): a missing claim is not evidence that the address
-	// belongs to the subject, so the user then carries no email and the
-	// login falls back to the subject. The raw claims pass through as the
-	// IdP sent them; the decision is made here, not by rewriting them
-	email := stringClaim("email")
-	if !oidcEmailVerified(claims) {
+	if dropped != "" {
 		email = ""
+		claims[oidcEmailDroppedKey] = dropped
 	}
 	return goth.User{
 		Provider: p.Name(), UserID: token.Subject, Email: email,
@@ -253,18 +350,4 @@ func (p *oidcProvider) FetchUser(session goth.Session) (goth.User, error) {
 		// token has its own, often shorter, lifetime
 		ExpiresAt: s.Token.Expiry,
 	}, nil
-}
-
-// oidcEmailVerified reports whether the claims mark the email as verified:
-// email_verified true, as a boolean or as the string "true" that some
-// providers send (go-oidc's UserInfo parsing accepts the same). An absent
-// or malformed claim is unverified
-func oidcEmailVerified(claims map[string]any) bool {
-	switch v := claims["email_verified"].(type) {
-	case bool:
-		return v
-	case string:
-		return strings.EqualFold(v, "true")
-	}
-	return false
 }

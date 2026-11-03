@@ -7,9 +7,22 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [v0.20.10] - 2026-11-03
+
+### Added
+
+- `trust_unverified_email = true` on an `[auth.oidc_<name>]` entry makes the signed ID token's email the user identity when the identity provider sends no `email_verified` claim at all, for a single-tenant IdP whose directory admins own the email attribute (Microsoft Entra ID never sends the claim, nor do ADFS and OneLogin by default). An explicit `false` still drops the email, an address that only appears in or differs in the UserInfo response is never trusted, and the server logs a warning at every start while the option is on. The option is refused on the named provider types ([#117](https://github.com/openrundev/openrun/issues/117)).
+- The `oidc` provider accepts Microsoft Entra ID's `xms_edov` ("email domain owner verified") optional claim as email verification, so an Entra app registration that emits it keeps email identities with no OpenRun setting. If the registration already emits `xms_edov`, Entra users switch from subject to email identities at their next login: re-key subject-based grants first (see the Authentication docs, "Identity providers that do not send `email_verified`").
+
+### Changed
+
+- The `oidc` provider keeps separate email verification verdicts for the ID token and the UserInfo response: a `false` from either, or a value that is neither `true` nor `false`, now drops the email even when the other source says `true`. Previously a UserInfo `email_verified: true` overrode an ID token `false`.
+- The login warning for a dropped email names the cause (no verification claim, marked unverified, malformed claim, UserInfo address differs from the ID token's) and the remedy.
+
 ## [v0.20.9] - 2026-11-02
 
 ### Fixed
+
 - Fixed action dropdown selection to handle settle and choose first element as default.
 
 ## [v0.20.8] - 2026-11-01
@@ -50,6 +63,10 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - An OAuth/OIDC or SAML login no longer fails with "error matching session state" when a background request (a service worker script update, a `fetch` or `EventSource` poller of a tab whose session expired, a prefetch) reaches the app while the user is at the identity provider ([#116](https://github.com/openrundev/openrun/issues/116)).
 
 ## [v0.20.6] - 2026-10-28
+
+### Changed
+
+- (entry added 2026-11-03) The `oidc` provider uses the email as the user identity only when the `email_verified` claim is `true`; an absent claim no longer counts as verified. Users of identity providers that omit the claim (Microsoft Entra ID, ADFS, OneLogin) or send `false` (Keycloak LDAP or brokered users, Cognito federated users) are identified as `<provider>:<sub>` from this version on, so email-keyed grants, the `X-Openrun-User` header and apps keyed on the email stop matching at their next login. See "Identity providers that do not send `email_verified`" in the Authentication docs for the per-IdP remedies, and the `xms_edov` support and `trust_unverified_email` option added after this release.
 
 ### Added
 

@@ -16,6 +16,7 @@ import (
 
 	"github.com/go-jose/go-jose/v4"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/openrundev/openrun/internal/testutil"
 	"github.com/openrundev/openrun/internal/types"
 	"golang.org/x/oauth2"
 )
@@ -56,32 +57,64 @@ func TestOIDCLoginValidation(t *testing.T) {
 	}))
 	defer ts.Close()
 	issuer = ts.URL
-	adapter, err := (&OAuthManager{config: ssoPrivateHostsConfig()}).buildProvider("oidc_company", types.AuthConfig{
-		Key: "client", Secret: "secret", DiscoveryUrl: ts.URL + oidcDiscoveryPath, Scopes: []string{"email"},
-	}, "https://app.example")
-	if err != nil {
-		t.Fatal(err)
+	manager := &OAuthManager{Logger: testutil.TestLogger(), config: ssoPrivateHostsConfig()}
+	build := func(name string, trust bool) *oidcProvider {
+		adapter, err := manager.buildProvider(name, types.AuthConfig{
+			Key: "client", Secret: "secret", DiscoveryUrl: ts.URL + oidcDiscoveryPath, Scopes: []string{"email"}, TrustUnverifiedEmail: trust,
+		}, "https://app.example")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return adapter.(*oidcProvider)
 	}
-	p := adapter.(*oidcProvider)
+	strict, trusting := build("oidc_company", false), build("oidc_trusting", true)
 
+	noVerification := func(c jwt.MapClaims) { delete(c, "email_verified") }
+	edov := func(c jwt.MapClaims) { delete(c, "email_verified"); c["xms_edov"] = true }
 	for _, tc := range []struct {
 		name             string
+		trust            bool // the oidc_trusting adapter (trust_unverified_email)
 		mutate           func(jwt.MapClaims)
 		profile          map[string]any
 		foreignSignature bool
 		algorithm        string
 		wantError        bool
 		wantVerified     bool
+		wantReason       string // the adapter's _openrun_email_dropped marker
 	}{
 		{name: "valid verified email", wantVerified: true},
-		{name: "missing email verification", mutate: func(c jwt.MapClaims) { delete(c, "email_verified") }},
-		{name: "false email verification", mutate: func(c jwt.MapClaims) { c["email_verified"] = false }},
+		{name: "missing email verification", mutate: noVerification, wantReason: oidcEmailDroppedAbsent},
+		{name: "false email verification", mutate: func(c jwt.MapClaims) { c["email_verified"] = false }, wantReason: oidcEmailDroppedFalse},
 		{name: "string email verification", mutate: func(c jwt.MapClaims) { c["email_verified"] = "true" }, wantVerified: true},
-		{name: "string email verification false", mutate: func(c jwt.MapClaims) { c["email_verified"] = "false" }},
-		{name: "malformed email verification", mutate: func(c jwt.MapClaims) { c["email_verified"] = "yes" }},
-		{name: "different unverified userinfo email", profile: map[string]any{"sub": "subject", "email": "victim@example.com"}},
-		{name: "userinfo explicitly unverified", profile: map[string]any{"sub": "subject", "email_verified": false}},
+		{name: "string email verification false", mutate: func(c jwt.MapClaims) { c["email_verified"] = "false" }, wantReason: oidcEmailDroppedFalse},
+		{name: "malformed email verification", mutate: func(c jwt.MapClaims) { c["email_verified"] = "yes" }, wantReason: oidcEmailDroppedMalformed},
+		{name: "different unverified userinfo email", profile: map[string]any{"sub": "subject", "email": "victim@example.com"}, wantReason: oidcEmailDroppedMismatch},
+		{name: "userinfo explicitly unverified", profile: map[string]any{"sub": "subject", "email_verified": false}, wantReason: oidcEmailDroppedFalse},
 		{name: "userinfo verified email", profile: map[string]any{"sub": "subject", "email": "new@example.com", "email_verified": true}, wantVerified: true},
+		{name: "userinfo verified without userinfo email", mutate: noVerification, profile: map[string]any{"sub": "subject", "email_verified": true}, wantVerified: true},
+		// A false from either source vetoes a true from the other
+		{name: "ID token false, userinfo true, same address", mutate: func(c jwt.MapClaims) { c["email_verified"] = false }, profile: map[string]any{"sub": "subject", "email_verified": true}, wantReason: oidcEmailDroppedFalse},
+		{name: "ID token false, userinfo true for another address", mutate: func(c jwt.MapClaims) { c["email_verified"] = false }, profile: map[string]any{"sub": "subject", "email": "new@example.com", "email_verified": true}, wantReason: oidcEmailDroppedFalse},
+		// Microsoft Entra ID's xms_edov is accepted as verification
+		{name: "xms_edov true", mutate: edov, wantVerified: true},
+		{name: "xms_edov string true", mutate: func(c jwt.MapClaims) { delete(c, "email_verified"); c["xms_edov"] = "true" }, wantVerified: true},
+		{name: "xms_edov false", mutate: func(c jwt.MapClaims) { delete(c, "email_verified"); c["xms_edov"] = false }, wantReason: oidcEmailDroppedFalse},
+		{name: "xms_edov true, email_verified false", mutate: func(c jwt.MapClaims) { c["email_verified"] = false; c["xms_edov"] = true }, wantReason: oidcEmailDroppedFalse},
+		{name: "xms_edov true, userinfo xms_edov false", mutate: edov, profile: map[string]any{"sub": "subject", "xms_edov": false}, wantReason: oidcEmailDroppedFalse},
+		{name: "xms_edov true, userinfo swaps email", mutate: edov, profile: map[string]any{"sub": "subject", "email": "victim@example.com"}, wantReason: oidcEmailDroppedMismatch},
+		// trust_unverified_email: the signed ID token's email, only when no
+		// source sent any verification claim
+		{name: "trusted, verified email", trust: true, wantVerified: true},
+		{name: "trusted, no claim", trust: true, mutate: noVerification, wantVerified: true},
+		{name: "trusted, explicit false", trust: true, mutate: func(c jwt.MapClaims) { c["email_verified"] = false }, wantReason: oidcEmailDroppedFalse},
+		{name: "trusted, userinfo false", trust: true, mutate: noVerification, profile: map[string]any{"sub": "subject", "email_verified": false}, wantReason: oidcEmailDroppedFalse},
+		{name: "trusted, userinfo swaps email", trust: true, mutate: noVerification, profile: map[string]any{"sub": "subject", "email": "victim@example.com"}, wantReason: oidcEmailDroppedMismatch},
+		{name: "trusted, userinfo-only email", trust: true, mutate: func(c jwt.MapClaims) { delete(c, "email_verified"); delete(c, "email") }, profile: map[string]any{"sub": "subject", "email": "victim@example.com"}, wantReason: oidcEmailDroppedMismatch},
+		{name: "trusted, malformed string", trust: true, mutate: func(c jwt.MapClaims) { c["email_verified"] = "yes" }, wantReason: oidcEmailDroppedMalformed},
+		{name: "trusted, malformed null", trust: true, mutate: func(c jwt.MapClaims) { c["email_verified"] = nil }, wantReason: oidcEmailDroppedMalformed},
+		{name: "trusted, malformed number", trust: true, mutate: func(c jwt.MapClaims) { c["email_verified"] = 1 }, wantReason: oidcEmailDroppedMalformed},
+		{name: "trusted, malformed object", trust: true, mutate: func(c jwt.MapClaims) { c["email_verified"] = map[string]any{} }, wantReason: oidcEmailDroppedMalformed},
+		{name: "trusted, malformed with xms_edov true", trust: true, mutate: func(c jwt.MapClaims) { c["email_verified"] = "yes"; c["xms_edov"] = true }, wantReason: oidcEmailDroppedMalformed},
 		{name: "wrong signature", foreignSignature: true, wantError: true},
 		{name: "unsigned token", algorithm: "none", wantError: true},
 		{name: "HMAC key from public JWKS", algorithm: "HS256", wantError: true},
@@ -101,6 +134,10 @@ func TestOIDCLoginValidation(t *testing.T) {
 		{name: "userinfo missing subject", profile: map[string]any{}, wantError: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			p, wantProvider := strict, "oidc_company"
+			if tc.trust {
+				p, wantProvider = trusting, "oidc_trusting"
+			}
 			initial, err := p.BeginAuth("state")
 			if err != nil {
 				t.Fatal(err)
@@ -158,13 +195,16 @@ func TestOIDCLoginValidation(t *testing.T) {
 				t.Fatalf("FetchUser error = %v, want error %v", err, tc.wantError)
 			}
 			if err == nil {
-				if user.UserID != "subject" || user.Provider != "oidc_company" {
+				if user.UserID != "subject" || user.Provider != wantProvider {
 					t.Fatalf("wrong identity: %+v", user)
 				}
 				// The adapter decides on the email itself: it is set only when
 				// verified, and the raw claims are passed through as sent
 				if got := user.Email != ""; got != tc.wantVerified {
 					t.Fatalf("email %q verified = %v, want %v", user.Email, got, tc.wantVerified)
+				}
+				if reason, _ := user.RawData[oidcEmailDroppedKey].(string); reason != tc.wantReason {
+					t.Fatalf("drop reason %q, want %q", reason, tc.wantReason)
 				}
 				if tc.wantVerified && user.Email != "user@example.com" && user.Email != "new@example.com" {
 					t.Fatalf("unexpected email %q", user.Email)
@@ -193,7 +233,7 @@ func TestOIDCDiscoveryIssuerMustMatchURL(t *testing.T) {
 	}))
 	defer ts.Close()
 	build := func(discoveryURL string) error {
-		_, err := newOIDCProvider("client", "secret", "https://app.example/cb", discoveryURL, nil, true)
+		_, err := newOIDCProvider("client", "secret", "https://app.example/cb", discoveryURL, nil, true, false)
 		return err
 	}
 	issuer = ts.URL

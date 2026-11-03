@@ -1218,6 +1218,13 @@ type AuthConfig struct {
 	DiscoveryUrl string   `toml:"discovery_url"` // the discovery url, used for OIDC
 	HostedDomain string   `toml:"hosted_domain"` // the hosted domain, used for Google
 	Scopes       []string `toml:"scopes"`        // oauth scopes
+	// TrustUnverifiedEmail (oidc only) makes the ID token's email the user
+	// identity when the IdP sends no email_verified (or xms_edov) claim at
+	// all, for a single-tenant IdP whose admins own the email attribute
+	// (Microsoft Entra ID never sends email_verified). An explicit false
+	// still drops the email, and an address that only appears in, or
+	// differs in, the userinfo response is never trusted
+	TrustUnverifiedEmail bool `toml:"trust_unverified_email"`
 }
 
 // BuiltinAuthEntry is one [builtin_auth.<username>] entry of openrun.toml.
