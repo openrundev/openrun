@@ -7,6 +7,11 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [v0.20.9] - 2026-11-02
+
+### Fixed
+- Fixed action dropdown selection to handle settle and choose first element as default.
+
 ## [v0.20.8] - 2026-11-01
 
 ### Security

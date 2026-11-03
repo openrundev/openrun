@@ -130,7 +130,7 @@ int: ## Run integration tests
 # The tests/ui suites drive a real server and the CLI through a headless
 # Chromium (go-rod); they skip when no Chromium-based browser is found
 # (OPENRUN_TEST_BROWSER names one). They are excluded from unit (GO_PACKAGES)
-testui: ## Run the browser-driven integration tests (tests/ui: federated login flows)
+testui: ## Run the browser-driven integration tests (tests/ui: federated login flows, action pages)
 > GOWORK=off go vet ./tests/ui/...
 > GOWORK=off go test -count=1 ./tests/ui/...
 

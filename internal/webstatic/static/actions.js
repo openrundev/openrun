@@ -27,56 +27,67 @@ function toggleNavDrawer(btn) {
 // allowed (the option list is a helper, same as the old select which the
 // server never validated against). Follows the WAI-ARIA combobox pattern:
 // role=combobox input, aria-expanded, aria-activedescendant, listbox popup.
+//
+// The listeners are delegated from the host element and the inner parts
+// (input, listbox, toggle) are looked up at event time, never cached at
+// connect time: during the initial page parse the element upgrades before
+// its children exist, and after an htmx swap the children are present but
+// not final. htmx 4 "settles" swapped-in elements whose id matches an
+// element being replaced (param_x input, listbox, options): for the settle
+// delay the new element carries the OLD element's attributes, so a
+// param_x input which was a plain text field before Suggest turned it into
+// a dropdown has no role=combobox and the old value when the custom
+// element connects. Caching the parts then left a dead dropdown.
 class SearchableSelect extends HTMLElement {
 	connectedCallback() {
 		// connectedCallback re-fires when htmx swaps move the element;
-		// initialize only once
+		// bind only once
 		if (this.ssInit) {
 			return;
 		}
 		this.ssInit = true;
-		// During the initial page parse the element upgrades at its opening
-		// tag, before its children exist; defer until the document is
-		// parsed. htmx-inserted elements connect with children present
-		if (document.readyState == 'loading') {
-			document.addEventListener('DOMContentLoaded', () => this.init(), { once: true });
-		} else {
-			this.init();
-		}
-	}
 
-	init() {
-		this.input = this.querySelector('input[role="combobox"]');
-		this.listbox = this.querySelector('ul[role="listbox"]');
-		this.toggle = this.querySelector('button');
-		if (!this.input || !this.listbox) {
-			return;
-		}
-		// Strict mode (the default, set server side unless the param has the
-		// COMBO display type): the value must be one of the options. Typing
-		// still filters; text that matches no option reverts on blur/Enter.
-		// The server also rejects non-option values for static option lists
-		this.strict = this.hasAttribute('data-strict');
-		this.lastValid = this.input.value;
-
-		this.input.addEventListener('click', () => this.open(false));
-		this.input.addEventListener('input', () => this.open(true));
-		this.input.addEventListener('keydown', (event) => this.onKey(event));
-		if (this.toggle) {
-			this.toggle.addEventListener('click', () => {
+		this.addEventListener('click', (event) => {
+			const input = this.input;
+			const toggle = this.toggle;
+			if (input && event.target == input) {
+				this.open(false);
+			} else if (toggle && toggle.contains(event.target)) {
 				if (this.listbox.hidden) {
-					this.input.focus();
+					input.focus();
 					this.open(false);
 				} else {
 					this.close();
 				}
-			});
-		}
-		this.listbox.addEventListener('mousedown', (event) => {
+			}
+		});
+		this.addEventListener('input', (event) => {
+			if (event.target == this.input) {
+				this.open(true);
+			}
+		});
+		this.addEventListener('keydown', (event) => {
+			if (event.target == this.input) {
+				this.onKey(event);
+			}
+		});
+		// Strict mode (the default, set server side unless the param has the
+		// COMBO display type): the value must be one of the options. Typing
+		// still filters; text that matches no option reverts on blur/Enter to
+		// the last valid value, captured when the user starts editing (the
+		// server rendered value is valid by construction; reading it at
+		// connect time would see the settle-window value, see above).
+		// The server also rejects non-option values for static option lists
+		this.addEventListener('focusin', (event) => {
+			if (event.target == this.input && this.lastValid === undefined) {
+				this.lastValid = this.input.value;
+			}
+		});
+		this.addEventListener('mousedown', (event) => {
 			// mousedown, not click: the input's blur would close the
 			// listbox before a click event is delivered
 			const opt = event.target.closest('li[role="option"]');
-			if (opt) {
+			if (opt && this.listbox && this.listbox.contains(opt)) {
 				event.preventDefault();
 				this.select(opt);
 			}
@@ -89,15 +100,32 @@ class SearchableSelect extends HTMLElement {
 		});
 	}
 
+	get input() {
+		return this.querySelector('input');
+	}
+
+	get listbox() {
+		return this.querySelector('ul');
+	}
+
+	get toggle() {
+		return this.querySelector('button');
+	}
+
+	get strict() {
+		return this.hasAttribute('data-strict');
+	}
+
 	// enforce reverts a strict combobox to the last valid value when the
 	// typed text is not one of the options. A case-insensitive unique match
 	// is normalized to the option's exact value; empty stays empty (cleared,
 	// the handler's own required-param validation reports it)
 	enforce() {
-		if (!this.strict) {
+		const input = this.input;
+		if (!this.strict || !input) {
 			return;
 		}
-		const text = this.input.value;
+		const text = input.value;
 		if (text == '') {
 			this.lastValid = '';
 			return;
@@ -110,21 +138,29 @@ class SearchableSelect extends HTMLElement {
 		const ciMatches = opts.filter(
 			(o) => o.dataset.value.toLowerCase() == text.toLowerCase());
 		if (ciMatches.length == 1) {
-			this.input.value = ciMatches[0].dataset.value;
-			this.lastValid = this.input.value;
+			input.value = ciMatches[0].dataset.value;
+			this.lastValid = input.value;
 			return;
 		}
-		this.input.value = this.lastValid;
+		if (this.lastValid !== undefined) {
+			input.value = this.lastValid;
+		}
 	}
 
 	options() {
-		return [...this.listbox.querySelectorAll('li[role="option"]')];
+		const listbox = this.listbox;
+		return listbox ? [...listbox.querySelectorAll('li[role="option"]')] : [];
 	}
 
 	// open shows the options; when filter is true only the options
 	// containing the typed text (case-insensitive) stay visible
 	open(filter) {
-		const text = filter ? this.input.value.trim().toLowerCase() : '';
+		const input = this.input;
+		const listbox = this.listbox;
+		if (!input || !listbox) {
+			return;
+		}
+		const text = filter ? input.value.trim().toLowerCase() : '';
 		let shown = 0;
 		for (const opt of this.options()) {
 			const match = !text || opt.dataset.value.toLowerCase().includes(text);
@@ -133,10 +169,10 @@ class SearchableSelect extends HTMLElement {
 				shown++;
 			}
 		}
-		this.listbox.hidden = shown == 0;
-		this.input.setAttribute('aria-expanded', shown > 0 ? 'true' : 'false');
+		listbox.hidden = shown == 0;
+		input.setAttribute('aria-expanded', shown > 0 ? 'true' : 'false');
 		let active = this.options().find(
-			(o) => !o.hidden && o.dataset.value == this.input.value) || null;
+			(o) => !o.hidden && o.dataset.value == input.value) || null;
 		if (!active && filter && this.strict) {
 			// Strict mode: pre-activate the first match so typing a prefix
 			// and pressing Enter picks it
@@ -146,8 +182,13 @@ class SearchableSelect extends HTMLElement {
 	}
 
 	close() {
-		this.listbox.hidden = true;
-		this.input.setAttribute('aria-expanded', 'false');
+		const input = this.input;
+		const listbox = this.listbox;
+		if (!input || !listbox) {
+			return;
+		}
+		listbox.hidden = true;
+		input.setAttribute('aria-expanded', 'false');
 		this.setActive(null);
 	}
 
@@ -155,16 +196,18 @@ class SearchableSelect extends HTMLElement {
 		for (const o of this.options()) {
 			o.classList.toggle('ss-active', o == opt);
 		}
+		const input = this.input;
 		if (opt) {
-			this.input.setAttribute('aria-activedescendant', opt.id);
+			input.setAttribute('aria-activedescendant', opt.id);
 			opt.scrollIntoView({ block: 'nearest' });
 		} else {
-			this.input.removeAttribute('aria-activedescendant');
+			input.removeAttribute('aria-activedescendant');
 		}
 	}
 
 	select(opt) {
-		this.input.value = opt.dataset.value;
+		const input = this.input;
+		input.value = opt.dataset.value;
 		this.lastValid = opt.dataset.value;
 		for (const o of this.options()) {
 			if (o.hasAttribute('aria-selected')) {
@@ -173,19 +216,20 @@ class SearchableSelect extends HTMLElement {
 		}
 		opt.setAttribute('aria-selected', 'true');
 		this.close();
-		this.input.dispatchEvent(new Event('change', { bubbles: true }));
-		this.input.focus();
+		input.dispatchEvent(new Event('change', { bubbles: true }));
+		input.focus();
 	}
 
 	onKey(event) {
+		const listbox = this.listbox;
 		const visible = this.options().filter((o) => !o.hidden);
-		const active = this.listbox.querySelector('.ss-active');
+		const active = listbox.querySelector('.ss-active');
 		const idx = visible.indexOf(active);
 		switch (event.key) {
 			case 'ArrowDown':
 			case 'ArrowUp': {
 				event.preventDefault();
-				if (this.listbox.hidden) {
+				if (listbox.hidden) {
 					this.open(false);
 					return;
 				}
@@ -197,10 +241,10 @@ class SearchableSelect extends HTMLElement {
 			case 'Enter':
 				// Only intercept while the listbox is open; otherwise Enter
 				// submits the form as usual (after strict enforcement)
-				if (!this.listbox.hidden && active) {
+				if (!listbox.hidden && active) {
 					event.preventDefault();
 					this.select(active);
-				} else if (!this.listbox.hidden) {
+				} else if (!listbox.hidden) {
 					this.close();
 					this.enforce();
 				} else {
@@ -208,7 +252,7 @@ class SearchableSelect extends HTMLElement {
 				}
 				break;
 			case 'Escape':
-				if (!this.listbox.hidden) {
+				if (!listbox.hidden) {
 					event.stopPropagation(); // keep the nav drawer open
 					this.close();
 				}

@@ -1016,6 +1016,12 @@ func (a *Action) getForm(w http.ResponseWriter, r *http.Request) {
 			param.Options = options[p.Name]
 			param.Strict = p.DisplayType != apptype.DisplayTypeCombo
 			param.Value = value
+			if param.Strict && len(param.Options) > 0 && !slices.Contains(param.Options, value) {
+				// A strict dropdown cannot submit a value outside the list
+				// (invoke rejects it): a configured default or query value
+				// which is not one of the options starts on the first option
+				param.Value = param.Options[0]
+			}
 		}
 
 		if p.DisplayType != "" {

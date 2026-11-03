@@ -614,8 +614,12 @@ app = ace.app("testApp",
 		`,
 		"params.star": `param("param1", description="strict dropdown", type=STRING, default="a")
 param("options_param1", description="param1 options", type=LIST, default=["a", "b", "c"])
-param("param2", description="free text dropdown", type=STRING, default="a", display_type=COMBO)
-param("options_param2", description="param2 options", type=LIST, default=["a", "b", "c"])`,
+param("param2", description="free text dropdown", type=STRING, default="free", display_type=COMBO)
+param("options_param2", description="param2 options", type=LIST, default=["a", "b", "c"])
+param("param3", description="strict dropdown, default outside the list", type=STRING, default="zzz")
+param("options_param3", description="param3 options", type=LIST, default=["x", "y"])
+param("param4", description="strict dropdown, empty default", type=STRING, default="")
+param("options_param4", description="param4 options", type=LIST, default=["p", "q"])`,
 	}
 	a, _, err := CreateTestApp(logger, fileData)
 	if err != nil {
@@ -630,6 +634,36 @@ param("options_param2", description="param2 options", type=LIST, default=["a", "
 	bodyStripped := strings.Join(strings.Fields(response.Body.String()), " ")
 	testutil.AssertStringContains(t, bodyStripped, `<searchable-select class="block relative" data-strict> <input id="param_param1"`)
 	testutil.AssertStringContains(t, bodyStripped, `<searchable-select class="block relative" > <input id="param_param2"`)
+
+	// A strict dropdown whose configured value is not one of the options
+	// starts on the first option (a value outside the list could not be
+	// submitted); a COMBO param keeps its free text default
+	inputValue := func(body, name string) string {
+		marker := `id="param_` + name + `" name="` + name + `" type="text" class="input w-full pr-9" role="combobox"`
+		at := strings.Index(body, marker)
+		if at < 0 {
+			t.Fatalf("input %s not found in the form", name)
+		}
+		rest := body[at:]
+		rest = rest[strings.Index(rest, `value="`)+len(`value="`):]
+		return rest[:strings.Index(rest, `"`)]
+	}
+	testutil.AssertEqualsString(t, "param1 value in the list", "a", inputValue(bodyStripped, "param1"))
+	testutil.AssertEqualsString(t, "param2 combo free text default", "free", inputValue(bodyStripped, "param2"))
+	testutil.AssertEqualsString(t, "param3 default outside the list", "x", inputValue(bodyStripped, "param3"))
+	testutil.AssertEqualsString(t, "param4 empty default", "p", inputValue(bodyStripped, "param4"))
+	testutil.AssertStringContains(t, bodyStripped, `<li id="param_param3_opt_0" role="option" data-value="x" aria-selected="true"`)
+
+	// The same for a query string value (the action switcher carries the
+	// values of the previous action)
+	request = httptest.NewRequest("GET", "/test/?param1=nope&param2=typed&param3=y", nil)
+	response = httptest.NewRecorder()
+	a.ServeHTTP(response, request)
+	testutil.AssertEqualsInt(t, "code", 200, response.Code)
+	bodyStripped = strings.Join(strings.Fields(response.Body.String()), " ")
+	testutil.AssertEqualsString(t, "param1 query value outside the list", "a", inputValue(bodyStripped, "param1"))
+	testutil.AssertEqualsString(t, "param2 combo query value", "typed", inputValue(bodyStripped, "param2"))
+	testutil.AssertEqualsString(t, "param3 query value in the list", "y", inputValue(bodyStripped, "param3"))
 
 	postForm := func(param1, param2 string) *httptest.ResponseRecorder {
 		values := url.Values{"param1": {param1}, "param2": {param2}}
