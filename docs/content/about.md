@@ -115,22 +115,7 @@ Yes. OpenRun is Apache-2.0 licensed, developed at [github.com/openrundev/openrun
 
 ## Current Status
 
-The current status is:
-
-- Client and server in a single binary, for service management and configuration.
-- Application development with Starlark based configuration.
-- Container management with Docker, Podman or Kubernetes.
-- Auto-idling of containers to reduce resource usage.
-- Go HTML template loading and caching for request processing.
-- HTTP plugin for calling REST endpoints and an exec plugin for running system commands.
-- Built-in admin account for local development.
-- Auto-sync (file system watcher) and auto-reload using SSE to speed up the application development cycle.
-- Admin functionality over unix domain sockets for security.
-- Application sandboxing checks so that only audited operations are allowed.
-- Staged deployments and preview app creation.
-- App data persistence to SQLite with managed tables.
-- Sidecar containers, scheduled jobs and before-deploy hooks for container apps.
-- Apps and actions served as MCP tools, with a remote CLI and management API protected by OAuth 2.1.
+OpenRun is currently used by multiple customers in production. A 1.x release is planned for Nov 2026 - no breaking changes are expected for the 1.x release.
 
 ## Who is behind this project?
 
