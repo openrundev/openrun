@@ -269,6 +269,13 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 	l := types.NewLogger(&config.Log)
 	l.Info().Str("version", types.GetVersion()).Str("commit", types.GetCommit()).Msg("Initializing server")
 
+	// A config loaded from toml is already normalized; one built or edited
+	// in Go by an embedder (pkg/api) is not, and the origin settings are
+	// concatenated with paths downstream
+	if err := system.NormalizeServerConfig(config); err != nil {
+		return nil, err
+	}
+
 	// Validate the [api] section up front: surface names, override op names
 	// and the transport prerequisites for enabled remote surfaces. The same
 	// validation runs on every dynamic config update, since the [api]

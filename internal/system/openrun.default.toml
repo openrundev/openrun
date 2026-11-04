@@ -88,8 +88,10 @@ disable_client_certs = true                    # disable client certs for HTTPS
                                  # enforcement and HTTPS (or a trusted TLS-terminating proxy listed in
                                  # security.trusted_proxies).
 external_url = ""                # canonical https origin for API token resource URIs and the OAuth
-                                 # issuer of MCP apps; defaults to security.callback_url, else to the
-                                 # HTTPS listener on the default domain (https://<default_domain>:<https port>)
+                                 # issuer of MCP apps. Public origin lookup order: api.external_url, then
+                                 # security.callback_url, then the HTTPS listener on the default domain
+                                 # (https://<default_domain>:<https port>). Set it when the issuer must
+                                 # differ from the SSO callback origin
 
 access_token_ttl = "1h"          # OAuth access token lifetime
 refresh_token_ttl = "720h"       # OAuth refresh token lifetime per rotation (30d)
@@ -143,6 +145,10 @@ login_start_rate_limit = 60      # login handshakes (form login, OAuth/OIDC, SAM
 login_failure_rate_limit = 100   # failed password checks (admin password or builtin user, over HTTP Basic, the login
                                  # form and the OAuth authorization server) a client IP may incur per minute before
                                  # further password checks from that IP are refused; 0 disables the limit
+callback_url = ""                # https origin the OAuth/OIDC/SAML providers call back to (<callback_url>/_openrun/auth/...,
+                                 # /_openrun/sso/...), also used for webhook urls. Required when any [auth.*] or [saml.*]
+                                 # entry is set. Public origin lookup order: api.external_url, then security.callback_url,
+                                 # then the HTTPS listener on the default domain (https://<default_domain>:<https port>)
 auth_callback_domain = "auth."   # domain serving the system/builtin login page and the OAuth login/consent pages
                                  # of the remote API (CLI/MCP clients); no apps can be created on it.
                                  # A trailing "." is a prefix combined with default_domain (auth.<default_domain>);

@@ -363,7 +363,12 @@ func usesFormLogin(authType string) bool {
 // served or created there) even while the form is off, so a config-propagation
 // race between nodes cannot expose an app on the auth origin
 func (s *FormLoginManager) reservedAuthDomain() (string, bool) {
-	cfg := s.getConfig()
+	return resolveAuthCallbackDomain(s.getConfig())
+}
+
+// resolveAuthCallbackDomain is reservedAuthDomain on a config value, for
+// callers without a manager (the server_info api status)
+func resolveAuthCallbackDomain(cfg *types.ServerConfig) (string, bool) {
 	domain := strings.TrimSpace(cfg.Security.AuthCallbackDomain)
 	if domain == "" {
 		return "", false

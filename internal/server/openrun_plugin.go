@@ -1596,13 +1596,16 @@ func (s *Server) apiStatus() types.ApiStatus {
 		}
 		logins = append(logins, auth)
 	}
+	authDomain, _ := resolveAuthCallbackDomain(config)
 	return types.ApiStatus{
-		ExternalUrl:    external,
-		HttpsListener:  config.Https.Port != -1,
-		TrustedProxies: len(config.Security.TrustedProxies) > 0,
-		RBACEnforced:   !config.Security.UnsafeDisableRBAC,
-		AppDefaultAuth: config.Security.AppDefaultAuthType,
-		Logins:         logins,
+		ExternalUrl:        external,
+		CallbackUrl:        config.Security.CallbackUrl,
+		AuthCallbackDomain: authDomain,
+		HttpsListener:      config.Https.Port != -1,
+		TrustedProxies:     len(config.Security.TrustedProxies) > 0,
+		RBACEnforced:       !config.Security.UnsafeDisableRBAC,
+		AppDefaultAuth:     config.Security.AppDefaultAuthType,
+		Logins:             logins,
 		MCP: types.ApiSurfaceStatus{
 			Enabled: config.Api.MCP.Enable,
 			Auth:    nonNil(config.Api.MCP.Auth),

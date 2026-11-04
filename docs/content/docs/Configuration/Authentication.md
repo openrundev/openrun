@@ -243,6 +243,10 @@ callback_url = "https://example.com:25223"
 
 in the `openrun.toml`. This does not have to be the same domain as used for the apps being authenticated.
 
+The console's Authentication page shows whether the callback URL is set and, for each provider entry, the exact URLs to register at the identity provider.
+
+The same value is the server's public origin for the other features that need one. The lookup order is always `api.external_url`, then `security.callback_url`, then the HTTPS listener on the default domain (`https://<system.default_domain>:<https.port>`). The OAuth/OIDC/SAML providers and the webhook URLs use `callback_url` directly; the OAuth issuer for the [remote API]({{< ref "remoteaccess" >}}) and [MCP apps]({{< ref "docs/applications/mcp" >}}) follows the full order, so a server with only `callback_url` set uses it as the issuer too.
+
 ## OAuth Authentication
 
 OAuth based authentication is supported for these providers: `github`, `google`, `digitalocean`, `bitbucket`, `amazon`, `azuread`, `microsoftonline`, `gitlab`, `auth0`, `okta` and `oidc`.

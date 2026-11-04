@@ -63,6 +63,27 @@ func TestApiStatus(t *testing.T) {
 	if status.AppMCP.Url != "https://localhost:25223/_openrun/app_mcp" || !status.AppMCP.Enabled || status.AppMCP.Served || status.RBACEnforced {
 		t.Fatalf("app_mcp status with rbac disabled = %+v (rbac %v)", status.AppMCP, status.RBACEnforced)
 	}
+
+	// The SSO callback origin and the resolved auth callback domain, for
+	// the console's Authentication page: the callback url as configured
+	// (normalized at load), the auth domain from the "auth." prefix and
+	// the default domain. Unset callback, unresolvable auth domain: empty
+	config.Security.AuthCallbackDomain = "auth."
+	status = server.apiStatus()
+	if status.CallbackUrl != "" || status.AuthCallbackDomain != "auth.localhost" {
+		t.Fatalf("callback status = %q auth domain %q", status.CallbackUrl, status.AuthCallbackDomain)
+	}
+	config.Security.CallbackUrl = "https://cb.example.com:25223"
+	config.Security.AuthCallbackDomain = "login.example.com"
+	status = server.apiStatus()
+	if status.CallbackUrl != "https://cb.example.com:25223" || status.AuthCallbackDomain != "login.example.com" {
+		t.Fatalf("callback status = %q auth domain %q", status.CallbackUrl, status.AuthCallbackDomain)
+	}
+	config.Security.AuthCallbackDomain = "auth."
+	config.System.DefaultDomain = ""
+	if status = server.apiStatus(); status.AuthCallbackDomain != "" {
+		t.Fatalf("auth domain with no default domain = %q", status.AuthCallbackDomain)
+	}
 }
 
 // mcpValuesTestApp creates an app from an app.star source (with the actions

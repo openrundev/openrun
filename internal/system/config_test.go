@@ -167,3 +167,35 @@ tailwindcss_command = "tailwindcss"
 	testutil.AssertNoError(t, err)
 	testutil.AssertEqualsInt(t, "tailwind version", types.TailwindVersionDefault, config.System.TailwindVersion)
 }
+
+// TestLoadServerConfigTrimsOrigins: the origin settings lose a trailing
+// slash (and surrounding space) at load, so every consumer concatenating
+// /_openrun/... paths onto them gets a single slash
+func TestLoadServerConfigTrimsOrigins(t *testing.T) {
+	var config types.ServerConfig
+	err := LoadServerConfig(`
+[security]
+callback_url = " https://cb.example.com:25223/ "
+[api]
+external_url = "https://api.example.com/"
+`, &config)
+	testutil.AssertNoError(t, err)
+	testutil.AssertEqualsString(t, "callback_url", "https://cb.example.com:25223", config.Security.CallbackUrl)
+	testutil.AssertEqualsString(t, "external_url", "https://api.example.com", config.Api.ExternalUrl)
+}
+
+// TestNormalizeServerConfigProgrammatic: a config built in Go (an embedder
+// using pkg/api.NewServerConfig and then assigning fields) is normalized by
+// server.NewServer through the same function, and a second pass on an
+// already normalized config is a no-op
+func TestNormalizeServerConfigProgrammatic(t *testing.T) {
+	config := &types.ServerConfig{}
+	config.Security.CallbackUrl = "https://sp.example/"
+	config.Api.ExternalUrl = "https://api.example/"
+	testutil.AssertNoError(t, NormalizeServerConfig(config))
+	testutil.AssertEqualsString(t, "callback_url", "https://sp.example", config.Security.CallbackUrl)
+	testutil.AssertEqualsString(t, "external_url", "https://api.example", config.Api.ExternalUrl)
+	testutil.AssertNoError(t, NormalizeServerConfig(config))
+	testutil.AssertEqualsString(t, "callback_url again", "https://sp.example", config.Security.CallbackUrl)
+	testutil.AssertEqualsInt(t, "tailwind default", types.TailwindVersionDefault, config.System.TailwindVersion)
+}

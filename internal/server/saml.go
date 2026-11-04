@@ -248,8 +248,9 @@ func (s *SAMLManager) checkSAMLAuth(w http.ResponseWriter, r *http.Request, appP
 	return appProvider + ":" + userId, groups, nil
 }
 
+// buildSAMLUrl joins an SP endpoint path to the callback origin (trailing
+// slash already dropped at config load)
 func buildSAMLUrl(baseUrl, providerName, endpoint string) string {
-	baseUrl = strings.TrimSuffix(baseUrl, "/")
 	return baseUrl + path.Join(types.INTERNAL_URL_PREFIX, "sso", providerName, endpoint)
 }
 

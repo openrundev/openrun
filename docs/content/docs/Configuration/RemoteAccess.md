@@ -51,7 +51,7 @@ The [console]({{< ref "/console-tour" >}}) manages the same settings:
 The server refuses to start with a surface enabled unless all of these hold:
 
 - **An HTTPS listener** (on by default, port 25223), or `security.trusted_proxies` for a TLS-terminating proxy.
-- **A canonical https origin in `api.external_url`.** It defaults to `security.callback_url` when that is set, and otherwise to the HTTPS listener on the default app domain (`https://<system.default_domain>:<https.port>`, logged at startup). This value backs the OAuth metadata and token bindings: treat it as stable, changing it invalidates outstanding tokens. Set it explicitly whenever clients reach the server by a name other than the default domain.
+- **A canonical https origin.** The lookup order is always `api.external_url`, then `security.callback_url`, then the HTTPS listener on the default domain (`https://<system.default_domain>:<https.port>`); the resolved value is logged at startup. A server with `callback_url` set for SSO needs nothing more, see [Callback Url]({{< ref "authentication/#callback-url" >}}). This value backs the OAuth metadata and token bindings: treat it as stable, changing it invalidates outstanding tokens. Set it explicitly whenever clients reach the server by a name other than the default domain.
 - **An auth callback domain for the OAuth login and consent pages.** The browser login and consent pages of the OAuth flow are served on the [auth callback domain]({{< ref "authentication/#login-page" >}}) (`security.auth_callback_domain`, default `auth.<system.default_domain>`, on the issuer's port), never on a domain that serves apps, so no app's JavaScript is ever same-origin with the consent step. The metadata names that endpoint and clients follow it; the domain must resolve to the server and gets a certificate like the app domains. With no auth callback domain (`auth_callback_domain = ""`, or the `auth.` prefix with no `default_domain`) the `admin` and `builtin` logins still work on the issuer host, but the `[auth.*]` and `[saml.*]` logins are refused.
 
 ```toml {filename="openrun.toml"}
@@ -296,7 +296,8 @@ disable_apis = []
 
 ```toml {filename="openrun.toml"}
 [api]
-external_url = ""                # canonical https origin; defaults to security.callback_url
+external_url = ""                # canonical https origin; lookup order: api.external_url, then security.callback_url,
+                                 # then the HTTPS listener on the default domain
 access_token_ttl = "1h"          # OAuth access token lifetime
 refresh_token_ttl = "720h"       # OAuth refresh token lifetime per rotation (30d)
 grant_max_ttl = "2160h"          # absolute OAuth grant lifetime (90d)

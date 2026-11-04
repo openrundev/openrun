@@ -643,6 +643,15 @@ type ApiStatus struct {
 	// security.callback_url, else the HTTPS listener on the default
 	// domain); the MCP urls below are built from it. Empty when none applies
 	ExternalUrl string `json:"external_url"`
+	// CallbackUrl is security.callback_url (static config, normalized at load):
+	// the origin the OAuth/OIDC/SAML providers call back to, where the
+	// console derives the per-provider IdP settings from. Empty when unset
+	CallbackUrl string `json:"callback_url"`
+	// AuthCallbackDomain is the resolved security.auth_callback_domain (the
+	// "auth." prefix combined with system.default_domain, or the full
+	// domain): the host of the login page and the OAuth login/consent
+	// pages. Empty when none resolves
+	AuthCallbackDomain string `json:"auth_callback_domain"`
 	// HttpsListener is set when the HTTPS listener is on (https.port is
 	// not -1); TrustedProxies when security.trusted_proxies names a TLS
 	// terminating proxy. An enabled management surface needs one of them
