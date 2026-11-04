@@ -218,7 +218,7 @@ variable "openrun_chart_name" {
 variable "openrun_chart_version" {
   description = "Helm chart version for OpenRun. Leave empty for the latest."
   type        = string
-  default     = "0.20.10"
+  default     = ""
 }
 
 variable "openrun_default_domain" {

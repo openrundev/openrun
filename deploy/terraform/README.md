@@ -54,7 +54,7 @@ Defaults verified against the official registries and AWS `us-west-2` APIs on No
 | Random / TLS / Null providers | 3.9.1 / 4.4.2 / 3.3.2 |
 | Cloud-init / Time providers | 2.4.1 / 0.14.2 |
 | AWS Load Balancer Controller chart / controller | 3.6.2 / v3.6.2 |
-| OpenRun chart / application | 0.20.10 |
+| OpenRun chart / application | latest |
 
 EBS CSI, VPC CNI, CoreDNS, and kube-proxy use `aws_eks_addon_version` to select the latest release compatible with `eks_version` in the deployment region at plan time. Review add-on version changes in each plan. Modules and charts are pinned; provider constraints allow patch updates, with exact packages recorded in `.terraform.lock.hcl`.
 

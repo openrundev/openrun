@@ -7,6 +7,12 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [v0.20.14] - 2026-11-04
+
+- Update to use HTTP health checks for NLB
+
+### Fixed
+
 ## [v0.20.13] - 2026-11-04
 
 ### Fixed

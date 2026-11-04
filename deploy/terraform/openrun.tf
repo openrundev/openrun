@@ -23,9 +23,10 @@ locals {
       "service.beta.kubernetes.io/aws-load-balancer-type"                              = "external"
       "service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled" = "true"
       "service.beta.kubernetes.io/aws-load-balancer-subnets"                           = join(",", module.network.public_subnets)
-      "service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol"              = "HTTPS"
-      "service.beta.kubernetes.io/aws-load-balancer-healthcheck-path"                  = "/_openrun/health"
-      "service.beta.kubernetes.io/aws-load-balancer-healthcheck-port"                  = "443"
+      # NLB probes use an IP-based host, which cannot pass OpenRun's domain-based TLS checks.
+      "service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol" = "HTTP"
+      "service.beta.kubernetes.io/aws-load-balancer-healthcheck-path"     = "/_openrun/health"
+      "service.beta.kubernetes.io/aws-load-balancer-healthcheck-port"     = "80"
     },
     var.openrun_enable_nlb_eips ? {
       "service.beta.kubernetes.io/aws-load-balancer-eip-allocations" = join(",", local.openrun_eip_ids)
