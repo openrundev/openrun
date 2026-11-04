@@ -4,27 +4,35 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 6.52.0"
+      version = "~> 6.71.0"
     }
     kubernetes = {
       source  = "hashicorp/kubernetes"
-      version = "~> 3.0.1"
+      version = "~> 3.4.0"
     }
     helm = {
       source  = "hashicorp/helm"
-      version = "~> 3.1.1"
+      version = "~> 3.3.0"
     }
     random = {
       source  = "hashicorp/random"
-      version = "~> 3.8.0"
+      version = "~> 3.9.1"
     }
     tls = {
       source  = "hashicorp/tls"
-      version = "~> 4.1.0"
+      version = "~> 4.4.2"
+    }
+    cloudinit = {
+      source  = "hashicorp/cloudinit"
+      version = "~> 2.4.1"
+    }
+    time = {
+      source  = "hashicorp/time"
+      version = "~> 0.14.2"
     }
     null = {
       source  = "hashicorp/null"
-      version = "~> 3.2.3"
+      version = "~> 3.3.2"
     }
   }
 }

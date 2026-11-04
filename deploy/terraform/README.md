@@ -10,7 +10,7 @@ This Terraform configuration provisions a production-ready AWS footprint for Ope
 
 ## Prerequisites
 
-- Terraform >= 1.5
+- Terraform >= 1.14.3 (latest stable CLI: 1.17.1)
 - AWS credentials in your environment (e.g. `aws configure`)
 - Network access to the EKS public endpoint from the machine running Terraform
 
@@ -24,7 +24,8 @@ name_prefix                = "openrun"
 openrun_default_domain     = "apps.example.com"
 openrun_lets_encrypt_email = "admin@example.com"
 openrun_enable_nlb_eips    = true
-rds_engine_version         = "17.6"
+eks_version                = "1.37"
+rds_engine_version         = "18.6"
 
 # Required: allow your IP(s) to reach the EKS API endpoint
 # Example: ["203.0.113.10/32"]
@@ -37,6 +38,29 @@ eks_public_access_cidrs = ["REPLACE_WITH_YOUR_PUBLIC_IP/32"]
 terraform init
 terraform apply
 ```
+
+## Dependency versions
+
+Defaults verified against the official registries and AWS `us-west-2` APIs on November 3, 2026:
+
+| Component | Version |
+| --- | --- |
+| EKS Kubernetes | 1.37 |
+| RDS PostgreSQL | 18.6 |
+| EKS Terraform module | 21.29.0 |
+| VPC Terraform module | 6.7.3 |
+| AWS provider | 6.71.0 |
+| Kubernetes / Helm providers | 3.4.0 / 3.3.0 |
+| Random / TLS / Null providers | 3.9.1 / 4.4.2 / 3.3.2 |
+| Cloud-init / Time providers | 2.4.1 / 0.14.2 |
+| AWS Load Balancer Controller chart / controller | 3.6.2 / v3.6.2 |
+| OpenRun chart / application | 0.20.10 |
+
+EBS CSI, VPC CNI, CoreDNS, and kube-proxy use `aws_eks_addon_version` to select the latest release compatible with `eks_version` in the deployment region at plan time. Review add-on version changes in each plan. Modules and charts are pinned; provider constraints allow patch updates, with exact packages recorded in `.terraform.lock.hcl`.
+
+The controller IAM policy is vendored from [the v3.6.2 release](https://github.com/kubernetes-sigs/aws-load-balancer-controller/blob/v3.6.2/docs/install/iam_policy.json). Update it alongside the controller chart. When upgrading an existing controller from before v3.6.0, follow the [upstream CRD upgrade instructions](https://github.com/kubernetes-sigs/aws-load-balancer-controller/releases/tag/v3.6.0); Helm upgrades do not automatically update CRDs.
+
+After pulling these changes, run `terraform init -upgrade` and generate a new plan. Existing `terraform.tfvars` values override these defaults. For an existing EKS cluster, upgrade one Kubernetes minor version at a time using `eks_version`; the 1.37 default is suitable for a fresh cluster. For an existing PostgreSQL database, review the major-version upgrade path and set `rds_allow_major_version_upgrade = true` explicitly before applying a major upgrade. The parameter group is created before the previous group is removed. PostgreSQL 18.6 was verified as orderable with `db.m6g.large` and Multi-AZ in `us-west-2`; verify availability when deploying in another region.
 
 ## Layout and components
 

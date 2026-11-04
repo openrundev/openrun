@@ -46,7 +46,7 @@ variable "enable_vpc_endpoints" {
 variable "eks_version" {
   description = "EKS Kubernetes version."
   type        = string
-  default     = "1.34"
+  default     = "1.37"
 }
 
 variable "eks_enable_cluster_creator_admin_permissions" {
@@ -68,7 +68,7 @@ variable "eks_public_access_cidrs" {
 variable "aws_load_balancer_controller_chart_version" {
   description = "AWS Load Balancer Controller chart version (empty for latest)."
   type        = string
-  default     = ""
+  default     = "3.6.2"
 }
 
 variable "node_instance_types" {
@@ -108,9 +108,15 @@ variable "rds_username" {
 }
 
 variable "rds_engine_version" {
-  description = "Postgres engine version for RDS (e.g., 17.6). Leave empty to use AWS default."
+  description = "Postgres engine version for RDS. Leave empty to use the AWS default instead of the pinned release."
   type        = string
-  default     = ""
+  default     = "18.6"
+}
+
+variable "rds_allow_major_version_upgrade" {
+  description = "Allow an existing RDS instance to upgrade to a new PostgreSQL major version during apply."
+  type        = bool
+  default     = false
 }
 
 variable "rds_instance_class" {
@@ -212,7 +218,7 @@ variable "openrun_chart_name" {
 variable "openrun_chart_version" {
   description = "Helm chart version for OpenRun. Leave empty for the latest."
   type        = string
-  default     = ""
+  default     = "0.20.10"
 }
 
 variable "openrun_default_domain" {

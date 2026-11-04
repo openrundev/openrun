@@ -21,6 +21,9 @@
 /deploy/terraform/terraform.tfstate*
 /deploy/terraform/*.plan
 /deploy/terraform/*.plan.backup
+/deploy/terraform/tfplan
+/deploy/terraform/*.tfplan
+/deploy/terraform/.terraform.tfstate.lock.info
 /docs/public/
 /docs/.hugo_build.lock
 /docs/designs/

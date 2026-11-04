@@ -47,6 +47,10 @@ resource "aws_db_parameter_group" "rds" {
   family      = data.aws_rds_engine_version.postgres.parameter_group_family
   tags        = local.tags
 
+  lifecycle {
+    create_before_destroy = true
+  }
+
   parameter {
     name         = "rds.force_ssl"
     value        = var.rds_force_ssl ? "1" : "0"
@@ -73,11 +77,12 @@ resource "aws_db_instance" "rds" {
   db_subnet_group_name   = aws_db_subnet_group.rds.name
   parameter_group_name   = aws_db_parameter_group.rds.name
 
-  backup_retention_period    = var.rds_backup_retention_days
-  deletion_protection        = var.rds_deletion_protection
-  multi_az                   = var.rds_multi_az
-  publicly_accessible        = false
-  auto_minor_version_upgrade = true
+  backup_retention_period     = var.rds_backup_retention_days
+  deletion_protection         = var.rds_deletion_protection
+  multi_az                    = var.rds_multi_az
+  publicly_accessible         = false
+  auto_minor_version_upgrade  = true
+  allow_major_version_upgrade = var.rds_allow_major_version_upgrade
 
   apply_immediately         = false
   skip_final_snapshot       = var.rds_skip_final_snapshot
