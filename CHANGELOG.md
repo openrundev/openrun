@@ -7,6 +7,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [v0.20.13] - 2026-11-04
+
 ### Fixed
 
 - On Kubernetes, an app instance whose Deployment was scaled to zero outside it (another OpenRun replica's idle shutdown, a request that reused the workload just before this server's own idle stop landed, or a manual `kubectl scale`) no longer keeps proxying to it with 502 errors until the next deploy. A refused connection to a scaled-down workload now returns 503 with `Retry-After: 1` and closes the instance, so the retried request restarts the app. The background health check catches the case when no request does. A workload that is unhealthy or mid-rollout keeps its replicas and is left to Kubernetes readiness, as before.
