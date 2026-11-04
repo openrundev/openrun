@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -170,6 +171,66 @@ func TestKubernetesCMImageExistsRequiresRegistryURL(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "registry url is required") {
 		t.Fatalf("error = %q, expected missing registry message", err)
+	}
+}
+
+func TestKubernetesCMImageExistsRegistryProject(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		project string
+		repo    string
+	}{
+		{name: "with project", project: "openrun-apps", repo: "openrun-apps/sample"},
+		{name: "without project", repo: "sample"},
+		{name: "nested project", project: "team/openrun-apps", repo: "team/openrun-apps/sample"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// The image is stored at the same repository used when building and
+			// deploying it. A lookup that omits the project must return 404.
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/v2/":
+					w.WriteHeader(http.StatusOK)
+				case "/v2/" + tc.repo + "/manifests/present":
+					w.Header().Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
+					w.Header().Set("Content-Length", "123")
+					w.Header().Set("Docker-Content-Digest", "sha256:"+strings.Repeat("a", 64))
+					w.WriteHeader(http.StatusOK)
+				case "/v2/" + tc.repo + "/manifests/forbidden":
+					w.WriteHeader(http.StatusForbidden)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			t.Cleanup(server.Close)
+			k := &KubernetesCM{
+				Logger: newTestLogger(),
+				config: &types.ServerConfig{Registry: types.RegistryConfig{
+					URL:      strings.TrimPrefix(server.URL, "http://"),
+					Project:  tc.project,
+					Insecure: true,
+				}},
+			}
+			for _, image := range []struct {
+				tag     string
+				exists  bool
+				wantErr bool
+			}{
+				{tag: "present", exists: true},
+				{tag: "missing"},
+				{tag: "forbidden", wantErr: true},
+			} {
+				t.Run(image.tag, func(t *testing.T) {
+					exists, err := k.ImageExists(context.Background(), ImageName("sample:"+image.tag))
+					if (err != nil) != image.wantErr {
+						t.Fatalf("ImageExists error = %v, want error = %t", err, image.wantErr)
+					}
+					if exists != image.exists {
+						t.Fatalf("ImageExists = %t, want %t", exists, image.exists)
+					}
+				})
+			}
+		})
 	}
 }
 

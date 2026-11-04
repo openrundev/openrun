@@ -355,7 +355,10 @@ func (k *KubernetesCM) ImageExists(ctx context.Context, name ImageName) (bool, e
 	if k.config.Registry.URL == "" {
 		return false, fmt.Errorf("registry url is required for kubernetes container manager")
 	}
-	return ImageExists(ctx, k.Logger, string(name), &k.config.Registry)
+	// Look up the same project-qualified reference used by BuildImage and
+	// RunContainer, so an idle app reuses its existing image.
+	result, err := CheckImageReferenceExists(ctx, k.Logger, k.registryRef(string(name)), &k.config.Registry)
+	return result.Exists, err
 }
 
 func (k *KubernetesCM) RefreshImage(ctx context.Context, name ImageName) (string, error) {
