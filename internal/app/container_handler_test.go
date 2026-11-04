@@ -8,13 +8,17 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -364,6 +368,13 @@ type healthTestManager struct {
 	deployReq          *container.DeployRequest
 	runSourceDir       string
 	stopContainerCalls int
+	scaledDown         bool
+	scaledDownCalls    atomic.Int32
+}
+
+func (m *healthTestManager) ContainerScaledDown(context.Context, container.ContainerName) (bool, error) {
+	m.scaledDownCalls.Add(1)
+	return m.scaledDown, nil
 }
 
 func (m *healthTestManager) BuildImage(context.Context, container.ImageName, string, string, map[string]string) error {
@@ -2107,4 +2118,283 @@ func TestSwapStateFollowsTheDeployGate(t *testing.T) {
 	if swapping, epoch := h.swapState(); swapping || epoch == epoch0 {
 		t.Fatalf("after end: swapping=%v epoch=%d, want idle with the epoch moved on", swapping, epoch)
 	}
+}
+
+// newScaledDownTestHandler is a running in-place (Kubernetes) handler whose
+// health probe fails at once: the container is reported not running and the
+// single attempt leaves no retry
+func newScaledDownTestHandler(manager *healthTestManager, notifyClose chan *App) *ContainerHandler {
+	app := &App{
+		Logger:      types.NewLogger(&types.LogConfig{Level: "WARN"}),
+		AppEntry:    &types.AppEntry{Id: types.AppId(types.ID_PREFIX_APP_PROD + "scaled_down_test"), Path: "/scaled-down"},
+		notifyClose: notifyClose,
+	}
+	return &ContainerHandler{
+		Logger:                types.NewLogger(&types.LogConfig{Level: "WARN"}),
+		app:                   app,
+		manager:               manager,
+		containerConfig:       types.Container{StatusHealthAttempts: 1, HealthTimeoutSecs: 1},
+		currentState:          ContainerStateRunning,
+		activeContainerName:   "scaled-down-container",
+		activeVersionHash:     "v1",
+		healthCheckTicker:     time.NewTicker(10 * time.Millisecond),
+		healthCheckStartDelay: time.Nanosecond,
+		closeCh:               make(chan struct{}),
+	}
+}
+
+func TestHealthCheckerClosesAppWhenWorkloadScaledDown(t *testing.T) {
+	t.Parallel()
+
+	notifyClose := make(chan *App)
+	manager := &healthTestManager{supportsInPlace: true, scaledDown: true}
+	h := newScaledDownTestHandler(manager, notifyClose)
+	defer h.Close() //nolint:errcheck
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		h.healthChecker(context.Background())
+	}()
+
+	select {
+	case instance := <-notifyClose:
+		if instance != h.app {
+			t.Fatalf("notifyClose for %s, want this instance", instance.AppPathDomain())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("health checker did not close the app after its workload was scaled to zero")
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("health checker did not exit after closing the app")
+	}
+	h.stateLock.RLock()
+	state := h.currentState
+	h.stateLock.RUnlock()
+	if state == ContainerStateRunning {
+		t.Fatal("handler still reports the scaled down container as running")
+	}
+	if manager.stopContainerCalls != 0 {
+		t.Fatalf("StopContainer called %d times, want 0: the workload is already stopped", manager.stopContainerCalls)
+	}
+}
+
+func TestHealthCheckerLeavesUnhealthyInPlaceWorkloadRunning(t *testing.T) {
+	t.Parallel()
+
+	// An unhealthy (or mid-rollout) workload keeps its replicas: readiness
+	// controls its traffic and the instance must stay
+	notifyClose := make(chan *App)
+	manager := &healthTestManager{supportsInPlace: true, scaledDown: false}
+	h := newScaledDownTestHandler(manager, notifyClose)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		h.healthChecker(context.Background())
+	}()
+
+	deadline := time.After(5 * time.Second)
+	for manager.scaledDownCalls.Load() < 3 {
+		select {
+		case instance := <-notifyClose:
+			t.Fatalf("health checker closed %s although its workload was not scaled down", instance.AppPathDomain())
+		case <-deadline:
+			t.Fatal("health checker did not check the workload scale")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	h.Close() //nolint:errcheck
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("health checker did not exit after the handler was closed")
+	}
+	h.stateLock.RLock()
+	state := h.currentState
+	h.stateLock.RUnlock()
+	if state != ContainerStateRunning {
+		t.Fatalf("state = %s, want %s", state, ContainerStateRunning)
+	}
+}
+
+func TestSendNotifyCloseSkipsClosedHandler(t *testing.T) {
+	t.Parallel()
+
+	// A closed handler's instance is already gone (possibly replaced): a
+	// send would close the replacement, even with the server receiving
+	notifyClose := make(chan *App, 1)
+	h := newScaledDownTestHandler(&healthTestManager{}, notifyClose)
+	h.Close() //nolint:errcheck
+	h.sendNotifyClose()
+	select {
+	case instance := <-notifyClose:
+		t.Fatalf("closed handler sent notifyClose for %s", instance.AppPathDomain())
+	default:
+	}
+}
+
+// refusedProxy is a reverse proxy to an address nothing listens on, with the
+// container proxy error handler for h
+func refusedProxy(t *testing.T, h *ContainerHandler) *httputil.ReverseProxy {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := listener.Addr().String()
+	_ = listener.Close() // connections to addr are now refused
+	proxy := httputil.NewSingleHostReverseProxy(&url.URL{Scheme: "http", Host: addr})
+	proxy.ErrorHandler = containerProxyErrorHandler(h.Logger, h)
+	return proxy
+}
+
+func TestContainerProxyErrorHandlerScaledDown(t *testing.T) {
+	t.Parallel()
+
+	notifyClose := make(chan *App, 1)
+	h := newScaledDownTestHandler(&healthTestManager{supportsInPlace: true, scaledDown: true}, notifyClose)
+	proxy := refusedProxy(t, h)
+
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/scaled-down/", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+	if got := rec.Header().Get("Retry-After"); got != "1" {
+		t.Fatalf("Retry-After = %q, want 1", got)
+	}
+	select {
+	case instance := <-notifyClose:
+		if instance != h.app {
+			t.Fatalf("notifyClose for %s, want this instance", instance.AppPathDomain())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the scaled down instance was not closed")
+	}
+
+	// Requests already past the instance lookup keep getting the 503 (the
+	// workload is still at zero), and the instance is closed only once
+	rec = httptest.NewRecorder()
+	proxy.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/scaled-down/", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("second status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+	select {
+	case instance := <-notifyClose:
+		t.Fatalf("instance closed a second time for %s", instance.AppPathDomain())
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestContainerProxyErrorHandlerNotScaledDown(t *testing.T) {
+	t.Parallel()
+
+	// A refused connection to a workload with replicas (crashed, mid
+	// rollout) is a plain 502: readiness handles it, the instance stays
+	notifyClose := make(chan *App, 1)
+	manager := &healthTestManager{supportsInPlace: true, scaledDown: false}
+	h := newScaledDownTestHandler(manager, notifyClose)
+
+	rec := httptest.NewRecorder()
+	refusedProxy(t, h).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/scaled-down/", nil))
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadGateway)
+	}
+	if rec.Header().Get("Retry-After") != "" {
+		t.Fatal("Retry-After set on a plain proxy failure")
+	}
+	if manager.scaledDownCalls.Load() != 1 {
+		t.Fatalf("scale checks = %d, want 1", manager.scaledDownCalls.Load())
+	}
+	h.stateLock.RLock()
+	state := h.currentState
+	h.stateLock.RUnlock()
+	if state != ContainerStateRunning {
+		t.Fatalf("state = %s, want %s", state, ContainerStateRunning)
+	}
+	select {
+	case instance := <-notifyClose:
+		t.Fatalf("instance closed for %s although its workload was not scaled down", instance.AppPathDomain())
+	default:
+	}
+}
+
+func TestIsDialError(t *testing.T) {
+	t.Parallel()
+
+	dialErr := &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}
+	if !isDialError(fmt.Errorf("proxy: %w", dialErr)) {
+		t.Fatal("wrapped dial error not detected")
+	}
+	if isDialError(&net.OpError{Op: "read", Net: "tcp", Err: errors.New("connection reset")}) {
+		t.Fatal("read error reported as a dial error: the request may have reached the app")
+	}
+	if isDialError(context.DeadlineExceeded) {
+		t.Fatal("timeout reported as a dial error")
+	}
+}
+
+// commandLikeManager hides the test manager's optional capabilities, like the
+// Docker/Podman manager, which cannot report a scale to zero
+type commandLikeManager struct{ container.ContainerManager }
+
+func TestContainerProxyErrorHandlerWithoutScaleCheck(t *testing.T) {
+	t.Parallel()
+
+	notifyClose := make(chan *App, 1)
+	inner := &healthTestManager{scaledDown: true}
+	h := newScaledDownTestHandler(inner, notifyClose)
+	h.manager = commandLikeManager{inner}
+
+	rec := httptest.NewRecorder()
+	refusedProxy(t, h).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/scaled-down/", nil))
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadGateway)
+	}
+	if inner.scaledDownCalls.Load() != 0 {
+		t.Fatal("scale check reached through a manager without the capability")
+	}
+	select {
+	case instance := <-notifyClose:
+		t.Fatalf("instance closed for %s", instance.AppPathDomain())
+	default:
+	}
+}
+
+// The reported sequence: an action run pins the app, the server retires it
+// (Close is deferred to the run's end), then a proxy failure on the retired
+// instance finds the workload scaled down. The retired instance must not ask
+// for a close (the server would evict the replacement), and its background
+// checkers must stop at retirement (its idle checker would otherwise stop
+// the container under the replacement)
+func TestRetiredPinnedAppStopsBackgroundAndCloseRequests(t *testing.T) {
+	t.Parallel()
+
+	notifyClose := make(chan *App, 1)
+	h := newScaledDownTestHandler(&healthTestManager{supportsInPlace: true, scaledDown: true}, notifyClose)
+	h.app.containerHandler = h
+
+	release, err := h.app.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.app.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-h.closeCh:
+	default:
+		t.Fatal("the retired pinned app's background checkers are still running")
+	}
+
+	h.proxyDialFailed(context.Background())
+	select {
+	case instance := <-notifyClose:
+		t.Fatalf("retired instance requested a close of %s", instance.AppPathDomain())
+	case <-time.After(100 * time.Millisecond):
+	}
+	release()
 }

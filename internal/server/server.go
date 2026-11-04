@@ -155,7 +155,7 @@ type Server struct {
 	oAuthManager *OAuthManager
 	samlManager  *SAMLManager
 	formLogin    *FormLoginManager
-	notifyClose  chan types.AppPathDomain
+	notifyClose  chan *app.App
 	swapGates    swapGates // request gates of stop-first deploys in progress
 	// secretsManager is swapped when a dynamic config change modifies the
 	// [secret] config; read it through secretsMgr(), never capture the
@@ -413,7 +413,7 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 		}
 	}
 	server.importStaticBuiltinUsers(context.Background())
-	server.notifyClose = make(chan types.AppPathDomain)
+	server.notifyClose = make(chan *app.App)
 
 	csrfMiddleware := http.NewCrossOriginProtection()
 	csrfMiddleware.SetDenyHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1222,9 +1222,12 @@ func setupMetadataLitestream(ctx context.Context, logger *types.Logger, config *
 func (s *Server) handleAppClose() {
 	for {
 		select {
-		case appPathDomain := <-s.notifyClose:
-			s.apps.ClearApps([]types.AppPathDomain{appPathDomain})
-			s.Debug().Str("app", appPathDomain.String()).Msg("App closed")
+		case instance := <-s.notifyClose:
+			if s.apps.ClearAppIfCurrent(instance) {
+				s.Debug().Str("app", instance.AppPathDomain().String()).Msg("App closed")
+			} else {
+				s.Debug().Str("app", instance.AppPathDomain().String()).Msg("Ignoring close request from a retired app instance")
+			}
 		case <-s.stopRequested:
 			s.Debug().Msg("App close handler stopped")
 			return

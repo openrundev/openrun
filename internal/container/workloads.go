@@ -126,16 +126,34 @@ func podToWorkload(pod *core.Pod) WorkloadPod {
 
 // ListWorkloadPods lists the OpenRun managed pods in the apps namespace
 func ListWorkloadPods(ctx context.Context, config *types.ServerConfig) ([]WorkloadPod, error) {
-	return ListWorkloadPodsSelector(ctx, config, LABEL_PREFIX+"app.id")
-}
-
-// ListWorkloadPodsSelector lists namespace pods matching a label selector
-// (e.g. app=kaniko for the image build pods)
-func ListWorkloadPodsSelector(ctx context.Context, config *types.ServerConfig, selector string) ([]WorkloadPod, error) {
-	client, namespace, err := newWorkloadClient(config)
+	client, appsNamespace, err := newWorkloadClient(config)
 	if err != nil {
 		return nil, err
 	}
+	return listPods(ctx, client, appsNamespace, LABEL_PREFIX+"app.id")
+}
+
+// KanikoNamespace is the namespace the kaniko image build jobs run in: the
+// configured kubernetes.namespace as is (not the service account namespace
+// the workload helpers prefer), so listing the builds must use it too
+func KanikoNamespace(config *types.ServerConfig) string {
+	return config.Kubernetes.Namespace
+}
+
+// ListKanikoPods lists the kaniko image build pods
+func ListKanikoPods(ctx context.Context, config *types.ServerConfig) ([]WorkloadPod, error) {
+	namespace := KanikoNamespace(config)
+	if namespace == "" {
+		return nil, fmt.Errorf("kubernetes.namespace is not set, kaniko builds cannot run")
+	}
+	client, _, err := newWorkloadClient(config)
+	if err != nil {
+		return nil, err
+	}
+	return listPods(ctx, client, namespace, "app=kaniko")
+}
+
+func listPods(ctx context.Context, client kubernetes.Interface, namespace, selector string) ([]WorkloadPod, error) {
 	pods, err := client.CoreV1().Pods(namespace).List(ctx, meta.ListOptions{
 		LabelSelector: selector,
 	})

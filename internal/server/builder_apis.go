@@ -1566,7 +1566,7 @@ func (s *Server) ListKanikoBuildContainers(ctx context.Context) ([]ContainerInfo
 	if s.containerRuntime() != types.CONTAINER_KUBERNETES {
 		return []ContainerInfo{}, nil
 	}
-	pods, err := container.ListWorkloadPodsSelector(ctx, s.Config(), "app=kaniko")
+	pods, err := container.ListKanikoPods(ctx, s.Config())
 	if err != nil {
 		return nil, err
 	}

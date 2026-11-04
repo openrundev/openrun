@@ -188,6 +188,33 @@ func AsContainerExitChecker(cm ContainerManager) (ContainerExitChecker, bool) {
 	return nil, false
 }
 
+// ScaledDownChecker is an optional manager capability: reporting whether an
+// app's workload was deliberately scaled to zero. Implemented by the
+// Kubernetes manager, where the Deployment is shared by every OpenRun server
+// replica: one replica's idle shutdown (or a manual scale) stops the app under
+// the others, and readiness never brings a zero-replica Deployment back. An
+// unhealthy or mid-rollout workload keeps its replica count, so it does not
+// count as scaled down.
+type ScaledDownChecker interface {
+	ContainerScaledDown(ctx context.Context, name ContainerName) (bool, error)
+}
+
+// AsScaledDownChecker unwraps any decorating container managers and returns
+// the underlying ScaledDownChecker if one is present.
+func AsScaledDownChecker(cm ContainerManager) (ScaledDownChecker, bool) {
+	for cm != nil {
+		if c, ok := cm.(ScaledDownChecker); ok {
+			return c, true
+		}
+		u, ok := cm.(interface{ Unwrap() ContainerManager })
+		if !ok {
+			break
+		}
+		cm = u.Unwrap()
+	}
+	return nil, false
+}
+
 // SupersededContainerRemover is an optional manager capability: removing all
 // of an app's version containers except the active one. Implemented by the
 // command-based (Docker/Podman) manager, where superseded versions linger as

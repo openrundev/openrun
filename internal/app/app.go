@@ -53,7 +53,10 @@ type App struct {
 	*types.AppEntry
 	Name         string
 	CustomLayout bool
-	notifyClose  chan<- types.AppPathDomain // Channel to notify server to close the app
+	// notifyClose asks the server to close this instance. It carries the
+	// instance, not the path: the server evicts it only while it is still the
+	// cached one, so a retired instance cannot evict its replacement
+	notifyClose chan<- *App
 
 	codeConfig  *apptype.CodeConfig
 	sourceFS    *appfs.SourceFs
@@ -190,7 +193,7 @@ type SSEMessage struct {
 
 func NewApp(sourceFS *appfs.SourceFs, workFS *appfs.WorkFs, logger *types.Logger,
 	appEntry *types.AppEntry, systemConfig *types.SystemConfig,
-	plugins map[string]types.PluginSettings, appConfig types.AppConfig, notifyClose chan<- types.AppPathDomain,
+	plugins map[string]types.PluginSettings, appConfig types.AppConfig, notifyClose chan<- *App,
 	secretEvalFunc func([][]string, string, string, bool, func([]string)) (string, error),
 	auditInsert func(*types.AuditEvent) error, serverConfig *types.ServerConfig,
 	rbacApi rbac.RBACAPI, bindings []*types.Binding) (*App, error) {
@@ -434,9 +437,18 @@ func (a *App) Close() error {
 	}
 	a.closed = true
 	pinned := a.pins > 0
+	containerHandler := a.containerHandler
 	a.initMutex.Unlock()
 	if pinned {
 		a.Info().Msgf("app %s close deferred: %d runs active", a.AppPathDomain(), a.pins)
+		if containerHandler != nil {
+			// The retired instance's idle and health checkers must stop now
+			// (the handler's Close does only that, the runs keep the
+			// container): its idle checker would otherwise stop the
+			// container under the replacement instance, and its close
+			// requests could evict the replacement
+			containerHandler.Close() //nolint:errcheck
+		}
 		return nil
 	}
 	return a.teardown()

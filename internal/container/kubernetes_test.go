@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -486,8 +487,26 @@ func TestKubernetesCMGetContainerState(t *testing.T) {
 }
 
 func TestKubernetesCMStartStopContainer(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		annotations map[string]string
+		want        int32
+	}{
+		{"deployed replica count restored", map[string]string{REPLICAS_ANNOTATION: "3"}, 3},
+		{"deployment predating the annotation", nil, 1},
+		{"invalid annotation", map[string]string{REPLICAS_ANNOTATION: "zero"}, 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			testKubernetesCMStartStopContainer(t, tt.annotations, tt.want)
+		})
+	}
+}
+
+func testKubernetesCMStartStopContainer(t *testing.T, annotations map[string]string, want int32) {
 	var replicas int32
-	client := k8sfake.NewSimpleClientset()
+	client := k8sfake.NewSimpleClientset(&appsv1.Deployment{
+		ObjectMeta: meta.ObjectMeta{Name: "myapp", Namespace: "apps", Annotations: annotations},
+	})
 	client.PrependReactor("get", "deployments", func(action k8stesting.Action) (bool, runtime.Object, error) {
 		getAction, ok := action.(k8stesting.GetAction)
 		if !ok || getAction.GetSubresource() != "scale" {
@@ -517,8 +536,8 @@ func TestKubernetesCMStartStopContainer(t *testing.T) {
 	if err := k.StartContainer(context.Background(), ContainerName("myapp")); err != nil {
 		t.Fatalf("StartContainer returned error: %v", err)
 	}
-	if replicas != 1 {
-		t.Fatalf("replicas after StartContainer = %d, want 1", replicas)
+	if replicas != want {
+		t.Fatalf("replicas after StartContainer = %d, want %d", replicas, want)
 	}
 
 	if err := k.StopContainer(context.Background(), ContainerName("myapp")); err != nil {
@@ -526,6 +545,61 @@ func TestKubernetesCMStartStopContainer(t *testing.T) {
 	}
 	if replicas != 0 {
 		t.Fatalf("replicas after StopContainer = %d, want 0", replicas)
+	}
+}
+
+func TestKubernetesCMContainerScaledDown(t *testing.T) {
+	ctx := context.Background()
+	deployment := func(name, hash string, replicas int32) *appsv1.Deployment {
+		return &appsv1.Deployment{
+			ObjectMeta: meta.ObjectMeta{Name: name, Namespace: "apps"},
+			Spec: appsv1.DeploymentSpec{
+				Replicas: &replicas,
+				Template: corev1.PodTemplateSpec{ObjectMeta: meta.ObjectMeta{
+					Labels: map[string]string{VERSION_HASH_LABEL: hash},
+				}},
+			},
+		}
+	}
+	versionedService := &corev1.Service{
+		ObjectMeta: meta.ObjectMeta{Name: "myapp", Namespace: "apps"},
+		Spec: corev1.ServiceSpec{Selector: map[string]string{
+			"app": "myapp", VERSION_HASH_LABEL: "v2",
+		}},
+	}
+
+	tests := []struct {
+		name    string
+		objects []runtime.Object
+		want    bool
+	}{
+		{"in-place deployment scaled to zero", []runtime.Object{deployment("myapp", "v1", 0)}, true},
+		{"in-place deployment running", []runtime.Object{deployment("myapp", "v1", 1)}, false},
+		{"missing deployment", nil, false},
+		// Stateless apps: the active Deployment is the versioned one the
+		// Service selects, not a leftover stable-named one
+		{"active versioned deployment scaled to zero", []runtime.Object{
+			versionedService, deployment(workloadName("myapp", "v2", false), "v2", 0),
+		}, true},
+		{"active versioned deployment running", []runtime.Object{
+			versionedService, deployment(workloadName("myapp", "v2", false), "v2", 1),
+		}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			k := &KubernetesCM{
+				Logger:       newTestLogger(),
+				appNamespace: "apps",
+				clientSet:    k8sfake.NewSimpleClientset(tt.objects...),
+			}
+			got, err := k.ContainerScaledDown(ctx, ContainerName("myapp"))
+			if err != nil {
+				t.Fatalf("ContainerScaledDown returned error: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("ContainerScaledDown = %t, want %t", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -886,6 +960,12 @@ func TestKubernetesCMCreateDeploymentStrategy(t *testing.T) {
 		if dep.Spec.Replicas == nil || *dep.Spec.Replicas != 2 {
 			t.Fatalf("replicas=%v, want 2", dep.Spec.Replicas)
 		}
+		if got := dep.Annotations[REPLICAS_ANNOTATION]; got != "2" {
+			t.Fatalf("replicas annotation = %q, want 2 (restored by StartContainer)", got)
+		}
+		if _, ok := dep.Spec.Template.Annotations[REPLICAS_ANNOTATION]; ok {
+			t.Fatal("replicas annotation on the pod template would roll the pods on a replica change")
+		}
 		if dep.Spec.ProgressDeadlineSeconds == nil {
 			t.Fatal("progressDeadlineSeconds not set")
 		}
@@ -956,6 +1036,9 @@ func TestKubernetesCMCreateDeploymentStrategy(t *testing.T) {
 		}
 		if dep.Spec.Replicas == nil || *dep.Spec.Replicas != 1 {
 			t.Fatalf("replicas=%v, want 1 (PV apps pinned to single replica)", dep.Spec.Replicas)
+		}
+		if got := dep.Annotations[REPLICAS_ANNOTATION]; got != "1" {
+			t.Fatalf("replicas annotation = %q, want 1 for a PV app", got)
 		}
 		if hpaApplied {
 			t.Fatal("HPA should not be created for a PV-backed app")
@@ -1329,6 +1412,102 @@ func TestKubernetesCMWaitForDeployReadyVersionedMissPollsInsteadOfWatchingStable
 	}
 }
 
+// Fake Kubernetes Services have no network route. Deployment tests supply a
+// successful connection separately from their fake API readiness responses.
+func connectedServiceDial(context.Context, string, string) (net.Conn, error) {
+	conn, peer := net.Pipe()
+	_ = peer.Close()
+	return conn, nil
+}
+
+func TestKubernetesCMWaitForServiceConnectivity(t *testing.T) {
+	for _, useNodePort := range []bool{false, true} {
+		t.Run(fmt.Sprintf("nodePort=%t", useNodePort), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			address := "myapp.apps.svc.cluster.local:8080"
+			if useNodePort {
+				address = "127.0.0.1:30080"
+			}
+			attempts := 0
+			var connection net.Conn
+			k := &KubernetesCM{
+				config: &types.ServerConfig{Kubernetes: types.KubernetesConfig{UseNodePort: useNodePort}},
+				serviceDialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+					if network != "tcp" || addr != address {
+						t.Fatalf("dial %s %s, want tcp %s", network, addr, address)
+					}
+					attempts++
+					if attempts < 3 {
+						// The pod and EndpointSlice are ready, but kube-proxy
+						// has not yet installed the Service route.
+						return nil, errors.New("connection refused")
+					}
+					var peer net.Conn
+					connection, peer = net.Pipe()
+					t.Cleanup(func() { _ = peer.Close() })
+					return connection, nil
+				},
+			}
+			k.waitForServiceConnectivity(ctx, address)
+			if attempts != 3 {
+				t.Fatalf("dial attempts = %d, want 3 before returning ready", attempts)
+			}
+			if err := connection.SetDeadline(time.Now()); err == nil {
+				t.Fatal("connectivity probe left its connection open")
+			}
+		})
+	}
+
+	t.Run("cancellation interrupts dial", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		dialing := make(chan struct{})
+		k := &KubernetesCM{serviceDialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			close(dialing)
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}}
+		done := make(chan struct{})
+		go func() {
+			k.waitForServiceConnectivity(ctx, "myapp.apps.svc.cluster.local:8080")
+			close(done)
+		}()
+		select {
+		case <-dialing:
+		case <-time.After(time.Second):
+			t.Fatal("connectivity wait never attempted a connection")
+		}
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("connectivity wait ignored cancellation")
+		}
+	})
+
+	t.Run("default dialer", func(t *testing.T) {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer listener.Close() //nolint:errcheck
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		k := &KubernetesCM{config: &types.ServerConfig{}}
+		k.waitForServiceConnectivity(ctx, listener.Addr().String())
+		if ctx.Err() != nil {
+			t.Fatal("connectivity wait timed out on a listening address")
+		}
+		_ = listener.(*net.TCPListener).SetDeadline(time.Now().Add(time.Second))
+		conn, err := listener.Accept()
+		if err != nil {
+			t.Fatalf("connectivity wait did not connect: %v", err)
+		}
+		_ = conn.Close()
+	})
+}
+
 func TestKubernetesCMWaitForServiceVersionEndpointsRetriesListErrors(t *testing.T) {
 	ctx := context.Background()
 	hash := "expected-hash"
@@ -1527,6 +1706,7 @@ func TestKubernetesCMVerifyDarkVersion(t *testing.T) {
 	k := &KubernetesCM{
 		Logger: newTestLogger(), appNamespace: "apps", config: &types.ServerConfig{},
 		appConfig: &types.AppConfig{}, clientSet: client, appId: "app_dev_dark",
+		serviceDialContext: connectedServiceDial,
 	}
 	var probed string
 	var selector map[string]string

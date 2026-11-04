@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io/fs"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -32,6 +33,7 @@ import (
 	"github.com/openrundev/openrun/internal/types"
 
 	"github.com/moby/buildkit/frontend/dockerfile/parser"
+	"golang.org/x/sync/singleflight"
 )
 
 type ContainerState string
@@ -79,9 +81,17 @@ type ContainerHandler struct {
 	idlePaused atomic.Bool
 
 	// Idle shutdown related fields
-	idleShutdownTicker  *time.Ticker
-	stateLock           sync.RWMutex
-	currentState        ContainerState
+	idleShutdownTicker *time.Ticker
+	stateLock          sync.RWMutex
+	currentState       ContainerState
+	// healthCheckStartDelay is the wait before the first background health
+	// check, 60s when unset (tests shorten it)
+	healthCheckStartDelay time.Duration
+	// scaledDownCheck dedupes the scale checks of concurrent proxy failures
+	scaledDownCheck singleflight.Group
+	// closedScaledDown is set once the instance is closed because its
+	// workload was scaled to zero outside it
+	closedScaledDown    atomic.Bool
 	activeContainerName container.ContainerName
 	activeVersionHash   string
 	// imageDigest is the digest (e.g. "sha256:abc...") resolved by the most
@@ -500,7 +510,7 @@ func (h *ContainerHandler) idleAppShutdown(ctx context.Context) {
 		if h.app.notifyClose != nil {
 			// Notify the server to close the app so that it gets reinitialized on next API call
 			select {
-			case h.app.notifyClose <- h.app.AppPathDomain():
+			case h.app.notifyClose <- h.app:
 			case <-h.closeCh:
 				// Handler closed while waiting for the server to receive:
 				// the instance is gone (a deploy replaced it, say) and the
@@ -568,10 +578,14 @@ func (h *ContainerHandler) healthChecker(ctx context.Context) {
 
 	defer h.Debug().Msgf("Health checker stopped for app %s", h.app.Id)
 	// wait for 1 minute to let the app start up
+	startDelay := h.healthCheckStartDelay
+	if startDelay <= 0 {
+		startDelay = 60 * time.Second
+	}
 	select {
 	case <-h.closeCh:
 		return
-	case <-time.After(60 * time.Second):
+	case <-time.After(startDelay):
 	}
 	h.Debug().Msgf("Health checker started for app %s", h.app.Id)
 	for {
@@ -615,8 +629,19 @@ func (h *ContainerHandler) healthChecker(ctx context.Context) {
 			return
 		}
 		if h.manager.SupportsInPlaceUpdate() {
-			h.Info().Msgf("Leaving app %s running after background health failure; Kubernetes readiness controls traffic", h.app.Id)
-			continue
+			if !h.workloadScaledDown(ctx, containerName) {
+				h.Info().Msgf("Leaving app %s running after background health failure; Kubernetes readiness controls traffic", h.app.Id)
+				continue
+			}
+			// Scaled to zero outside this instance: another server replica's
+			// idle shutdown, or a request that reused the workload in the
+			// window before this server's own idle stop landed. Readiness
+			// never brings a zero-replica workload back, so drop the instance;
+			// the next request reinitializes it and starts the workload
+			if h.markScaledDown() {
+				h.sendNotifyClose()
+			}
+			return
 		}
 
 		// Stop the container only if no swap began since the probe started
@@ -639,15 +664,126 @@ func (h *ContainerHandler) healthChecker(ctx context.Context) {
 			continue
 		}
 
-		if h.app.notifyClose != nil {
-			// Notify the server to close the app so that it gets reinitialized on next API call
-			select {
-			case h.app.notifyClose <- h.app.AppPathDomain():
-			case <-h.closeCh:
-				// Handler closed while waiting for the server to receive, give up
-			}
-		}
+		// Notify the server to close the app so that it gets reinitialized on next API call
+		h.sendNotifyClose()
 		return
+	}
+}
+
+// workloadScaledDown reports whether the manager reports the container's
+// workload as deliberately scaled to zero. False when the manager cannot tell
+// or the check fails: the caller then keeps its current behavior
+func (h *ContainerHandler) workloadScaledDown(ctx context.Context, containerName container.ContainerName) bool {
+	checker, ok := container.AsScaledDownChecker(h.manager)
+	if !ok {
+		return false
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	scaledDown, err := checker.ContainerScaledDown(checkCtx, containerName)
+	if err != nil {
+		h.Warn().Err(err).Msgf("Could not check whether app %s workload is scaled down", h.app.Id)
+		return false
+	}
+	return scaledDown
+}
+
+// markScaledDown moves a running instance whose workload was scaled to zero
+// outside it out of the running state. Reports whether this call made the
+// transition, so that only one of the health checker and the proxy error
+// path closes the instance
+func (h *ContainerHandler) markScaledDown() bool {
+	h.stateLock.Lock()
+	defer h.stateLock.Unlock()
+	if h.currentState != ContainerStateRunning {
+		return false
+	}
+	h.currentState = ContainerStateUnknown
+	h.closedScaledDown.Store(true)
+	h.Info().Msgf("App %s workload was scaled to zero outside this instance; closing it so the next request restarts it", h.app.Id)
+	return true
+}
+
+// proxyDialFailed handles the proxy failing to connect to the running
+// container. When the workload was scaled to zero outside this instance (see
+// the health checker), the instance is closed right away, so the next request
+// restarts the workload instead of failing until the next health check, and
+// true is returned. Concurrent failures share one check
+func (h *ContainerHandler) proxyDialFailed(ctx context.Context) bool {
+	if _, ok := container.AsScaledDownChecker(h.manager); !ok {
+		return false // Docker/Podman: the default 502
+	}
+	if h.closedScaledDown.Load() {
+		// Already closed for this: requests which reached the instance
+		// before the close get the 503 too
+		return true
+	}
+	h.stateLock.RLock()
+	containerName := h.activeContainerName
+	running := h.currentState == ContainerStateRunning && containerName != ""
+	h.stateLock.RUnlock()
+	if !running || h.swapInProgress() {
+		return false
+	}
+	// Shared by the waiting callers: not bound to the first caller's request
+	scaledDown, _, _ := h.scaledDownCheck.Do(string(containerName), func() (any, error) {
+		return h.workloadScaledDown(context.WithoutCancel(ctx), containerName), nil
+	})
+	if !scaledDown.(bool) {
+		return false
+	}
+	if h.markScaledDown() {
+		// Not on the request: the send waits for the server's close loop
+		go h.sendNotifyClose()
+	}
+	return true
+}
+
+// containerProxyErrorHandler is the reverse proxy error handler for
+// container.URL routes. A refused connection to a workload scaled to zero
+// gets a 503 with Retry-After (browsers and WebSocket clients retry, and the
+// retry restarts the app); everything else gets the default 502
+func containerProxyErrorHandler(logger *types.Logger, h *ContainerHandler) func(http.ResponseWriter, *http.Request, error) {
+	return func(w http.ResponseWriter, r *http.Request, err error) {
+		if r.Context().Err() != nil {
+			// The client went away, nobody reads the response
+			logger.Debug().Err(err).Msgf("proxy request canceled for %s", r.URL.Path)
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		if isDialError(err) && h.proxyDialFailed(r.Context()) {
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, "The app is restarting, retry shortly", http.StatusServiceUnavailable)
+			return
+		}
+		logger.Warn().Err(err).Msgf("proxy error for %s", r.URL.Path)
+		w.WriteHeader(http.StatusBadGateway)
+	}
+}
+
+// isDialError reports whether err is a failure to connect to the upstream:
+// nothing reached the app
+func isDialError(err error) bool {
+	var opErr *net.OpError
+	return errors.As(err, &opErr) && opErr.Op == "dial"
+}
+
+// sendNotifyClose asks the server to close this app instance (and, through
+// the app update notification, every other replica's), so it is
+// reinitialized on the next request. A no-op once the handler is closed: the
+// instance is already gone, and a send then could close its replacement
+func (h *ContainerHandler) sendNotifyClose() {
+	if h.app.notifyClose == nil {
+		return
+	}
+	select {
+	case <-h.closeCh:
+		return
+	default:
+	}
+	select {
+	case h.app.notifyClose <- h.app:
+	case <-h.closeCh:
 	}
 }
 

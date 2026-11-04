@@ -86,6 +86,7 @@ func newInPlaceFixture(t *testing.T, templateHash string, ready bool) *inPlaceFi
 	f.k = &KubernetesCM{
 		Logger: newTestLogger(), appNamespace: "apps", config: &types.ServerConfig{},
 		appConfig: &types.AppConfig{}, clientSet: client, appId: "app_prd_pv",
+		serviceDialContext: connectedServiceDial,
 	}
 
 	record := func(action k8stesting.Action, dryRun []string) {

@@ -220,6 +220,8 @@ type KubernetesCM struct {
 	// sidecars and sidecarAddrEnv are stashed by DeployContainer like litestream
 	sidecars       []*ResolvedSidecar
 	sidecarAddrEnv map[string]string
+	// serviceDialContext defaults to a TCP dialer with a 1s timeout.
+	serviceDialContext func(context.Context, string, string) (net.Conn, error)
 }
 
 func sanitizeContainerName(name string) string {
@@ -435,7 +437,7 @@ func (k *KubernetesCM) BuildImage(ctx context.Context, imgName ImageName, source
 
 	appId, _, _ := strings.Cut(string(imgName), ":")
 	kanikoBuild := KanikoBuild{
-		Namespace:     k.config.Kubernetes.Namespace,
+		Namespace:     KanikoNamespace(k.config),
 		JobName:       fmt.Sprintf("%s-builder-%d", appId, time.Now().Unix()),
 		Image:         k.config.Builder.KanikoImage,
 		SourceDir:     sourceUrl,
@@ -544,21 +546,63 @@ func (k *KubernetesCM) readyPodsBehindService(ctx context.Context, selector map[
 	return false, nil
 }
 
+// StartContainer scales the active Deployment back to the replica count it was
+// deployed with (min_replicas, or 1 for PVC-backed apps), as recorded in its
+// replicas annotation. An HPA, when there is one, takes over from there
 func (k *KubernetesCM) StartContainer(ctx context.Context, name ContainerName) error {
-	return k.scaleActiveDeployment(ctx, string(name), 1)
+	return k.scaleActiveDeployment(ctx, string(name), -1)
 }
 
 func (k *KubernetesCM) StopContainer(ctx context.Context, name ContainerName) error {
 	return k.scaleActiveDeployment(ctx, string(name), 0)
 }
 
+// deployedReplicas returns the replica count recorded on the Deployment, 1
+// when it predates the annotation or the value is invalid
+func deployedReplicas(dep *appsv1.Deployment) int32 {
+	n, err := strconv.ParseInt(dep.Annotations[REPLICAS_ANNOTATION], 10, 32)
+	if err != nil || n < 1 {
+		return 1
+	}
+	return int32(n)
+}
+
+var _ ScaledDownChecker = (*KubernetesCM)(nil)
+
+// ContainerScaledDown reports whether the Deployment behind the app's Service
+// is scaled to zero replicas. Only StopContainer (idle shutdown, possibly by
+// another OpenRun replica) or a manual scale sets that; a deploy re-applies the
+// replica count. A missing Deployment is not reported as scaled down.
+func (k *KubernetesCM) ContainerScaledDown(ctx context.Context, name ContainerName) (bool, error) {
+	depName, err := k.activeDeploymentName(ctx, sanitizeContainerName(string(name)))
+	if err != nil {
+		return false, err
+	}
+	dep, err := k.clientSet.AppsV1().Deployments(k.appNamespace).Get(ctx, depName, meta.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("get deployment %s/%s: %w", k.appNamespace, depName, err)
+	}
+	return dep.Spec.Replicas != nil && *dep.Spec.Replicas == 0, nil
+}
+
 // scaleActiveDeployment scales the Deployment currently behind the Service (the
-// active version for stateless apps; the stable name for PVC apps).
+// active version for stateless apps; the stable name for PVC apps). A negative
+// replicas restores the count the Deployment was deployed with.
 func (k *KubernetesCM) scaleActiveDeployment(ctx context.Context, serviceName string, replicas int32) error {
 	serviceName = sanitizeContainerName(serviceName)
 	depName, err := k.activeDeploymentName(ctx, serviceName)
 	if err != nil {
 		return err
+	}
+	if replicas < 0 {
+		dep, err := k.clientSet.AppsV1().Deployments(k.appNamespace).Get(ctx, depName, meta.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("get deployment %s/%s: %w", k.appNamespace, depName, err)
+		}
+		replicas = deployedReplicas(dep)
 	}
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		scale, err := k.clientSet.AppsV1().Deployments(k.appNamespace).GetScale(ctx, depName, meta.GetOptions{})
@@ -834,6 +878,11 @@ func (k *KubernetesCM) processVolumes(ctx context.Context, name, owner string, v
 }
 
 const VERSION_HASH_LABEL = LABEL_PREFIX + "version.hash"
+
+// REPLICAS_ANNOTATION records on a Deployment (not its pod template, so it
+// never triggers a rollout) the replica count it was deployed with, which
+// StartContainer restores after an idle scale to zero
+const REPLICAS_ANNOTATION = LABEL_PREFIX + "replicas"
 
 // shortHash returns a label/name-safe version suffix, also used for Docker
 // container names and image tags. Keep more than 8 chars so versions with
@@ -1158,9 +1207,11 @@ func (k *KubernetesCM) createDeployment(ctx context.Context, serviceName, wlName
 		progressDeadline = int32(k.appConfig.Container.DeployProgressDeadlineSecs)
 	}
 
+	depAnnotations := maps.Clone(annotations)
+	depAnnotations[REPLICAS_ANNOTATION] = strconv.Itoa(int(replicas))
 	dep := appsv1apply.Deployment(wlName, k.appNamespace).
 		WithLabels(metadata).
-		WithAnnotations(annotations).
+		WithAnnotations(depAnnotations).
 		WithSpec(appsv1apply.DeploymentSpec().
 			WithReplicas(replicas).
 			WithProgressDeadlineSeconds(progressDeadline).
@@ -1308,7 +1359,7 @@ func (k *KubernetesCM) verifyDarkVersion(ctx context.Context, req DeployRequest)
 		return fmt.Errorf("verification service %s has no ports", name)
 	}
 	hostNamePort := k.serviceHostNamePort(created)
-	k.waitForNodePortConnectivity(ctx, hostNamePort)
+	k.waitForServiceConnectivity(ctx, hostNamePort)
 	return req.VerifyVersion(ctx, hostNamePort)
 }
 
@@ -1463,7 +1514,7 @@ func (k *KubernetesCM) deployBlueGreen(ctx context.Context, req DeployRequest, p
 				// otherwise a request proxied right after promotion can still
 				// hit an old pod.
 				k.waitForServiceVersionEndpoints(c, sanitizeContainerName(string(serviceName)), req.VersionHash)
-				k.waitForNodePortConnectivity(c, hostNamePort)
+				k.waitForServiceConnectivity(c, hostNamePort)
 				return k.cleanupInactiveWorkloads(c, serviceName)
 			})
 		return DeployResult{
@@ -1486,7 +1537,7 @@ func (k *KubernetesCM) deployBlueGreen(ctx context.Context, req DeployRequest, p
 	// Service endpoints to converge to the new version before returning;
 	// otherwise a request proxied right after promotion can still hit an old pod.
 	k.waitForServiceVersionEndpoints(ctx, sanitizeContainerName(string(serviceName)), req.VersionHash)
-	k.waitForNodePortConnectivity(ctx, hostNamePort)
+	k.waitForServiceConnectivity(ctx, hostNamePort)
 	k.cleanupInactiveWorkloadsAsync(serviceName, appID, "after promotion")
 
 	return DeployResult{
@@ -1626,7 +1677,7 @@ func (k *KubernetesCM) rollOutInPlace(ctx context.Context, req DeployRequest, sn
 		}
 		return DeployResult{}, fail(fmt.Errorf("error waiting for health: %w", err))
 	}
-	k.waitForNodePortConnectivity(ctx, hostNamePort)
+	k.waitForServiceConnectivity(ctx, hostNamePort)
 	if req.VerifyVersion != nil {
 		// In-place: the rollout already serves traffic; a failure restores
 		// the pre-update snapshot through fail()
@@ -1874,20 +1925,33 @@ func (k *KubernetesCM) watchUntilReady(ctx context.Context, name ContainerName, 
 	}
 }
 
-// waitForNodePortConnectivity polls the NodePort TCP address until a connection
-// is accepted, confirming that kube-proxy has propagated the endpoint rules.
-// It is a no-op when not using NodePort mode or when hostNamePort is empty.
-// Best-effort with a bounded budget: a NodePort that never becomes connectable
-// (wrong node, firewall, rule never programmed) must not hang the deploy, so it
-// gives up after 30s rather than blocking on the caller's context alone.
-func (k *KubernetesCM) waitForNodePortConnectivity(ctx context.Context, hostNamePort string) {
-	if !k.config.Kubernetes.UseNodePort || hostNamePort == "" {
+// waitForServiceConnectivity polls the Service TCP address until a connection
+// is accepted. Pod readiness and EndpointSlices can precede kube-proxy's
+// routing updates, for both ClusterIP and NodePort services. The deploy paths
+// rely on native readiness probes rather than an HTTP check through the
+// Service, so without this wait the first request proxied after a deploy can
+// race those updates. (The idle wake-up path, StartContainer, is covered by
+// the handler's HTTP health wait, which goes through the Service address.)
+//
+// A TCP connect only proves that some backend is routed: on a redeploy an old
+// pod still in the kube-proxy rules satisfies it, so it guards the no-route
+// case (first deploy, scale from zero), not version-level routing.
+//
+// The per-attempt timeout covers the cluster DNS lookup as well as the
+// connect. Best-effort with a 30s budget so an unreachable Service cannot hang
+// a deploy.
+func (k *KubernetesCM) waitForServiceConnectivity(ctx context.Context, hostNamePort string) {
+	if hostNamePort == "" {
 		return
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	for {
-		conn, err := net.DialTimeout("tcp", hostNamePort, 200*time.Millisecond)
+	dial := k.serviceDialContext
+	if dial == nil {
+		dial = (&net.Dialer{Timeout: time.Second}).DialContext
+	}
+	for ctx.Err() == nil {
+		conn, err := dial(ctx, "tcp", hostNamePort)
 		if err == nil {
 			conn.Close() //nolint:errcheck
 			return

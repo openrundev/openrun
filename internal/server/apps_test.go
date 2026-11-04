@@ -53,3 +53,33 @@ func TestAppStoreAddAppIfUnchanged(t *testing.T) {
 		t.Fatal("clearing an uncached path did not bump the store generation")
 	}
 }
+
+// A close request from a retired instance (replaced while an action run kept
+// it alive) must not evict the replacement cached under the same path
+func TestClearAppIfCurrentIgnoresRetiredInstance(t *testing.T) {
+	server, _, _ := newAppAPIMetadataTestServer(t)
+	store := server.apps
+	pathDomain := types.CreateAppPathDomain("/app1", "example.com")
+	retired, replacement := testStoreApp("/app1"), testStoreApp("/app1")
+
+	if _, ok := store.AddAppIfUnchanged(replacement, store.Generation()); !ok {
+		t.Fatal("adding the replacement failed")
+	}
+	if store.ClearAppIfCurrent(retired) {
+		t.Fatal("a retired instance's close request cleared the app")
+	}
+	if cached, _ := store.GetApp(pathDomain); cached != replacement {
+		t.Fatalf("store holds %p, want the replacement %p", cached, replacement)
+	}
+
+	if !store.ClearAppIfCurrent(replacement) {
+		t.Fatal("the cached instance's close request did not clear the app")
+	}
+	if cached, _ := store.GetApp(pathDomain); cached != nil {
+		t.Fatalf("store still holds %p after the close", cached)
+	}
+	// Nothing cached: a late duplicate request is ignored
+	if store.ClearAppIfCurrent(replacement) {
+		t.Fatal("a close request for an uncached instance reported a clear")
+	}
+}

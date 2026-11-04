@@ -7,6 +7,17 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- On Kubernetes, an app instance whose Deployment was scaled to zero outside it (another OpenRun replica's idle shutdown, a request that reused the workload just before this server's own idle stop landed, or a manual `kubectl scale`) no longer keeps proxying to it with 502 errors until the next deploy. A refused connection to a scaled-down workload now returns 503 with `Retry-After: 1` and closes the instance, so the retried request restarts the app. The background health check catches the case when no request does. A workload that is unhealthy or mid-rollout keeps its replicas and is left to Kubernetes readiness, as before.
+- On Kubernetes, an app waking from idle shutdown is scaled back to the replica count it was deployed with (`min_replicas`) instead of always one. The count is recorded in a `dev.openrun.replicas` annotation on the Deployment; Deployments created by an earlier version wake with one replica until their next deploy.
+- On Kubernetes, deploys wait for the app's Service to accept connections in ClusterIP mode too, not only with `use_node_port`, so the first request after a deploy no longer races kube-proxy's routing update.
+- The console's Kaniko Builds tab lists the build pods from the namespace the builds run in (`kubernetes.namespace`) instead of the apps namespace, where it always found none. Kaniko rows no longer link to the container detail page, which cannot open them.
+
+### Changed
+
+- Proxy errors for container apps are logged through the server log at warning level, with the request path, instead of as `http: proxy error: ...` lines from the Go standard library logger. Requests cancelled by the client are logged at debug level.
+
 ## [v0.20.10] - 2026-11-03
 
 ### Added

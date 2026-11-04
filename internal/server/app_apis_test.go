@@ -220,7 +220,7 @@ func newAppAPIMetadataTestServer(t *testing.T) (*Server, *metadata.Metadata, con
 		Logger:       logger,
 		staticConfig: config,
 		db:           db,
-		notifyClose:  make(chan types.AppPathDomain),
+		notifyClose:  make(chan *appcore.App),
 		rbacManager: &rbac.RBACManager{
 			Logger: logger,
 		},

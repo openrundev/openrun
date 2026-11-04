@@ -1149,6 +1149,7 @@ func (a *App) addProxyConfig(count int, router *chi.Mux, proxyDef *starlarkstruc
 	resolveProxyTarget := func() *url.URL { return urlParsed }
 	if originalUrlStr == apptype.CONTAINER_URL {
 		containerHandler := a.containerHandler // a reload can replace or clear the field
+		proxy.ErrorHandler = containerProxyErrorHandler(a.Logger, containerHandler)
 		resolveProxyTarget = func() *url.URL {
 			current, err := url.Parse(containerHandler.GetProxyUrl())
 			if err != nil || current.Host == "" {

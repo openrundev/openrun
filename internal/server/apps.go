@@ -379,6 +379,32 @@ func (a *AppStore) ClearAppsNoNotify(pathDomains []types.AppPathDomain) {
 	a.resetAllAppCache()
 }
 
+// ClearAppIfCurrent removes an app at the request of the app instance itself
+// (idle shutdown, failed or scaled down container), only while that instance
+// is still the cached one: an instance retired meanwhile (replaced, possibly
+// kept alive by an action run) must not evict its replacement. Other servers
+// are notified when the app is cleared. Reports whether it was
+func (a *AppStore) ClearAppIfCurrent(instance *app.App) bool {
+	pathDomain := instance.AppPathDomain()
+	cleared := func() bool {
+		a.mu.Lock()
+		defer a.mu.Unlock() // deferred: closing an app can panic in plugin code
+		if current, ok := a.appMap[pathDomain]; !ok || current != instance {
+			return false
+		}
+		a.clearApp(pathDomain)
+		a.resetAllAppCache()
+		return true
+	}()
+	if !cleared {
+		return false
+	}
+	if err := a.server.db.NotifyAppUpdate([]types.AppPathDomain{pathDomain}); err != nil {
+		a.Error().Err(err).Msg("error sending app update notification")
+	}
+	return true
+}
+
 // ClearApps removes the specified apps from the in memory App cache and creates an audit entry.
 // Also clears the app info cache for all apps (so that it is reloaded on next request)
 func (a *AppStore) ClearAppsAudit(ctx context.Context, pathDomains []types.AppPathDomain, op string) error {

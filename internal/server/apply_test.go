@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	appcore "github.com/openrundev/openrun/internal/app"
 	"github.com/openrundev/openrun/internal/bindings"
 	"github.com/openrundev/openrun/internal/builder"
 	"github.com/openrundev/openrun/internal/metadata"
@@ -240,7 +241,7 @@ func newApplyTestServer(t *testing.T) (*Server, *metadata.Metadata, context.Cont
 		Logger:       logger,
 		staticConfig: config,
 		db:           db,
-		notifyClose:  make(chan types.AppPathDomain),
+		notifyClose:  make(chan *appcore.App),
 	}
 	server.secretsManager.Store(secretsManager)
 	server.apps = NewAppStore(logger, server)
