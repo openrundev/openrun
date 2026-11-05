@@ -71,7 +71,7 @@ func TestServerConfig(t *testing.T) {
 	testutil.AssertEqualsString(t, "node path", "", c.System.NodePath)
 	testutil.AssertEqualsString(t, "default domain", "localhost", c.System.DefaultDomain)
 	testutil.AssertEqualsString(t, "default stage domain", "stage", c.System.DefaultStageDomain)
-	testutil.AssertEqualsString(t, "stage at", "domain", c.System.StageAt)
+	testutil.AssertEqualsString(t, "stage at", "domain_suffix", c.System.StageAt)
 	testutil.AssertEqualsInt(t, "max concurrent builds", 1, c.System.MaxConcurrentBuilds)
 	testutil.AssertEqualsInt(t, "max build wait secs", 120, c.System.MaxBuildWaitSecs)
 	testutil.AssertEqualsInt(t, "file workers", 4, c.System.FileWorkers)

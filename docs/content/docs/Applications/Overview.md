@@ -327,7 +327,7 @@ The declarative app configuration uses Starlark syntax. An app is defined using 
 | container_opts | true | dict | | The container options for the app |
 | container_args | true | dict | | The container build args options for the app |
 | container_vols | true | list string | | The container volumes for the app |
-| stage_at | true | string | system | Staging location for new prod apps: `domain`, `path`, or a staging domain |
+| stage_at | true | string | system | Staging location for new prod apps: `domain_suffix`, `domain`, `path`, or a staging domain. Applies when the app is created |
 | sidecars | true | list dict | | The [sidecar containers]({{< ref "docs/container/overview/#sidecar-containers" >}}) for the app, same JSON fields as `--sidecar` |
 | bindings | true | list string | | The paths of the [service bindings]({{< ref "docs/applications/servicebindings" >}}) to attach to the app |
 | jobs | true | list | [] | [Jobs and deploy hooks]({{< ref "jobs" >}}), declared with `job(...)`, dictionaries or JSON strings |

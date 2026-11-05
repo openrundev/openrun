@@ -135,9 +135,9 @@ func TestStageAppPathDomain(t *testing.T) {
 		want    types.AppPathDomain
 	}{
 		{
-			name: "default mode is domain",
+			name: "default mode is domain_suffix",
 			prod: types.AppPathDomain{Domain: "app.apps.example.com", Path: "/tools/app"},
-			want: types.AppPathDomain{Domain: "stage.app.apps.example.com", Path: "/tools/app"},
+			want: types.AppPathDomain{Domain: "app.stage.apps.example.com", Path: "/tools/app"},
 		},
 		{
 			name:    "path mode",

@@ -7,6 +7,16 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- New production apps on a subdomain now create their staging app with the stage label after the app's label, for example `app.stage.example.com` for `app.example.com`, instead of `stage.app.example.com`. The staging apps of `*.example.com` are then all under `*.stage.example.com`, so one wildcard DNS record and one wildcard certificate cover them. This is the new `stage_at` mode `domain_suffix`, which is now the default for `system.stage_at`.
+  - Existing apps are not affected: the staging location is stored when an app is created. Apps created without a domain (path apps on the default domain) and apps on a registrable domain such as `example.org` stage where they did before (`stage.<domain>`).
+  - To keep the previous location for new apps, set `stage_at = "domain"` in the `[system]` config, or pass `--stage-at domain` / `stage_at="domain"` per app.
+  - Wildcard certificate and explicit DNS setups need `stage.<domain>` and `*.stage.<domain>` entries for new subdomain apps.
+  - For a domain outside `default_domain`, OpenRun assumes you control the parent of the app's hostname (registrable domains are detected with the Public Suffix List). If the hostname is the only name you control, such as `tools.customer.com` pointed at your server, set the staging location explicitly with `--stage-at`. See the [staging domain](https://openrun.dev/docs/configuration/networking/#staging-domain) docs.
+  - `domain_suffix` is now a reserved `stage_at` value and can no longer name a custom staging domain.
+  - Downgrade note: older versions do not know `domain_suffix` and treat it as a staging domain name. If you set `stage_at = "domain_suffix"` explicitly (in `openrun.toml`, dynamic config or an apply file), change it to `domain` or remove it before running an older version. The built-in default needs no action.
+
 ## [v0.20.14] - 2026-11-04
 
 - Update to use HTTP health checks for NLB

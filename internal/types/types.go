@@ -1167,10 +1167,12 @@ type SystemConfig struct {
 	GitCheckoutCacheEntries             int      `toml:"git_checkout_cache_entries"`              // number of immutable git checkouts reused across operations; 0 disables the cache
 	GitRemoteCheckIntervalSecs          int      `toml:"git_remote_check_interval_secs"`          // reuse a checked branch head for this many seconds; 0 checks every operation
 	GitOperationTimeoutSecs             int      `toml:"git_operation_timeout_secs"`              // timeout for each remote git operation; <=0 disables the timeout
-	// StageAt is the default staging mode for new prod apps. "domain" stages at domain level,
-	// "path" stages at path level, and any other value is treated as the staging domain.
-	// Defaults to "domain".
-	StageAt            string `toml:"stage_at"`
+	// StageAt is the default staging mode for new prod apps. "domain_suffix" puts the stage
+	// label after the app label (app.stage.example.com), "domain" prepends it
+	// (stage.app.example.com), "path" stages at path level, and any other value is treated
+	// as the staging domain. Defaults to "domain_suffix".
+	StageAt string `toml:"stage_at"`
+	// DefaultStageDomain is the stage label used by the "domain_suffix" and "domain" modes
 	DefaultStageDomain string `toml:"default_stage_domain"`
 }
 

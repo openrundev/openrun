@@ -22,9 +22,13 @@ tests:
     command: perl -i -pe 's/111/222/g' ./reloadtest/app.star
   reload0080: # Reload one app, without promote
     command: ../openrun app reload reload.localhost:/
-  reload0090: # check stage is updated at the default stage domain
-    command: curl -su "admin:qwerty" stage.reload.localhost:${MAIN_HTTP_PORT}/test1
+  reload0090: # check stage is updated at the default stage domain (stage label after the app label)
+    command: curl -su "admin:qwerty" reload.stage.localhost:${MAIN_HTTP_PORT}/test1
     stdout: "222"
+  reload0090a: # the older stage.<app> shape is not served for an app using the default
+    command: curl -s -o /dev/null -w "%{http_code}" -u "admin:qwerty" stage.reload.localhost:${MAIN_HTTP_PORT}/test1
+    stdout:
+      exactly: "404"
   reload0091: # check versions
     command: ../openrun app list --internal --format csv reload.localhost:/ | grep reload | grep ",2," | wc -l
     stdout:
@@ -41,6 +45,50 @@ tests:
     command: ../openrun app list --internal --format csv reload.localhost:/ | grep reload | grep ",2," | wc -l
     stdout:
       exactly: "2"
+
+  # Stage locations: the default is domain_suffix, --stage-at domain keeps the older shape
+  reload0140: # default for a domain level app
+    command: ../openrun app list -i -f json reload.localhost:/ | jq -r 'map(select(.id | startswith("app_stg_")))[0] | .domain + ":" + .path'
+    stdout:
+      exactly: "reload.stage.localhost:/"
+  reload0141: # --stage-at domain, stage label before the app label
+    command: ../openrun app create --stage-at domain ./reloadtest stagepfx.localhost:/
+  reload0142:
+    command: ../openrun app list -i -f json stagepfx.localhost:/ | jq -r 'map(select(.id | startswith("app_stg_")))[0] | .domain + ":" + .path'
+    stdout:
+      exactly: "stage.stagepfx.localhost:/"
+  reload0143: # and it is served there
+    command: curl -su "admin:qwerty" stage.stagepfx.localhost:${MAIN_HTTP_PORT}/test1
+    stdout: "222"
+  reload0144: # subdomain outside the default domain: label after the first label
+    command: ../openrun app create ./reloadtest app.team.example.com:/
+  reload0145:
+    command: ../openrun app list -i -f json app.team.example.com:/ | jq -r 'map(select(.id | startswith("app_stg_")))[0] | .domain + ":" + .path'
+    stdout:
+      exactly: "app.stage.team.example.com:/"
+  reload0146:
+    command: 'curl -su "admin:qwerty" -H "Host: app.stage.team.example.com" localhost:${MAIN_HTTP_PORT}/test1'
+    stdout: "222"
+  reload0147: # registrable domain outside the default domain: label is prepended
+    command: ../openrun app create ./reloadtest example.co.uk:/stgapex
+  reload0148:
+    command: ../openrun app list -i -f json example.co.uk:/stgapex | jq -r 'map(select(.id | startswith("app_stg_")))[0] | .domain + ":" + .path'
+    stdout:
+      exactly: "stage.example.co.uk:/stgapex"
+  reload0149: # explicit --stage-at domain_suffix, app on the default domain: label is prepended
+    command: ../openrun app create --stage-at domain_suffix ./reloadtest /stgsfx
+  reload0150:
+    command: ../openrun app list -i -f json /stgsfx | jq -r 'map(select(.id | startswith("app_stg_")))[0] | .domain + ":" + .path'
+    stdout:
+      exactly: "stage.localhost:/stgsfx"
+  reload0151: # cleanup
+    command: ../openrun app delete stagepfx.localhost:/ && ../openrun app delete app.team.example.com:/ && ../openrun app delete example.co.uk:/stgapex && ../openrun app delete /stgsfx
+    exit-code: 0
+  reload0152: # stage apps are deleted with their prod apps
+    command: ../openrun app list -i -f json all | jq -r 'map(select(((.domain // "") | test("stagepfx|team.example.com|example.co.uk")) or (.path | test("stgsfx")))) | length'
+    stdout:
+      exactly: "0"
+
   reload0200: # check curl
     command: curl -su "admin:qwerty" localhost:${MAIN_HTTP_PORT}/reload_local1/test1
     stdout: "111"

@@ -414,12 +414,20 @@ func (s *Server) deriveStageAt(ctx context.Context, tx types.Transaction, appEnt
 	if derived, err := s.stageAppPathDomain(prodApp, ""); err == nil && derived == actual {
 		return "" // matches the server default
 	}
-	for _, mode := range []string{"path", "domain"} {
+	// "domain" is before "domain_suffix": for apex domains both derive the
+	// same location, and "domain" is the value older servers understand
+	for _, mode := range []string{stageAtPath, stageAtDomain, stageAtDomainSuffix} {
 		if derived, err := s.stageAppPathDomain(prodApp, mode); err == nil && derived == actual {
 			return mode
 		}
 	}
 	if actual.Path == prodApp.Path {
+		if isStageAtMode(actual.Domain) {
+			// A stage domain spelled like a mode name would be read back as the mode
+			builder.warnf("stage app for %s is on the domain %q, which is a stage_at mode name and cannot be exported as a stage domain; stage_at omitted",
+				appEntry.String(), actual.Domain)
+			return ""
+		}
 		return actual.Domain // custom stage domain
 	}
 	builder.warnf("stage app for %s is at %s which no stage_at value reproduces; stage_at omitted", appEntry.String(), actual)

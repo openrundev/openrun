@@ -46,7 +46,7 @@ The full list, including jobs, deploy hooks and MCP settings, is in [app configu
 
 {{< theme-image light="/d2/quickstart_lifecycle_light.svg" dark="/d2/quickstart_lifecycle_dark.svg" alt="Apply or scheduled sync loads the declaration and app source into the staging app, which is then promoted to the production app" >}}
 
-Every production app has a staging app at the same path on the `stage` subdomain, for example `stage.example.com/todo` for `example.com/todo`. Apply writes to staging. Promotion copies staging to production, so production only ever runs a version that was already running on staging.
+Every production app has a staging app at the same path on the `stage` subdomain, for example `stage.example.com/todo` for `example.com/todo` (and `todo.stage.example.com` for an app on its own subdomain `todo.example.com`). Apply writes to staging. Promotion copies staging to production, so production only ever runs a version that was already running on staging.
 
 {{% steps %}}
 

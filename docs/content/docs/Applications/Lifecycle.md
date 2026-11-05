@@ -81,14 +81,18 @@ mycode                         STG      1 NONE    stage.example.com:/
 
 The second app is the staging app for the first. `app list` shows only the main apps by default, the `--internal` option makes it show the linked apps.
 
-By default, the staging app uses a staging subdomain (`system.default_stage_domain`, default `stage`) and the same path as the production app. So for an app at `https://example.com/`, the staging URL is `https://stage.example.com/`. For an app at `https://example.com/utils/app1`, the staging app URL is `https://stage.example.com/utils/app1`.
+By default, the staging app uses a staging subdomain (`system.default_stage_domain`, default `stage`) and the same path as the production app. So for an app at `https://example.com/`, the staging URL is `https://stage.example.com/`. For an app at `https://example.com/utils/app1`, the staging app URL is `https://stage.example.com/utils/app1`. For an app on its own subdomain, the stage label goes after the app's label: the staging URL for `https://app1.example.com/` is `https://app1.stage.example.com/`.
 
-The staging location can be changed when creating the app. The server default is configured with `system.stage_at`.
+The staging location can be changed when creating the app. The server default is configured with `system.stage_at`. See [staging domain]({{< ref "docs/configuration/networking#staging-domain" >}}) for how the location is derived and the DNS and certificate setup for it.
 
 | `app create` option | Staging location |
 | :--- | :--- |
+| `--stage-at domain_suffix` | The default. The stage label goes after the first label of the app's domain: `app1.stage.example.com` for `app1.example.com`, `stage.example.com` for `example.com` |
+| `--stage-at domain` | The stage label goes in front of the app's domain: `stage.app1.example.com` for `app1.example.com`. This was the default before `domain_suffix`, use it to keep that shape |
 | `--stage-at path` | The older path based location, where `_cl_stage` is suffixed to the production path |
 | `--stage-at <domain>` | The staging app is put on the specified domain |
+
+The staging location is set when the app is created and does not change afterwards.
 
 ## Promoting Changes
 

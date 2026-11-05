@@ -36,8 +36,8 @@ import (
 const mcpServerInstructions = `OpenRun is an app deployment platform. Apps deploy from git or local
 sources (a path on the server, not on the client) to a path (like /myapp).
 A created app is live at once, prod and staging at the same version; later
-reloads land in the staging instance (stage.<domain> or path_cl_stage,
-per system.stage_at) until promote_apps pushes them to prod. Apps may use services (postgres, redis, ...) through
+reloads land in the staging instance (app.stage.<domain>, stage.<domain> or
+path_cl_stage, per system.stage_at) until promote_apps pushes them to prod. Apps may use services (postgres, redis, ...) through
 bindings. Sync entries keep apps in sync with git declaratively. Operations
 run as the authenticated user; RBAC decides what is allowed. Destructive
 tools (delete_apps, promote_apps, version_switch) support dry_run=true to

@@ -29,6 +29,8 @@ import (
 	"github.com/openrundev/openrun/internal/rbac"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
+	"golang.org/x/net/idna"
+	"golang.org/x/net/publicsuffix"
 )
 
 func parseAppPath(inp string) (types.AppPathDomain, error) {
@@ -1715,17 +1717,45 @@ func pathBasedStageApp(appEntry *types.AppEntry) types.AppPathDomain {
 	return stageAppPath
 }
 
+// Staging modes for system.stage_at and the per app stage_at. Any other value
+// is a custom staging domain
+const (
+	stageAtPath         = "path"          // same domain, _cl_stage suffixed to the path
+	stageAtDomain       = "domain"        // stage label prepended: stage.app.example.com
+	stageAtDomainSuffix = "domain_suffix" // stage label after the app label: app.stage.example.com
+)
+
+// isStageAtMode reports whether the value is one of the staging mode names
+// (as opposed to a custom staging domain)
+func isStageAtMode(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case stageAtPath, stageAtDomain, stageAtDomainSuffix:
+		return true
+	}
+	return false
+}
+
 func (s *Server) stageAppPathDomain(prodApp types.AppPathDomain, stageAt string) (types.AppPathDomain, error) {
-	stageAt = cmp.Or(strings.TrimSpace(stageAt), strings.TrimSpace(s.Config().System.StageAt), "domain")
-	switch strings.ToLower(stageAt) {
-	case "path":
+	stageAt = cmp.Or(strings.TrimSpace(stageAt), strings.TrimSpace(s.Config().System.StageAt), stageAtDomainSuffix)
+	config := s.Config().System
+	switch mode := strings.ToLower(stageAt); mode {
+	case stageAtPath:
 		return types.AppPathDomain{Domain: prodApp.Domain, Path: prodApp.Path + types.STAGE_SUFFIX}, nil
-	case "domain":
-		domain := cmp.Or(prodApp.Domain, s.Config().System.DefaultDomain)
+	case stageAtDomain, stageAtDomainSuffix:
+		domain := cmp.Or(prodApp.Domain, config.DefaultDomain)
 		if domain == "" {
 			return types.AppPathDomain{}, fmt.Errorf("stage app domain could not be derived because app domain and default_domain are empty")
 		}
-		return types.AppPathDomain{Domain: stageDomain(domain, s.Config().System.DefaultStageDomain), Path: prodApp.Path}, nil
+		stage := stageDomain(domain, config.DefaultStageDomain)
+		if mode == stageAtDomainSuffix {
+			stage = stageDomainSuffix(domain, config.DefaultDomain, config.DefaultStageDomain)
+		}
+		if strings.Contains(stage, ":") {
+			// domain:path could not be parsed back from the stored link to the stage app
+			return types.AppPathDomain{}, fmt.Errorf("derived stage domain %q cannot contain ':', "+
+				"check default_stage_domain and default_domain or set stage_at for the app", stage)
+		}
+		return types.AppPathDomain{Domain: stage, Path: prodApp.Path}, nil
 	default:
 		domain, err := s.normalizeStageDomain(stageAt)
 		if err != nil {
@@ -1762,6 +1792,108 @@ func stageDomain(domain, defaultStageDomain string) string {
 		return defaultStageDomain + domain
 	}
 	return defaultStageDomain + "." + domain
+}
+
+// stageDomainSuffix derives the staging domain for the "domain_suffix" mode:
+// the stage label goes after the first label of the prod domain, so that
+// app.example.com stages at app.stage.example.com and the staging apps of
+// *.example.com are covered by *.stage.example.com (one DNS wildcard, one
+// wildcard certificate). Apex domains (see isStageApexDomain) have no parent
+// to put the label in, they get it prepended like the "domain" mode does.
+// domain is the effective prod domain (the app domain, or default_domain for
+// apps without one) and must not be empty
+func stageDomainSuffix(domain, defaultDomain, defaultStageDomain string) string {
+	label := strings.TrimSuffix(strings.TrimSpace(defaultStageDomain), ".")
+	if label == "" {
+		label = "stage"
+	}
+	if isStageApexDomain(domain, defaultDomain) {
+		return label + "." + domain
+	}
+	first, parent, _ := strings.Cut(domain, ".")
+	return first + "." + label + "." + parent
+}
+
+// stageApexLookupProfile maps a domain to the form the public suffix list is
+// written in: lower case, unicode normalized, punycode. The hostname checks
+// of the lookup mapping are off, since this classifies names and does not
+// validate them: app domains can have underscores, and hyphens anywhere
+var stageApexLookupProfile = idna.New(idna.MapForLookup(), idna.StrictDomainName(false), idna.CheckHyphens(false))
+
+// isStageApexDomain reports whether the domain is one whose parent cannot be
+// assumed to belong to the operator, in which case the stage label can only
+// be prepended. The default domain, bare hostnames and IP addresses are apex
+// domains. Subdomains of the default domain are not (the default domain is
+// the one zone the operator is known to use for apps). For everything else
+// the public suffix list decides: registrable domains (example.org,
+// example.co.uk, name.github.io) and public suffixes are apex domains, so the
+// label never lands in a zone like stage.org or stage.co.uk. This is a
+// classification of what the create path accepts, not hostname validation
+func isStageApexDomain(domain, defaultDomain string) bool {
+	if equalFoldASCII(domain, defaultDomain) {
+		return true
+	}
+	if !strings.Contains(domain, ".") || strings.HasPrefix(domain, ".") ||
+		strings.HasSuffix(domain, ".") || strings.Contains(domain, "..") {
+		return true // bare hostname, or a malformed name with an empty label
+	}
+	if net.ParseIP(domain) != nil {
+		return true
+	}
+
+	lookup, err := stageApexLookupProfile.ToASCII(domain)
+	if err != nil {
+		// Not a name which can be mapped (bad punycode, disallowed characters).
+		// Checked before the default domain rule: the labels of such a name
+		// are not known to be where its "." are
+		return true
+	}
+	if strings.Count(lookup, ".") != strings.Count(domain, ".") {
+		// The mapping changed the label boundaries: the name has characters
+		// which are label separators to a resolver but not a "." (like the
+		// ideographic full stop). The first "." is then not the end of the
+		// first label, inserting after it could leave the parent domain
+		return true
+	}
+	if isProperSubdomain(domain, defaultDomain) {
+		return false
+	}
+	registrable, err := publicsuffix.EffectiveTLDPlusOne(lookup)
+	// An error means the name is itself a public suffix
+	return err != nil || registrable == lookup
+}
+
+// isProperSubdomain reports whether domain is below parent, on a label
+// boundary (notexample.com is not below example.com). Comparison is ASCII
+// case insensitive
+func isProperSubdomain(domain, parent string) bool {
+	if parent == "" || len(domain) <= len(parent)+1 {
+		return false
+	}
+	split := len(domain) - len(parent)
+	return domain[split-1] == '.' && equalFoldASCII(domain[split:], parent)
+}
+
+// equalFoldASCII compares two strings byte by byte, ignoring the case of
+// ASCII letters only. Unlike strings.EqualFold it does no unicode case
+// folding, so non ASCII names have to match exactly
+func equalFoldASCII(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		ca, cb := a[i], b[i]
+		if 'A' <= ca && ca <= 'Z' {
+			ca += 'a' - 'A'
+		}
+		if 'A' <= cb && cb <= 'Z' {
+			cb += 'a' - 'A'
+		}
+		if ca != cb {
+			return false
+		}
+	}
+	return true
 }
 
 func parseLinkedAppPathDomain(linkedAppPath string) (types.AppPathDomain, error) {

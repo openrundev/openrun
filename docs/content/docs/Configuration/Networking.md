@@ -180,25 +180,64 @@ fallback_unknown_domains = false # set true to route unknown hostnames to the de
 
 ## Staging Domain
 
-New production apps get a linked staging app. By default, OpenRun creates the staging app on a staging subdomain and keeps the production path unchanged. For example, an app created at `example.com:/reports` gets a staging app at `stage.example.com:/reports`.
+New production apps get a linked staging app. By default, OpenRun creates the staging app on a staging subdomain and keeps the production path unchanged. An app created at `example.com:/reports` gets a staging app at `stage.example.com:/reports`, and an app on its own subdomain, `app.example.com:/`, gets a staging app at `app.stage.example.com:/`.
 
 The default staging location is controlled by `system.stage_at`:
 
 ```toml {filename="openrun.toml"}
 [system]
-stage_at = "domain"            # "domain", "path", or a staging domain
-default_stage_domain = "stage" # prefix used when stage_at is "domain"
+stage_at = "domain_suffix"     # "domain_suffix", "domain", "path", or a staging domain
+default_stage_domain = "stage" # stage label used when stage_at is "domain_suffix" or "domain"
 ```
 
-| `stage_at` value | Staging location |
-| :--- | :--- |
-| `domain` | `default_stage_domain` is prepended to the production domain, for example `stage.example.com:/reports` |
-| `path` | The production domain is kept and `_cl_stage` is suffixed to the path, for example `example.com:/reports_cl_stage` |
-| any domain | The specified domain is used with the production path, for example `staging.example.net:/reports` |
+| `stage_at` value | Staging app for `app.example.com:/` | Staging app for `example.com:/reports` |
+| :--- | :--- | :--- |
+| `domain_suffix` (default) | `app.stage.example.com:/` | `stage.example.com:/reports` |
+| `domain` | `stage.app.example.com:/` | `stage.example.com:/reports` |
+| `path` | `app.example.com:/_cl_stage` | `example.com:/reports_cl_stage` |
+| any domain, for example `staging.example.net` | `staging.example.net:/` | `staging.example.net:/reports` |
 
-- If an app is created without an explicit domain, `domain` mode uses `default_domain` as the production domain when deriving the staging domain. A staging domain value ending in `.` is expanded relative to `default_domain`.
-- For production deployments, make sure DNS and certificates cover the staging hostnames. A wildcard DNS entry such as `*.example.com` is the simplest setup when apps use subdomains. For local development, `*.localhost` names work with the default `localhost` domain.
-- The server setting only controls the default for new production apps. Override it per app with `openrun app create --stage-at path ...` or `openrun app create --stage-at staging.example.net ...`. In declarative apply files, use `stage_at="path"` or `stage_at="staging.example.net"` in the `app(...)` definition for apps being created.
+With `domain_suffix`, the stage label (`default_stage_domain`) goes after the first label of the app's domain: an app at `<name>.example.com` stages at `<name>.stage.example.com`. One wildcard DNS record and one wildcard certificate for `*.stage.example.com` then cover staging for all the apps that `*.example.com` covers. With `domain`, the label goes in front of the whole domain, which puts each staging app under its own app's hostname.
+
+Some domains have no parent to put the label in. For these, `domain_suffix` prepends the label, the same as `domain`:
+
+- the default domain itself (`default_domain`), which includes every app created without a domain
+- a registrable domain such as `example.org` or `example.co.uk`, or a hosted name such as `name.github.io`. These are identified using the [Public Suffix List](https://publicsuffix.org/), so that `example.org` does not stage at `example.stage.org`
+- a single label hostname or an IP address
+
+Subdomains of `default_domain` get the label inserted whatever the list says, so `default_domain` should be a domain you control and not a public suffix. This is what makes `app.localhost` and internal names like `app.corp.internal` (with `default_domain = "corp.internal"`) stage at `app.stage.localhost` and `app.stage.corp.internal`.
+
+{{< callout type="warning" >}}
+For a domain outside `default_domain`, OpenRun cannot know which DNS zone you control. It assumes you control the parent of the app's hostname. That is wrong when the hostname is the only name you were given: if a customer points `tools.customer.com` at your server, or you control just the delegated zone `team.corp.com` and create an app on that exact name, the staging app is derived as `tools.stage.customer.com` or `team.stage.corp.com`. The same applies to a provider domain which hands out subdomains and is not on the Public Suffix List. OpenRun does not verify the derived name: it may not resolve, or may resolve to a host you do not run. For such apps, set the staging location explicitly with `--stage-at stage.tools.customer.com` or `--stage-at domain`, or set `stage_at = "domain"` for the whole server.
+{{< /callout >}}
+
+- If an app is created without an explicit domain, the domain modes use `default_domain` as the production domain when deriving the staging domain. A staging domain value ending in `.` is expanded relative to `default_domain`.
+- The server setting only controls the default for new production apps. The staging location is fixed when the app is created: changing `stage_at` later, or re-applying an app with a different `stage_at`, does not move an existing staging app. `openrun app list --internal` shows where each staging app is.
+- Override the default per app with `openrun app create --stage-at domain ...`, `--stage-at path ...` or `--stage-at staging.example.net ...`. In declarative apply files, use `stage_at="domain"`, `stage_at="path"` or `stage_at="staging.example.net"` in the `app(...)` definition for apps being created.
+- Domains and the stage label must be lower case ASCII, with internationalized domain names entered in their punycode (`xn--`) form. Requests are matched against app domains exactly as they were entered, and deriving the staging domain does not normalize the name. A name which is not a well formed hostname (an empty label, characters that cannot be mapped) gets the label prepended.
+- The stage label can have more than one label (`stage.eu`). A trailing `.` on it is ignored, and it cannot contain `:`.
+- `domain_suffix` is a reserved word in `stage_at`. It cannot be used as the name of a staging domain.
+
+### DNS and certificates for staging
+
+For production deployments, make sure DNS and certificates cover the staging hostnames. For local development, `*.localhost` names work at any depth with the default `localhost` domain.
+
+When apps are subdomains of `example.com`, the full set of records is:
+
+| Record | Serves |
+| :--- | :--- |
+| `example.com` | apps on the default domain |
+| `*.example.com` | production apps on subdomains |
+| `stage.example.com` | staging for apps on the default domain |
+| `*.stage.example.com` | staging for apps on subdomains |
+
+A DNS wildcard `*.example.com` on its own also answers for `stage.example.com` and `app.stage.example.com`, but only while no other record exists at or below `stage.example.com`. Once any record is created there, including `*.stage.example.com` itself, both `stage.example.com` and `*.stage.example.com` need their own records. Creating all four records avoids the surprise.
+
+A wildcard certificate matches exactly one label, so `*.example.com` does not cover `app.stage.example.com`. Add `*.stage.example.com` and `stage.example.com` to the certificate. Automatic certificates (Let's Encrypt and mkcert) are issued per hostname and need no extra setup.
+
+In general, the staging name of a production hostname `app.<parent>` is `app.stage.<parent>`. An app at `x.team.example.com` stages at `x.stage.team.example.com`, which needs `*.stage.team.example.com` (or an exact record) in DNS and in the certificate.
+
+If the stage label is changed with `default_stage_domain`, replace `stage` in the names above with that value.
 
 ### List apps page
 

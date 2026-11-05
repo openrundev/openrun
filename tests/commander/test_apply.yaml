@@ -7,13 +7,39 @@ tests:
   apply0001: ## setup
     command: rm -rf /tmp/testapp && cp -r ./testapp /tmp
     exit-code: 0
-  apply0002: ## declarative app creation defaults stage_at to domain
+  apply0002: ## declarative app creation defaults stage_at to domain_suffix
     command: ../openrun apply ./apply_files/apply_stage_default.ace all
     stdout: "1 app(s) created, 0 app(s) updated, 0 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 0 app(s) promoted."
   apply0003:
     command: ../openrun app list -i -f json applystage.localhost:/ | jq -r 'map(select(.id | startswith("app_stg_")))[0] | .domain + ":" + .path'
     stdout:
-      exactly: "stage.applystage.localhost:/"
+      exactly: "applystage.stage.localhost:/"
+  apply0004: ## stage_at is a create time property: re-applying with another value does not move the stage app
+    command: printf 'app("applystage.localhost:/", "/tmp/testapp", stage_at="path")\n' > /tmp/apply_stage_changed.ace && ../openrun apply /tmp/apply_stage_changed.ace all
+    stdout: "0 app(s) created"
+    exit-code: 0
+  apply0005:
+    command: ../openrun app list -i -f json applystage.localhost:/ | jq -r 'map(select(.id | startswith("app_stg_")))[0] | .domain + ":" + .path'
+    stdout:
+      exactly: "applystage.stage.localhost:/"
+  apply0006: ## stage_at="domain" keeps the older shape, stage label before the app label
+    command: printf 'app("applypfx.localhost:/", "/tmp/testapp", stage_at="domain")\napp("applysfx.localhost:/", "/tmp/testapp", stage_at="domain_suffix")\n' > /tmp/apply_stage_modes.ace && ../openrun apply /tmp/apply_stage_modes.ace all
+    stdout: "2 app(s) created"
+  apply0007:
+    command: ../openrun app list -i -f json applypfx.localhost:/ | jq -r 'map(select(.id | startswith("app_stg_")))[0] | .domain + ":" + .path'
+    stdout:
+      exactly: "stage.applypfx.localhost:/"
+  apply0008:
+    command: ../openrun app list -i -f json applysfx.localhost:/ | jq -r 'map(select(.id | startswith("app_stg_")))[0] | .domain + ":" + .path'
+    stdout:
+      exactly: "applysfx.stage.localhost:/"
+  apply0009: ## export names the mode only where it differs from the server default
+    command: ../openrun export "apply*.localhost:/" | grep -c "stage_at"
+    stdout:
+      exactly: "1"
+  apply0009a:
+    command: ../openrun export "applypfx.localhost:/" | grep "stage_at"
+    stdout: 'stage_at="domain"'
   apply0010: ## create all apps
     command: ../openrun apply ./apply_files/apply1.ace all
     stdout: "4 app(s) created, 0 app(s) updated, 0 app(s) reloaded, 0 app(s) skipped, 0 app(s) approved, 0 app(s) promoted."

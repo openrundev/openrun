@@ -276,8 +276,14 @@ default_domain = "localhost"        # default domain for apps
 memory_high_water_bytes = 0         # memory in use (bytes) over which running Starlark handlers are canceled, to keep
                                     # app code from taking the server down; 0 uses 90% of the Go memory limit when
                                     # GOMEMLIMIT is set, else no check
-stage_at = "domain"                 # "domain", "path", or a domain for staging apps
-default_stage_domain = "stage"      # domain prefix for staging apps when stage_at is "domain"
+stage_at = "domain_suffix"          # where the staging app of a new prod app is created:
+                                    # "domain_suffix": stage label after the app label, app.example.com stages at
+                                    #    app.stage.example.com. The default domain and registrable domains (example.com)
+                                    #    get the label prepended (stage.example.com)
+                                    # "domain": stage label is prepended, app.example.com stages at stage.app.example.com
+                                    # "path": same domain, _cl_stage is suffixed to the path
+                                    # any other value is the domain to use for staging apps
+default_stage_domain = "stage"      # stage label used when stage_at is "domain_suffix" or "domain"
 root_serve_list_apps = "auto"       # "auto" means serve list_apps app for default domain, "disable" means don't server for any domain,
                                     # any other value means serve for specified domain
 enable_compression = true           # enable compression for HTTP responses
