@@ -7,6 +7,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [v0.20.15] - 2026-11-05
+
 ### Changed
 
 - New production apps on a subdomain now create their staging app with the stage label after the app's label, for example `app.stage.example.com` for `app.example.com`, instead of `stage.app.example.com`. The staging apps of `*.example.com` are then all under `*.stage.example.com`, so one wildcard DNS record and one wildcard certificate cover them. This is the new `stage_at` mode `domain_suffix`, which is now the default for `system.stage_at`.
