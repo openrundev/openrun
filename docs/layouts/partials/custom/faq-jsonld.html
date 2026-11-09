@@ -1,0 +1,23 @@
+{{- /* Emits FAQPage structured data from the "Frequently Asked Questions" section of a page.
+       Each h3 in that section is a question, the content up to the next h3 is the answer. */ -}}
+{{- $faqs := slice -}}
+{{- range after 1 (split .Content "<h2") -}}
+  {{- if hasPrefix (index (split (printf "<h2%s" .) "</h2>") 0 | plainify | htmlUnescape | strings.TrimSpace) "Frequently Asked Questions" -}}
+    {{- range after 1 (split . "<h3") -}}
+      {{- $parts := split (printf "<h3%s" .) "</h3>" -}}
+      {{- $question := index $parts 0 | plainify | htmlUnescape | strings.TrimSpace -}}
+      {{- $answer := delimit (after 1 $parts) "" | plainify | htmlUnescape | replaceRE `\s+` " " | strings.TrimSpace -}}
+      {{- if and $question $answer -}}
+        {{- $faqs = $faqs | append (dict
+          "@type" "Question"
+          "name" $question
+          "acceptedAnswer" (dict "@type" "Answer" "text" $answer)) -}}
+      {{- end -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- with $faqs }}
+  <script type="application/ld+json">
+    {{ dict "@context" "https://schema.org" "@type" "FAQPage" "mainEntity" . | jsonify | safeJS }}
+  </script>
+{{- end -}}

@@ -14,4 +14,5 @@ The short version: OpenRun differs from most alternatives in providing **true Gi
 {{< card link="cloud-run-app-runner" title="vs Cloud Run, App Runner" subtitle="OpenRun compared with managed serverless container platforms from Google and AWS" icon="cloud" >}}
 {{< card link="diy-kubernetes" title="vs DIY Kubernetes" subtitle="OpenRun compared with building your own platform from Jenkins, ArgoCD, Knative and an IDP" icon="cog" >}}
 {{< card link="retool-appsmith-budibase" title="vs Retool, Appsmith, Budibase" subtitle="OpenRun compared with low-code internal tool builders, for apps built as code with AI" icon="sparkles" >}}
+{{< card link="nginx-unit" title="vs NGINX Unit" subtitle="OpenRun compared with NGINX Unit, the multi-language app server which was archived in October 2025" icon="server" >}}
 {{< /cards >}}

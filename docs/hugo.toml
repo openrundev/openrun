@@ -140,6 +140,12 @@ parent = "compare"
 weight = 5
 
 [[menu.main]]
+name = "vs NGINX Unit"
+pageRef = "/compare/nginx-unit/"
+parent = "compare"
+weight = 6
+
+[[menu.main]]
 name = "Blog"
 pageRef = "/blog/"
 identifier = "blog"

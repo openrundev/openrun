@@ -51,6 +51,10 @@
   </script>
 {{- end }}
 
+{{- if and .IsPage (eq .Section "compare") }}
+  {{- partial "custom/faq-jsonld.html" . }}
+{{- end }}
+
 
 <script
   defer
