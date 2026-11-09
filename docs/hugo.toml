@@ -146,6 +146,18 @@ parent = "compare"
 weight = 6
 
 [[menu.main]]
+name = "vs Posit Connect, Streamlit Cloud, HF Spaces"
+pageRef = "/compare/posit-connect-streamlit-cloud-hugging-face-spaces/"
+parent = "compare"
+weight = 7
+
+[[menu.main]]
+name = "vs Heroku, Render, Railway, Fly.io"
+pageRef = "/compare/heroku-render-railway-fly/"
+parent = "compare"
+weight = 8
+
+[[menu.main]]
 name = "Blog"
 pageRef = "/blog/"
 identifier = "blog"

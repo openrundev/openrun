@@ -15,4 +15,6 @@ The short version: OpenRun differs from most alternatives in providing **true Gi
 {{< card link="diy-kubernetes" title="vs DIY Kubernetes" subtitle="OpenRun compared with building your own platform from Jenkins, ArgoCD, Knative and an IDP" icon="cog" >}}
 {{< card link="retool-appsmith-budibase" title="vs Retool, Appsmith, Budibase" subtitle="OpenRun compared with low-code internal tool builders, for apps built as code with AI" icon="sparkles" >}}
 {{< card link="nginx-unit" title="vs NGINX Unit" subtitle="OpenRun compared with NGINX Unit, the multi-language app server which was archived in October 2025" icon="server" >}}
+{{< card link="posit-connect-streamlit-cloud-hugging-face-spaces" title="vs Posit Connect, Streamlit Cloud, HF Spaces" subtitle="OpenRun compared with data app hosting on Posit Connect, Streamlit Community Cloud and Hugging Face Spaces" icon="chart-bar" >}}
+{{< card link="heroku-render-railway-fly" title="vs Heroku, Render, Railway, Fly.io" subtitle="OpenRun compared with hosted PaaS platforms like Heroku, Render, Railway and Fly.io" icon="globe-alt" >}}
 {{< /cards >}}
