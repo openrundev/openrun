@@ -1,0 +1,620 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenRun: one file, replayed</title>
+<meta name="description" content="A recorded OpenRun run, replayed in the browser: one declarative file becomes nine apps with login, access control, database roles, MCP tools, staging and idle shutdown.">
+<meta property="og:title" content="One file is the whole platform">
+<meta property="og:description" content="A recorded OpenRun run, replayed step by step: nine apps, one command, real output.">
+<meta property="og:image" content="https://openrun.dev/walkthrough/replay/poster.png">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="/favicon.svg">
+<style>
+:root {
+  --bg: #ffffff; --surface: #f5f7f5; --panel: #ffffff; --line: #dde2dd; --line-strong: #c5cdc6;
+  --text: #17211b; --muted: #5c6a61; --faint: #8a968d;
+  --accent: #007a00; --accent-soft: #e3f3e3; --accent-line: #00a200;
+  --deny: #b93227; --deny-soft: #fbe9e7;
+  --term-bg: #101612; --term-text: #d5dfd7; --term-dim: #7f8f84; --term-ok: #6fd36f; --term-err: #ff8a7a; --term-cmd: #ffffff;
+  --code-str: #0b6b3a; --code-com: #7b877f; --code-fn: #7a3e9d;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111111; --surface: #171a18; --panel: #1c201d; --line: #2b322d; --line-strong: #3b453d;
+    --text: #e7ede8; --muted: #9aa89e; --faint: #6f7c73;
+    --accent: #37c837; --accent-soft: #13301a; --accent-line: #00c200;
+    --deny: #ff8172; --deny-soft: #3a1815;
+    --term-bg: #0a0d0b;
+    --code-str: #7fd6a2; --code-com: #76837a; --code-fn: #c9a3e6;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111111; --surface: #171a18; --panel: #1c201d; --line: #2b322d; --line-strong: #3b453d;
+  --text: #e7ede8; --muted: #9aa89e; --faint: #6f7c73;
+  --accent: #37c837; --accent-soft: #13301a; --accent-line: #00c200;
+  --deny: #ff8172; --deny-soft: #3a1815;
+  --term-bg: #0a0d0b;
+  --code-str: #7fd6a2; --code-com: #76837a; --code-fn: #c9a3e6;
+}
+* { box-sizing: border-box; }
+html { background: var(--bg); }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 var(--sans); -webkit-text-size-adjust: 100%; }
+button { font: inherit; color: inherit; }
+code, pre { font-family: var(--mono); }
+a { color: var(--accent); text-underline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
+
+.wrap { max-width: 1160px; margin: 0 auto; padding: 16px; }
+body.embedded .wrap { padding: 2px; }
+
+/* header */
+.head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.head h1 { font-size: 17px; line-height: 1.3; margin: 0; font-weight: 650; }
+.head h1 span { color: var(--muted); font-weight: 400; }
+.btn { border: 1px solid var(--line-strong); background: var(--panel); border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.btn:hover:not(:disabled) { border-color: var(--accent-line); }
+.btn:disabled { opacity: .4; cursor: default; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+:root[data-theme="dark"] .btn.primary { color: #06210a; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .btn.primary { color: #06210a; } }
+.btn.quiet { border-color: transparent; background: none; color: var(--muted); padding: 6px 8px; }
+.btn svg { width: 11px; height: 11px; fill: currentColor; }
+
+/* stepper */
+.steps { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--panel); }
+.step { flex: 1 1 auto; border: 0; border-right: 1px solid var(--line); background: none; padding: 9px 10px; cursor: pointer; text-align: left; display: flex; gap: 7px; align-items: baseline; min-width: 0; }
+.step:last-child { border-right: 0; }
+.step .n { font: 600 11px var(--mono); color: var(--faint); }
+.step .l { font-size: 13px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+.step:hover .l { color: var(--text); }
+.step[aria-current="step"] { background: var(--accent-soft); }
+.step[aria-current="step"] .l, .step[aria-current="step"] .n { color: var(--accent); }
+
+/* what this step shows */
+.lede { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin: 16px 2px 14px; }
+.lede h2 { margin: 0 0 4px; font-size: 21px; line-height: 1.2; letter-spacing: -.01em; }
+.lede p { margin: 0; color: var(--muted); font-size: 14.5px; max-width: 74ch; min-height: 42px; }
+.lede code { font-size: 13px; color: var(--text); }
+.nav { display: flex; gap: 8px; flex: none; }
+
+/* board */
+.board { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: stretch; }
+.right { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.card { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+.card > header { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 7px 12px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); background: var(--surface); min-height: 34px; }
+.card > header strong { color: var(--text); font: 600 12.5px var(--mono); }
+.resultcard { flex: 1; min-height: 572px; }
+
+/* file */
+.code { margin: 0; padding: 8px 0; font: clamp(9.5px, 1vw, 11.5px)/18px var(--mono); overflow-x: auto; flex: 1; counter-reset: ln; tab-size: 4; }
+.code .ln { display: block; padding: 0 12px 0 0; white-space: pre; border-left: 3px solid transparent; transition: background .25s, opacity .25s; }
+.code .ln::before { counter-increment: ln; content: counter(ln); display: inline-block; width: 24px; margin-right: 10px; text-align: right; color: var(--faint); }
+.code.focus .ln { opacity: .45; }
+.code.focus .ln.hl { opacity: 1; background: var(--accent-soft); border-left-color: var(--accent-line); }
+.tok-c { color: var(--code-com); } .tok-s { color: var(--code-str); } .tok-f { color: var(--code-fn); font-weight: 600; }
+
+/* terminal */
+.term { background: var(--term-bg); color: var(--term-text); border-color: #232b25; }
+.term > header { background: #161d18; border-bottom-color: #232b25; color: var(--term-dim); }
+.term > header strong { color: var(--term-text); }
+.term pre { margin: 0; padding: 10px 12px; font: 11.5px/17px var(--mono); height: 156px; overflow: auto; white-space: pre-wrap; word-break: break-word; scrollbar-width: thin; }
+.term .cmd { color: var(--term-cmd); font-weight: 600; }
+.term .cmd::before { content: "$ "; color: var(--term-ok); }
+.term .req { color: var(--term-cmd); font-weight: 600; }
+.term .req::before { content: "> "; color: var(--term-ok); }
+.term .dim { color: var(--term-dim); } .term .ok { color: var(--term-ok); } .term .err { color: var(--term-err); }
+
+/* result panel */
+.view { padding: 12px; flex: 1; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.view p { margin: 0; }
+.sum { font-size: 13.5px; color: var(--muted); min-height: 20px; }
+.sum b { color: var(--text); font-weight: 650; }
+.label { font-size: 11.5px; font-weight: 650; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+
+.tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.tile { position: relative; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); padding: 0; cursor: pointer; text-align: left; overflow: hidden; display: flex; flex-direction: column; transition: opacity .3s, border-color .2s; min-width: 0; }
+.tile:hover { border-color: var(--accent-line); }
+.tile .thumb { display: block; aspect-ratio: 16 / 9; background: var(--surface); overflow: hidden; border-bottom: 1px solid var(--line); }
+.tile .thumb img { width: 100%; height: 100%; object-fit: cover; object-position: top left; display: block; transition: filter .3s, opacity .3s; background: #fff; }
+.tile .meta { display: flex; flex-direction: column; padding: 6px 8px 7px; min-width: 0; }
+.tile .path { font: 600 11.5px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile .kind { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chip { position: absolute; top: 6px; right: 6px; font: 600 10.5px var(--mono); padding: 2px 6px; border-radius: 4px; background: var(--panel); border: 1px solid var(--line-strong); color: var(--muted); white-space: nowrap; }
+.chip:empty { display: none; }
+.tile[data-tone="ok"] .chip { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
+.tile[data-tone="deny"] .chip { color: var(--deny); border-color: var(--deny); background: var(--deny-soft); }
+.tile[data-state="none"] { border-style: dashed; cursor: default; }
+.tile[data-state="none"] .thumb img, .tile[data-state="starting"] .thumb img { opacity: 0; }
+.tile[data-state="none"] .path, .tile[data-state="none"] .kind, .tile[data-state="off"] .path { color: var(--faint); }
+.tile[data-state="off"] .thumb img { filter: grayscale(1); opacity: .2; }
+
+/* user switch */
+.switch { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.seg { display: inline-flex; border: 1px solid var(--line-strong); border-radius: 6px; overflow: hidden; }
+.seg button { border: 0; border-right: 1px solid var(--line-strong); background: var(--panel); padding: 6px 12px; cursor: pointer; font-size: 13px; font-weight: 600; line-height: 1.2; text-align: left; }
+.seg button:last-child { border-right: 0; }
+.seg button small { display: block; font-weight: 400; color: var(--muted); font-size: 11.5px; }
+.seg button:hover { background: var(--surface); }
+.seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+.seg button[aria-pressed="true"] small { color: var(--accent); }
+
+/* tables and rows */
+.rows { width: 100%; border-collapse: collapse; font-size: 13px; }
+.rows th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 650; padding: 0 10px 6px 0; border-bottom: 1px solid var(--line); }
+.rows td { padding: 9px 10px 9px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+.rows td:last-child, .rows th:last-child { padding-right: 0; }
+.rows code { font-size: 12px; }
+.rows .sub { display: block; color: var(--muted); font-size: 12px; }
+.tag { display: inline-block; font: 600 11px var(--sans); padding: 1px 6px; border-radius: 3px; white-space: nowrap; background: var(--surface); color: var(--muted); }
+.tag.ok { color: var(--accent); background: var(--accent-soft); } .tag.deny { color: var(--deny); background: var(--deny-soft); }
+.gone td { color: var(--faint); } .gone code { text-decoration: line-through; }
+.callout { border: 1px solid var(--line); border-left: 3px solid var(--deny); border-radius: 4px; padding: 8px 10px; font-size: 13px; }
+.callout.ok { border-left-color: var(--accent-line); }
+.shot { display: block; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; padding: 0; background: #fff; cursor: pointer; margin: 0; }
+.shot img { display: block; width: 100%; height: auto; }
+.pair { display: grid; gap: 12px; }
+.pair figure { margin: 0; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.pair img { display: block; width: 100%; aspect-ratio: 500 / 140; object-fit: cover; object-position: left top; background: #fff; }
+.pair figcaption { padding: 6px 10px; font-size: 13px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; background: var(--surface); }
+.pair figcaption b { font: 600 12.5px var(--mono); }
+.big { font-size: 30px; font-weight: 650; line-height: 1; font-variant-numeric: tabular-nums; }
+.big small { font-size: 14px; font-weight: 400; color: var(--muted); margin-left: 6px; }
+.cta { font: 12px var(--mono); background: var(--term-bg); color: var(--term-text); padding: 8px 10px; border-radius: 6px; white-space: pre-wrap; word-break: break-all; }
+.push { margin-top: auto; display: flex; flex-direction: column; gap: 8px; }
+
+.foot { margin: 10px 2px 0; color: var(--muted); font-size: 12px; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+
+/* lightbox */
+dialog { border: 1px solid var(--line-strong); border-radius: 8px; padding: 0; background: var(--panel); color: var(--text); width: min(960px, 94vw); max-height: 92vh; }
+dialog::backdrop { background: rgb(0 0 0 / .55); }
+dialog .bar { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--surface); }
+dialog .bar code { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+dialog img { display: block; width: 100%; height: auto; background: #fff; }
+dialog .info { padding: 10px 12px; font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); }
+dialog .info b { color: var(--text); }
+
+@media (max-width: 860px) {
+  .board { display: flex; flex-direction: column; }
+  .resultcard { min-height: 0; }
+  .right { order: 1; } .filecard { order: 2; }
+  .code { max-height: 260px; font-size: 11px; }
+  .step { justify-content: center; padding: 10px 0; }
+  .step .l { display: none; }
+  .step[aria-current="step"] { flex-grow: 4; padding: 10px; }
+  .step[aria-current="step"] .l { display: inline; }
+  .lede { flex-direction: column; align-items: stretch; margin-top: 14px; }
+  .lede h2 { font-size: 19px; }
+  .lede p { min-height: 0; }
+  .nav { justify-content: space-between; }
+  .term pre { height: 140px; }
+}
+@media (max-width: 520px) {
+  .tiles { gap: 6px; }
+  .view { padding: 8px; }
+  .tile .kind { display: none; }
+  .tile .path { font-size: 10px; }
+  .tile .meta { padding: 4px 6px 5px; }
+  .chip { font-size: 9.5px; top: 3px; right: 3px; padding: 1px 4px; }
+  .seg { display: grid; grid-template-columns: 1fr 1fr; width: 100%; }
+  .seg button:nth-child(2n) { border-right: 0; }
+  .seg button:nth-child(n+3) { border-top: 1px solid var(--line-strong); }
+  .rows { font-size: 12px; } .rows code { font-size: 11px; }
+  .hide-s { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <h1>One file, one command <span>· a recorded OpenRun run you can step through</span></h1>
+    <button class="btn quiet" id="play" type="button"></button>
+  </div>
+
+  <nav class="steps" id="steps" aria-label="Steps"></nav>
+
+  <div class="lede">
+    <div aria-live="polite">
+      <h2 id="title"></h2>
+      <p id="blurb"></p>
+    </div>
+    <div class="nav">
+      <button class="btn" id="back" type="button">Back</button>
+      <button class="btn primary" id="next" type="button"></button>
+    </div>
+  </div>
+
+  <div class="board">
+    <section class="card filecard">
+      <header><strong>platform.star</strong><span id="filemeta"></span></header>
+      <pre class="code" id="code"></pre>
+    </section>
+    <div class="right">
+      <section class="card term">
+        <header><strong id="term-title">terminal</strong><span id="term-meta"></span></header>
+        <pre id="term" tabindex="0" aria-label="Recorded output"></pre>
+      </section>
+      <section class="card resultcard">
+        <header><strong id="view-title"></strong><span id="view-meta"></span></header>
+        <div class="view" id="view"></div>
+      </section>
+    </div>
+  </div>
+
+  <div class="foot">
+    <span id="foot"></span>
+    <span><a href="https://github.com/openrundev/demo" target="_top">Source for this demo</a> · <a href="/docs/quickstart/" target="_top">Quick start</a></span>
+  </div>
+</div>
+
+<dialog id="box">
+  <div class="bar"><code id="box-url"></code><button class="btn" id="box-close" type="button">Close</button></div>
+  <img id="box-img" alt="">
+  <div class="info" id="box-info"></div>
+</dialog>
+
+<script src="data.js"></script>
+<script>
+(() => {
+'use strict';
+const D = window.LAUNCH;
+const $ = (s, r = document) => r.querySelector(s);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const params = new URLSearchParams(location.search);
+const embedded = window.parent !== window;
+if (embedded) document.body.classList.add('embedded');
+
+/* ---- theme: follow the embedding page (same origin), else the system ---- */
+function syncTheme() {
+  let t = params.get('theme');
+  if (!t && embedded) {
+    try { const c = parent.document.documentElement.classList; t = c.contains('dark') ? 'dark' : c.contains('light') ? 'light' : null; } catch (e) { /* cross origin embed */ }
+  }
+  if (t) document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme;
+}
+syncTheme();
+if (embedded) {
+  try { new MutationObserver(syncTheme).observe(parent.document.documentElement, { attributes: true, attributeFilter: ['class'] }); } catch (e) { /* cross origin embed */ }
+  const post = () => parent.postMessage({ type: 'openrun-walkthrough-height', height: Math.ceil(document.documentElement.getBoundingClientRect().height) }, '*');
+  new ResizeObserver(post).observe(document.body);
+  addEventListener('load', post);
+}
+
+/* ---- the file ---- */
+const codeEl = $('#code');
+const lines = D.file.replace(/\n$/, '').split('\n');
+function highlight(line) {
+  let out = '', i = 0;
+  while (i < line.length) {
+    const ch = line[i];
+    if (ch === '#') { out += '<span class="tok-c">' + esc(line.slice(i)) + '</span>'; break; }
+    if (ch === '"') { const j = line.indexOf('"', i + 1); const e = j < 0 ? line.length : j + 1; out += '<span class="tok-s">' + esc(line.slice(i, e)) + '</span>'; i = e; continue; }
+    const m = /^(app|binding|config)(?=\()/.exec(line.slice(i));
+    if (m && (i === 0 || /[\s=(\[]/.test(line[i - 1]))) { out += '<span class="tok-f">' + m[1] + '</span>'; i += m[1].length; continue; }
+    out += esc(ch); i++;
+  }
+  return out || ' ';
+}
+codeEl.innerHTML = lines.map((l, i) => `<span class="ln" data-n="${i + 1}">${highlight(l)}</span>`).join('');
+$('#filemeta').textContent = lines.length + ' lines';
+let stepLines = [];
+function hl(nums) {
+  codeEl.classList.toggle('focus', nums.length > 0);
+  codeEl.querySelectorAll('.ln').forEach((el) => el.classList.toggle('hl', nums.includes(+el.dataset.n)));
+}
+const appById = Object.fromEntries(D.apps.map((a) => [a.id, a]));
+const ALL = D.apps.map((a) => a.id);
+const BOXED = D.apps.filter((a) => a.container).map((a) => a.id);
+const linesOf = (ids) => ids.flatMap((id) => { const [a, b] = appById[id].lines; const r = []; for (let n = a; n <= b; n++) r.push(n); return r; });
+
+/* ---- terminal ---- */
+const termEl = $('#term');
+const term = {
+  reset(title = 'terminal', meta = '') { termEl.textContent = ''; $('#term-title').textContent = title; $('#term-meta').textContent = meta; },
+  add(text, cls) { const s = document.createElement('span'); if (cls) s.className = cls; s.textContent = text + '\n'; termEl.append(s); termEl.scrollTop = termEl.scrollHeight; },
+  async cmd(text, cls = 'cmd') {
+    const s = document.createElement('span'); s.className = cls; termEl.append(s);
+    const n = Math.max(1, Math.ceil(text.length / 24));
+    for (let i = 0; i <= text.length; i += n) { s.textContent = text.slice(0, i); termEl.scrollTop = termEl.scrollHeight; await sleep(24); }
+    s.textContent = text + '\n'; termEl.scrollTop = termEl.scrollHeight; await sleep(350);
+  },
+};
+
+/* ---- result panel ---- */
+const viewEl = $('#view');
+function view(title, html, meta = '') { $('#view-title').textContent = title; $('#view-meta').textContent = meta; viewEl.innerHTML = html; }
+const gridHTML = () => `<div class="tiles">${D.apps.map((a) => `<button class="tile" type="button" data-id="${a.id}" data-shot="${a.shot}" data-state="up" aria-label="${esc(a.path)}, ${esc(a.kind)}">
+  <span class="thumb"><img src="shots/${a.shot}.webp" alt="" width="600" height="375"></span>
+  <span class="meta"><span class="path">${esc(a.path)}</span><span class="kind">${esc(a.kind)}</span></span>
+  <span class="chip"></span></button>`).join('')}</div>`;
+function tile(id, state, chip = '', tone = '') {
+  const el = viewEl.querySelector(`.tile[data-id="${id}"]`); if (!el) return;
+  el.dataset.state = state; el.dataset.tone = tone; el.querySelector('.chip').textContent = chip;
+}
+const tiles = (ids, state, chip = '', tone = '') => ids.forEach((id) => tile(id, state, chip, tone));
+const sum = (html) => { const el = $('#sum'); if (el) el.innerHTML = html; };
+const SUM = '<p class="sum" id="sum" aria-live="polite"></p>';
+
+/* ---- lightbox: any element with data-shot opens the full screenshot ---- */
+const box = $('#box');
+viewEl.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-shot]'); if (!el || el.dataset.state === 'none') return;
+  stopAuto();
+  const a = appById[el.dataset.id];
+  $('#box-url').textContent = el.dataset.url || a.url;
+  $('#box-img').src = 'shots/' + el.dataset.shot + '.webp';
+  $('#box-img').alt = 'Screenshot of ' + a.path;
+  $('#box-info').innerHTML = `<b>${esc(a.kind)}</b> · ${esc(a.about)}<br>Who can open it: ${esc(a.access)}`;
+  box.showModal();
+});
+$('#box-close').onclick = () => box.close();
+box.addEventListener('click', (e) => { if (e.target === box) box.close(); });
+/* pointing at an app shows where it is declared */
+viewEl.addEventListener('mouseover', (e) => { const el = e.target.closest('.tile'); if (el) hl(linesOf([el.dataset.id])); });
+viewEl.addEventListener('mouseout', (e) => { if (e.target.closest('.tile')) hl(stepLines); });
+
+/* ---- run control ---- */
+const CANCEL = Symbol('cancel');
+let runId = 0, paused = false, auto = false, running = false, current = 0;
+function sleep(ms) {
+  const my = runId;
+  if (reduced) return my === runId ? Promise.resolve() : Promise.reject(CANCEL);
+  return new Promise((res, rej) => {
+    let left = ms, last = performance.now();
+    (function tick() {
+      if (my !== runId) return rej(CANCEL);
+      const now = performance.now(); if (!paused) left -= now - last; last = now;
+      if (left <= 0) return res();
+      setTimeout(tick, Math.min(left, 40));
+    })();
+  });
+}
+const secs = (n) => (n < 10 ? n.toFixed(1) : Math.round(n)) + ' s';
+const short = (n) => (n < 1 ? Math.round(n * 1000) + ' ms' : secs(n));
+const seg = (items, label) => `<div class="switch"><span class="label">${label}</span><div class="seg" role="group" aria-label="${label}">${items.map((u) => `<button type="button" data-id="${u.id}" aria-pressed="false">${esc(u.label)}<small>${esc(u.sub)}</small></button>`).join('')}</div></div>`;
+/* a click on a user switch ends the scripted part of the step and hands over */
+function onSwitch(fn) {
+  viewEl.querySelectorAll('.seg button').forEach((b) => b.onclick = () => { runId++; running = false; auto = false; paint(); fn(b.dataset.id); });
+}
+const pressed = (id) => viewEl.querySelectorAll('.seg button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.id === id)));
+
+/* ---- step 2: what a user can open ---- */
+function showUser(id) {
+  pressed(id);
+  const m = D.matrix[id]; let n = 0;
+  ALL.forEach((a) => {
+    if (m[a] === 200) { n++; tile(a, 'up'); }
+    else tile(a, 'off', m[a] === 403 ? 'no access' : 'sign in', m[a] === 403 ? 'deny' : '');
+  });
+  const u = D.users.find((x) => x.id === id);
+  sum(`<b>${id === 'anonymous' ? 'Without signing in' : esc(u.label)}</b>: ${n} of 9 apps open. ${esc(u.why)}`);
+}
+
+/* ---- step 4: what an agent is offered, and what happens when it calls ---- */
+function toolRows(id) {
+  const have = Object.fromEntries(D.mcp.tools[id].map((t) => [t.name, t]));
+  const main = D.mcp.main.map((name) => {
+    const t = have[name] || D.mcp.tools.bob.find((x) => x.name === name);
+    const tag = !have[name] ? '<span class="tag deny">not offered</span>' : t.destructive ? '<span class="tag">needs confirmation</span>' : '<span class="tag ok">read only</span>';
+    return `<tr class="${have[name] ? '' : 'gone'}"><td><code>${esc(name)}</code><span class="sub">${esc(t.about)}</span></td><td>${tag}</td></tr>`;
+  }).join('');
+  const rest = D.mcp.tools[id].filter((t) => !D.mcp.main.includes(t.name)).map((t) => t.name);
+  return `<table class="rows"><tr><th>Tools offered to ${esc(id)}'s agent</th><th></th></tr>${main}</table><p class="sum">Plus ${rest.length} helper tools: ${rest.map(esc).join(', ')}.</p>`;
+}
+async function showAgent(id, animate) {
+  pressed(id);
+  $('#tools').innerHTML = toolRows(id);
+  term.reset('mcp', `${id}'s agent · ${D.mcp.endpoint}`);
+  await term.cmd('tools/list', 'req');
+  term.add(D.mcp.tools[id].map((t) => t.name).join('  '));
+  for (const c of D.mcp.calls[id]) {
+    if (animate) await sleep(900);
+    await term.cmd(`tools/call ${c.tool} ${c.args}`, 'req');
+    term.add(c.text, c.failed ? 'err' : '');
+  }
+}
+
+/* ---- steps ---- */
+const STEPS = [
+  {
+    label: 'Deploy', title: 'One command deploys nine apps',
+    blurb: '<code>openrun apply</code> reads <code>platform.star</code>. Each app is built from its source folder and started on its first request. None of them has a Dockerfile.',
+    lines: () => [],
+    setup() { view('the server', gridHTML() + SUM); tiles(ALL, 'none'); sum('Nothing is running yet.'); },
+    async play() {
+      await term.cmd(D.apply.cmd);
+      await sleep(600);
+      term.add(D.apply.out); term.add(`took ${secs(D.apply.secs)}`, 'dim');
+      hl(linesOf(ALL));
+      tiles(ALL, 'starting', 'starting');
+      sum(`<b>9 apps created</b> in ${secs(D.apply.secs)}. Sending each one its first request…`);
+      let t = 0;
+      for (const a of [...D.apps].sort((x, y) => x.first - y.first)) {
+        await sleep(Math.max(140, (a.first - t) * 420)); t = a.first;
+        tile(a.id, 'up', short(a.first), 'ok');
+      }
+      sum(`<b>All nine apps answering ${secs(D.apply.secs + D.firstWall)} after pressing enter.</b> Click an app to look at it.`);
+      hl([]);
+    },
+  },
+  {
+    label: 'Auth', title: 'Every app is behind the same login',
+    blurb: 'The apps contain no auth code. Who can open what is a grant per team, set once on the server. Switch users to see what each of them can open.',
+    lines: () => linesOf(['docs']),
+    setup() { view('the server', seg(D.users, 'Viewing as') + SUM + gridHTML()); onSwitch(showUser); showUser('anonymous'); },
+    async play() {
+      await term.cmd(D.auth.anonCmd); term.add(D.auth.anonOut, 'err');
+      await sleep(1300);
+      showUser('alice');
+      await term.cmd(D.auth.whoCmd); term.add(D.auth.whoOut);
+      if (!auto) return;
+      await sleep(2000); showUser('bob');
+      await sleep(2000); showUser('carol');
+      await sleep(1200);
+    },
+  },
+  {
+    label: 'Service bindings', title: 'Each app gets its own database credentials',
+    blurb: 'A binding gives an app its own role in a shared Postgres. These three apps use one schema. OpenRun creates the roles and passwords, and the database enforces the grants.',
+    lines: () => D.db.lines.concat(linesOf(['tasks-admin', 'tasks-edit', 'tasks-view'])),
+    setup() {
+      view('postgres/main', `<table class="rows"><tr><th>App</th><th>Its binding grants</th><th class="hide-s">Postgres role it connects as</th></tr>${D.db.rows.map((r) => `<tr><td><code>${esc(r.app)}</code></td><td>${esc(r.grants)}<span class="sub">${esc(r.means)}</span></td><td class="hide-s"><code>${esc(r.role)}</code></td></tr>`).join('')}</table>
+        <p class="sum">Nobody typed a password. Each app receives only its own.</p><div id="proof" class="push"></div>`, 'one schema, three roles');
+    },
+    async play() {
+      await term.cmd(D.db.selectCmd); term.add(D.db.selectOut);
+      await sleep(1100);
+      await term.cmd(D.db.insertCmd); term.add(D.db.insertOut, 'err');
+      await sleep(500);
+      $('#proof').innerHTML = `<p class="label">The read-only app, when someone tries to add a task</p><button class="shot" type="button" data-id="tasks-view" data-shot="tasks-view-denied" aria-label="Screenshot of /tasks/view refusing a write"><img src="shots/tasks-view-denied-crop.webp" alt="" width="1100" height="250"></button>`;
+    },
+  },
+  {
+    label: 'Agents', title: 'Actions are MCP tools for AI agents',
+    blurb: '<code>/ops/svc</code> is two Starlark functions. People get a web form and agents get MCP tools, under the same access rules. Switch agents to compare what each is offered.',
+    lines: () => linesOf(['svc']),
+    setup() {
+      view('/ops/svc', seg(D.mcp.agents, 'Agent acting for') + '<div id="tools"></div>' +
+        `<div class="push"><p class="label">The same restart action, as the form people use</p><button class="shot" type="button" data-id="svc" data-shot="svc-restart" aria-label="Screenshot of the restart form"><img src="shots/svc-restart-crop.webp" alt="" width="920" height="420"></button></div>`);
+      onSwitch((id) => showAgent(id, false).catch(() => {}));
+      pressed('carol'); $('#tools').innerHTML = toolRows('carol');
+    },
+    async play() {
+      await showAgent('carol', true);
+      if (!auto) return;
+      await sleep(2200);
+      await showAgent('bob', true);
+      await sleep(1200);
+    },
+  },
+  {
+    label: 'Ship', title: 'Changes are staged, then promoted',
+    blurb: 'Applying a change updates a staging copy of the app. Production keeps serving the old version until you promote, and earlier versions stay available to switch back to.',
+    lines: () => linesOf(['handbook']),
+    pair(prod, v) { return `<div class="pair"><figure><figcaption><span>Staging <b>stage.localhost</b></span><span>version 2</span></figcaption><img src="shots/handbook-stage-crop.webp" alt="Staging handbook, with the new line"></figure><figure><figcaption><span>Production <b>localhost</b></span><span>version ${v}</span></figcaption><img src="shots/${prod}-crop.webp" alt="Production handbook"></figure></div>`; },
+    setup() { view('/shared/handbook', '<p class="sum">One line was added to the handbook page.</p><div id="pair"></div>' + SUM); },
+    async play() {
+      await term.cmd(D.ship.applyCmd); term.add(D.ship.applyOut);
+      $('#pair').innerHTML = this.pair('handbook', 1);
+      sum('The new line is on staging only.');
+      await sleep(2400);
+      await term.cmd(D.ship.promoteCmd); term.add(D.ship.promoteOut);
+      $('#pair').innerHTML = this.pair('handbook-stage', 2);
+      sum('<b>Promoted.</b> Production now serves version 2.');
+    },
+  },
+  {
+    label: 'Idle', title: 'Idle apps stop, and start again on the next request',
+    blurb: 'A container that gets no requests for three minutes is stopped. The next request starts it again, so apps nobody is using take no memory.',
+    lines: () => linesOf(BOXED),
+    setup() { view('the server', SUM + gridHTML()); sum(`<b>${D.idle.before} containers running</b>, using ${D.idle.mem} MiB.`); },
+    async play() {
+      await term.cmd(D.idle.countCmd); term.add(D.idle.before);
+      await sleep(900);
+      term.add(`(${D.idle.waitSecs} seconds pass with no requests)`, 'dim');
+      for (const id of BOXED) { await sleep(220); tile(id, 'off', 'stopped'); }
+      await term.cmd(D.idle.countCmd); term.add(D.idle.after);
+      sum('<b>0 containers running</b>, 0 MiB. The apps are still deployed.');
+      await sleep(1500);
+      for (const [i, w] of D.idle.wake.entries()) {
+        if (i === 0) await term.cmd(w.cmd);   /* the terminal shows the first wake-up, the tiles show all four */
+        tile(w.id, 'starting', 'starting');
+        await sleep(Math.max(300, w.secs * 400));
+        if (i === 0) term.add(w.out);
+        tile(w.id, 'up', short(w.secs), 'ok');
+        await sleep(500);
+      }
+      sum(`Four apps get a request. A stopped app answers in <b>${secs(Math.min(...D.idle.wake.map((w) => w.secs)))} to ${secs(Math.max(...D.idle.wake.map((w) => w.secs)))}</b>.`);
+    },
+  },
+  {
+    label: 'Destroy', title: 'Delete everything, then bring it back',
+    blurb: 'The file is the source of truth. Delete what it declares and the apps, containers and database roles go. Apply it again and they are back. Only the data in Postgres needs a backup.',
+    lines: () => [],
+    setup() { view('the server', SUM + gridHTML()); sum('<b>9 apps</b> deployed.'); },
+    async play() {
+      await term.cmd(D.destroy.delCmd);
+      await sleep(500);
+      for (const id of [...ALL].reverse()) { await sleep(90); tile(id, 'none'); }
+      term.add(D.destroy.delOut); term.add(`took ${secs(D.destroy.delSecs)}`, 'dim');
+      sum(`<b>Everything deleted</b> in ${secs(D.destroy.delSecs)}: 0 apps, 0 containers, 0 database roles.`);
+      await sleep(2000);
+      await term.cmd(D.apply.cmd);
+      await sleep(500);
+      term.add(D.destroy.applyOut); term.add(`took ${secs(D.destroy.applySecs)}`, 'dim');
+      tiles(ALL, 'starting', 'starting');
+      let t = 0;
+      for (const h of [...D.destroy.hits].sort((x, y) => x.secs - y.secs)) { await sleep(Math.max(120, (h.secs - t) * 380)); t = h.secs; tile(h.id, 'up', short(h.secs), 'ok'); }
+      sum(`<b>All nine apps back ${secs(D.destroy.applySecs + D.destroy.wall)} after applying the same file.</b>`);
+    },
+  },
+  {
+    label: 'Audit', title: 'Everything that happened is on record',
+    blurb: 'OpenRun keeps an audit log of who did what, to which app. Below are the agent calls from step 4, as the server recorded them.',
+    lines: () => [],
+    setup() {
+      view('audit log', `<p class="big">${D.audit.total}<small>events recorded during this run</small></p>
+        <table class="rows"><tr><th>Who</th><th>Tool call</th><th>Result</th></tr>${D.audit.rows.filter((r) => r.op === 'tools/call').map((r) => `<tr><td><code>${esc(r.user)}</code></td><td><code>${esc(r.target)}</code></td><td><span class="tag ${r.status === 'Success' ? 'ok' : 'deny'}">${esc(r.status)}</span></td></tr>`).join('')}</table>
+        <div class="push"><p class="label">Run this demo yourself</p><div class="cta">curl -sSL https://openrun.dev/install.sh | sh</div><div class="cta">openrun apply --approve --promote ${esc(D.source)}/platform.star</div><p class="sum">The users, grants and Postgres service are server settings. The demo's README has the setup script.</p></div>`);
+    },
+    async play() { await term.cmd(D.audit.cmd); term.add(D.audit.out); },
+  },
+];
+
+/* ---- stepper and navigation ---- */
+const stepsEl = $('#steps');
+stepsEl.innerHTML = STEPS.map((s, i) => `<button class="step" type="button" data-i="${i}"><span class="n">${i + 1}</span><span class="l">${s.label}</span></button>`).join('');
+stepsEl.addEventListener('click', (e) => { const b = e.target.closest('.step'); if (b) { auto = false; go(+b.dataset.i); } });
+const playBtn = $('#play'), nextBtn = $('#next'), backBtn = $('#back');
+const ICON = { play: '<svg viewBox="0 0 12 12"><path d="M2 1l9 5-9 5z"/></svg>', pause: '<svg viewBox="0 0 12 12"><path d="M2 1h3v10H2zM7 1h3v10H7z"/></svg>' };
+function paint() {
+  const playing = auto && running && !paused;
+  playBtn.innerHTML = (playing ? ICON.pause : ICON.play) + (playing ? 'Pause' : auto && paused ? 'Resume' : 'Play all steps');
+  stepsEl.querySelectorAll('.step').forEach((b, i) => { if (i === current) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current'); });
+  backBtn.disabled = current === 0;
+  const last = current === STEPS.length - 1;
+  nextBtn.innerHTML = last ? 'Start over' : `Next: ${STEPS[current + 1].label}`;
+}
+function stopAuto() { if (auto) { auto = false; paint(); } }
+playBtn.onclick = () => {
+  if (auto && running) { paused = !paused; paint(); return; }
+  auto = true; go(started && current < STEPS.length - 1 ? current : 0);
+};
+nextBtn.onclick = () => { auto = false; go(current === STEPS.length - 1 ? 0 : current + 1); };
+backBtn.onclick = () => { auto = false; go(current - 1); };
+
+let started = false;
+function show(i) {
+  current = i; const s = STEPS[i];
+  $('#title').textContent = s.title; $('#blurb').innerHTML = s.blurb;
+  term.reset(); stepLines = s.lines(); hl(stepLines); s.setup();
+}
+async function go(i) {
+  const my = ++runId; started = true; running = true; paused = false; show(i); paint();
+  try {
+    await STEPS[i].play();
+    if (my !== runId) return;
+    if (auto && i < STEPS.length - 1) { await sleep(2600); if (my === runId) go(i + 1); return; }
+    running = false; auto = false; paint();
+  } catch (e) { if (e !== CANCEL) throw e; }
+}
+
+/* ---- first paint, then play step 1 once it scrolls into view ---- */
+$('#foot').textContent = D.footnote;
+show(0); paint();
+const want = params.get('step');
+if (want) { auto = params.has('auto'); go(Math.max(0, Math.min(STEPS.length - 1, +want - 1))); }
+else if (reduced) go(0);
+else if (params.get('autoplay') !== '0') {
+  const io = new IntersectionObserver((es) => { if (es.some((e) => e.intersectionRatio >= 0.4) && !started) { io.disconnect(); go(0); } }, { threshold: [0.4] });
+  io.observe($('.board'));
+}
+})();
+</script>
+</body>
+</html>

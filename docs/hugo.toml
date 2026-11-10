@@ -201,8 +201,8 @@ parent = "more"
 weight = 4
 
 [[menu.main]]
-name = "Demo"
-pageRef = "/demo/"
+name = "Walkthrough"
+pageRef = "/walkthrough/"
 parent = "more"
 weight = 5
 

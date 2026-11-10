@@ -1,0 +1,40 @@
+{{- /* Embeds the recorded platform.star replay (static/walkthrough/replay/index.html).
+  The page follows the site theme (it reads the light/dark class Hextra
+  stamps on <html>, same origin) and reports its height, so the iframe
+  never scrolls on its own. It needs about 900px for its two columns, so
+  use it on a wide page (content/walkthrough.md uses the hextra-home layout).
+
+  The data it replays (static/walkthrough/replay/data.js and shots/) is generated from
+  a real run of the demo repo (github.com/openrundev/demo), see its README.
+
+  Usage:
+  {{< walkthrough
+>}}
+{{< walkthrough caption="A recorded run of the demo repo" >}}
+*/ -}}
+<figure class="walkthrough">
+  <iframe
+    src="/walkthrough/replay/?v=20261110d"
+    title="OpenRun: demo workload, replayed step by step"
+    loading="lazy"
+    scrolling="no"></iframe>
+  {{- with .Get "caption" }}
+    <figcaption>{{ . }}</figcaption>
+  {{- end }}
+</figure>
+<script>
+  if (!window.__walkthrough) {
+    window.__walkthrough = true;
+    window.addEventListener("message", function (e) {
+      if (
+        e.origin !== location.origin ||
+        !e.data ||
+        e.data.type !== "openrun-walkthrough-height"
+      )
+        return;
+      document.querySelectorAll(".walkthrough iframe").forEach(function (f) {
+        if (f.contentWindow === e.source) f.style.height = e.data.height + "px";
+      });
+    });
+  }
+</script>
