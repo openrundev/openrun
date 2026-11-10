@@ -103,6 +103,8 @@ Yes. OpenRun is Apache-2.0 licensed, developed at [github.com/openrundev/openrun
 
 ## How is OpenRun implemented?
 
+{{< theme-image light="/d2/architecture_static_light.svg" dark="/d2/architecture_static_dark.svg" alt="OpenRun architecture: a single binary server with three columns. Deploy: developers and admins use the management API through the CLI, console, REST or MCP, and GitOps sync reads app declarations from Git; the builder creates images and pushes them to a container registry, and the container manager starts and stops containers. Serve: app users and AI agents reach the web server, which handles TLS and routing, then auth with an identity provider login, RBAC and the app runtime that proxies to app containers on Docker, Podman or Kubernetes. Platform: secrets resolved from secret managers, a SQLite or Postgres metadata database replicated to S3 storage, the audit log, and service bindings that provision per app credentials on databases" caption="OpenRun architecture" >}}
+
 - OpenRun is a single binary web application server written in Go, with a set of built-in plugins that provide access to external endpoints. The server is statically configured using a TOML file.
 - Applications are configured using [Starlark](https://github.com/google/starlark-go), a subset of Python. Starlark works well as a glue language and is used to configure the application backend logic.
 - Multiple applications can be installed dynamically. An embedded SQLite database stores application metadata; an external Postgres database can be used instead for multi-node deployments.

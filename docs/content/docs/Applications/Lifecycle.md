@@ -17,7 +17,7 @@ An OpenRun application can be one of four types:
 | **Staging Apps** | For reviewing code and config changes before they are pushed to prod. Every prod app has one staging app. |
 | **Preview Apps** | For creating a review environment for code changes, useful as part of code review. |
 
-{{< theme-image light="/d2/app_lifecycle_light.svg" dark="/d2/app_lifecycle_dark.svg" alt="Dev apps run from local disk with live reload. Reloads from disk or git update the staging app, which is promoted to the production app. Preview apps are created from a git commit" >}}
+{{< theme-image light="/d2/app_lifecycle_light.svg" dark="/d2/app_lifecycle_dark.svg" alt="Dev apps run from local disk with live reload. Reloads from disk or git update the staging app, which is promoted to the production app. Preview apps are created from a git commit" caption="Dev, staging, production and preview apps" >}}
 
 ## Lifecycle without Git
 

@@ -8,7 +8,7 @@ summary: "Quick start for self-hosted web app deployment on a VPS, single server
 
 OpenRun is an Apache-2.0 licensed, self-hosted platform for deploying web apps and internal tools. One binary runs the server on Linux, macOS or Windows. Apps run as containers on Docker or Podman on a single server, or as deployments on a Kubernetes cluster. App configuration is kept in a declaration file that is applied from the CLI or synced from Git. See how OpenRun [compares]({{< ref "compare" >}}) with self-hosted PaaS platforms, managed container services and DIY Kubernetes setups.
 
-{{< theme-image light="/d2/quickstart_overview_light.svg" dark="/d2/quickstart_overview_dark.svg" alt="OpenRun overview: apps are managed through a declaration file in Git, the CLI or the console; the server routes user requests through TLS, login and RBAC to staging and production apps backed by containers or Starlark handlers" >}}
+{{< theme-image light="/d2/quickstart_overview_light.svg" dark="/d2/quickstart_overview_dark.svg" alt="OpenRun overview: apps are managed through a declaration file in Git, the CLI or the console; the server routes user requests through TLS, login and RBAC to staging and production apps backed by containers or Starlark handlers" caption="OpenRun overview" >}}
 
 The quick start is split into three pages:
 
@@ -28,7 +28,7 @@ The quick start is split into three pages:
 
 ## Onboarding
 
-{{< theme-image light="/d2/quickstart_onboarding_light.svg" dark="/d2/quickstart_onboarding_dark.svg" alt="Six onboarding steps: install, start the server, declare apps, apply, open the app, keep the file in Git" >}}
+{{< theme-image light="/d2/quickstart_onboarding_light.svg" dark="/d2/quickstart_onboarding_dark.svg" alt="Six onboarding steps: install, start the server, declare apps, apply, open the app, keep the file in Git" caption="Onboarding steps" >}}
 
 {{% steps %}}
 

@@ -15,7 +15,7 @@ An app deployed through OpenRun can be an [MCP](https://modelcontextprotocol.io)
 
 The app itself implements no authentication. Any MCP server that speaks Streamable HTTP without its own auth works unchanged.
 
-{{< theme-image light="/d2/mcp_app_auth_light.svg" dark="/d2/mcp_app_auth_dark.svg" alt="The MCP client discovers the protected-resource metadata, logs in through the OpenRun authorization server to get a token bound to the app, and calls the app MCP endpoint, which strips the token and adds the user headers before proxying to the app" >}}
+{{< theme-image light="/d2/mcp_app_auth_light.svg" dark="/d2/mcp_app_auth_dark.svg" alt="The MCP client discovers the protected-resource metadata, logs in through the OpenRun authorization server to get a token bound to the app, and calls the app MCP endpoint, which strips the token and adds the user headers before proxying to the app" caption="MCP app authentication flow" >}}
 
 ## Deploying an MCP app
 

@@ -1,0 +1,47 @@
+# https://d2lang.com diagram. Use make update-diagrams to generate SVG; the layout engine is the suffix in the file name.
+#
+# User level view: who uses OpenRun, how, and what they run on it. Deploy and configure connections are purple,
+# usage connections are blue, matching app_flows.tala.d2 and architecture.tala.d2.
+# Every shape is pinned with top/left (supported by TALA only).
+
+vars: {
+  d2-config: {pad: 24}
+}
+
+classes: {
+  node: {style.font-size: 20}
+  actor: {shape: person; width: 68; height: 68; style.font-size: 20; label.near: outside-top-center}
+  header: {shape: text; style: {font-size: 17; bold: true}}
+  deploy: {style: {stroke: "#AE3EC9"; stroke-width: 3; animated: true; font-size: 16}}
+  use: {style: {stroke: "#1C7ED6"; stroke-width: 3; animated: true; font-size: 16}}
+  runs: {style: {animated: true; font-size: 16}}
+}
+
+h_who: "WHO" {class: header; top: 0; left: 72}
+h_what: "WHAT RUNS ON IT" {class: header; top: 0; left: 900}
+
+devs: "Developers" {class: actor; top: 70; left: 56}
+admins: "Admins" {class: actor; top: 230; left: 56}
+users: "Team members" {class: actor; top: 390; left: 56}
+agents: "AI agents" {class: actor; top: 550; left: 56}
+
+openrun: "OpenRun\n\nsingle binary on a VPS,\na server or Kubernetes\n\nGitOps deploys, auto TLS\nSSO, RBAC, audit log\ndatabase service bindings" {
+  class: node
+  top: 180; left: 430; width: 300; height: 300
+  style: {stroke-width: 2; font-size: 22}
+}
+
+tools: "Internal tools\nStreamlit, Gradio, FastAPI\nNext.js, any container" {class: node; top: 40; left: 900; width: 300; height: 96}
+ops: "Ops tools\none function: web form\nCLI and MCP tool" {class: node; top: 200; left: 900; width: 300; height: 96}
+sqlite: "SQLite apps\npersistent volume\nbackups to S3" {class: node; top: 360; left: 900; width: 300; height: 96}
+personal: "Personal apps\non a VPS, shared with\nGoogle login" {class: node; top: 520; left: 900; width: 300; height: 96}
+
+devs -> openrun: "git push\nopenrun apply" {class: deploy}
+admins -> openrun: "console, CLI\nSSO and RBAC setup" {class: deploy}
+users -> openrun: "browser\nSSO login" {class: use}
+agents -> openrun: "MCP" {class: use}
+
+openrun -> tools: {class: runs}
+openrun -> ops: {class: runs}
+openrun -> sqlite: {class: runs}
+openrun -> personal: {class: runs}

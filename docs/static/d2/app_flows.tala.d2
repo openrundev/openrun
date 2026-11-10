@@ -1,0 +1,47 @@
+# https://d2lang.com diagram. Use make update-diagrams to generate SVG; the layout engine is the suffix in the file name.
+#
+# The two flows are animated connections (style.animated) on a single board, one color per flow.
+# Every shape is pinned with top/left (supported by TALA only). A child's top/left is relative to its container's
+# top/left plus 60. Server columns are 244 apart.
+
+vars: {
+  d2-config: {pad: 24}
+}
+
+classes: {
+  node: {style.font-size: 20}
+  header: {shape: text; style: {font-size: 17; bold: true}}
+  create: {style: {stroke: "#AE3EC9"; stroke-width: 3; animated: true}}
+  request: {style: {stroke: "#1C7ED6"; stroke-width: 3; animated: true}}
+}
+
+git: "Git repo\napp config\nand source" {class: node; top: 96; left: 0; width: 180; height: 92; shape: page}
+user: "App user" {shape: person; top: 270; left: 56; width: 68; height: 68; style.font-size: 20; label.near: outside-top-center}
+
+openrun: "OpenRun server" {
+  top: 0; left: 280; width: 796; height: 400
+  label.near: top-left
+  style: {stroke-width: 2; font-size: 26}
+
+  h_create: "CREATE APP" {class: header; top: 0; left: 0; style.font-color: "#AE3EC9"}
+  sync: "GitOps sync\ncreate or\nupdate app" {class: node; top: 36; left: 0; width: 188; height: 92}
+  build: "Build image\nfrom AppSpec\nor Dockerfile" {class: node; top: 36; left: 244; width: 188; height: 92}
+  deploy: "Deploy\nhealth check\nblue-green switch" {class: node; top: 36; left: 488; width: 188; height: 92}
+
+  h_request: "SERVE REQUEST" {class: header; top: 162; left: 0; style.font-color: "#1C7ED6"}
+  web: "Web server\nTLS, domain and\npath routing" {class: node; top: 198; left: 0; width: 188; height: 92}
+  auth: "Auth\nOAuth, OIDC\nSAML" {class: node; top: 198; left: 244; width: 188; height: 92}
+  rbac: "RBAC\nwho can access\nwhich app" {class: node; top: 198; left: 488; width: 188; height: 92}
+}
+
+app: "App container\nDocker, Podman\nor Kubernetes" {class: node; top: 96; left: 1186; width: 188; height: 254}
+
+git -> openrun.sync: "sync" {class: create}
+openrun.sync -> openrun.build: {class: create}
+openrun.build -> openrun.deploy: {class: create}
+openrun.deploy -> app: "start" {class: create}
+
+user -> openrun.web: "HTTPS" {class: request}
+openrun.web -> openrun.auth: {class: request}
+openrun.auth -> openrun.rbac: {class: request}
+openrun.rbac -> app: "proxy" {class: request}

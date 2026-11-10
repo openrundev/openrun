@@ -15,7 +15,7 @@ Every action is reachable in four ways, with no change to the app code:
 | CLI | `openrun action run`, locally or through a remote CLI | [Command Line]({{< ref "#command-line" >}}) |
 | MCP tools | `/mcp` under the app path, and `/_openrun/app_mcp` for all apps | [MCP Tools]({{< ref "#mcp-tools" >}}) |
 
-{{< theme-image light="/d2/action_surfaces_light.svg" dark="/d2/action_surfaces_dark.svg" alt="The form UI, REST API, CLI and MCP tools all pass the same checks (app auth login, RBAC app:access and the action permit list) before calling the action handler, which returns a result and writes an audit event" >}}
+{{< theme-image light="/d2/action_surfaces_light.svg" dark="/d2/action_surfaces_dark.svg" alt="The form UI, REST API, CLI and MCP tools all pass the same checks (app auth login, RBAC app:access and the action permit list) before calling the action handler, which returns a result and writes an audit event" caption="Form UI, REST API, CLI and MCP share the same action checks" >}}
 
 See weather app [code](https://github.com/openrundev/apps/blob/main/misc/weather/app.star):[demo](https://utils.demo.clace.io/weather) for an example of using Actions. For actions as team operations tools, kept in git and run from the form, the CLI and by AI agents, see the [Jenkins and Rundeck alternative]({{< ref "docs/use-cases/jenkins-rundeck-alternative/" >}}) use case.
 
@@ -209,7 +209,7 @@ app = ace.app("site",
 - **The run page** shows the status, the args and the output of a streamed command as it is produced (the page can be closed and reopened). Once the run ends, it shows the result rendered as a sync action renders it. A running run can be canceled from its page, and **Run again** opens the form with the run's args.
 - **Run History**, linked under the action title, lists the runs of the action, newest first: their status, the user who started them, their duration and one column per arg. The list filters by status and by text: `name=value` for an exact arg, a bare word for text in any arg value, the result status or the failure message.
 
-{{< theme-image light="/d2/action_run_states_light.svg" dark="/d2/action_run_states_dark.svg" alt="An async action run starts as running and ends as succeeded, failed, timed_out, canceled or lost; a lost run can be started again" >}}
+{{< theme-image light="/d2/action_run_states_light.svg" dark="/d2/action_run_states_dark.svg" alt="An async action run starts as running and ends as succeeded, failed, timed_out, canceled or lost; a lost run can be started again" caption="Async action run states" >}}
 
 | Run status | Meaning |
 | :--- | :--- |

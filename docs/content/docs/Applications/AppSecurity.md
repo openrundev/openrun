@@ -15,7 +15,7 @@ The security model used by OpenRun is:
 - The admin can audit and approve the access required by the untrusted application code when the app is being installed.
 - After installation, further application code updates do not require any further audit, as long as no new permissions are required. If the updated app code requires any new permission, the new plugin call will fail at runtime with a permission error.
 
-{{< theme-image light="/d2/plugin_call_checks_light.svg" dark="/d2/plugin_call_checks_dark.svg" alt="Every plugin call is checked in order: approved permission or server allow entry, not disallowed, permit list against the user's custom permissions, write access for stage and preview apps, and granted secrets. The plugin runs only when all checks pass" >}}
+{{< theme-image light="/d2/plugin_call_checks_light.svg" dark="/d2/plugin_call_checks_dark.svg" alt="Every plugin call is checked in order: approved permission or server allow entry, not disallowed, permit list against the user's custom permissions, write access for stage and preview apps, and granted secrets. The plugin runs only when all checks pass" caption="Checks run on every plugin call" >}}
 
 The trust boundary is about what the application can do in the backend. The frontend code is sandboxed by the browser, there is no additional auditing implemented for the frontend code.
 

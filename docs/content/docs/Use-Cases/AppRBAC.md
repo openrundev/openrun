@@ -10,7 +10,7 @@ OpenRun provides self-hosted, open-source role-based access control (RBAC) for e
 - **Platform level**: OpenRun checks whether a user is allowed to reach an app at all, using grants defined in the RBAC config. No app code is involved.
 - **App level**: OpenRun passes the user identity and the user's custom permissions to the app through HTTP headers on every request. The app uses these to implement its own app-specific RBAC, such as read-only versus editor roles inside the app.
 
-{{< theme-image light="/d2/app_rbac_headers_light.svg" dark="/d2/app_rbac_headers_dark.svg" alt="OpenRun logs the user in, checks the platform RBAC grant for app:access, strips incoming X-Openrun headers and sets the user and custom permission headers, and the app enforces its own rules from those headers" >}}
+{{< theme-image light="/d2/app_rbac_headers_light.svg" dark="/d2/app_rbac_headers_dark.svg" alt="OpenRun logs the user in, checks the platform RBAC grant for app:access, strips incoming X-Openrun headers and sets the user and custom permission headers, and the app enforces its own rules from those headers" caption="App level RBAC through permission headers" >}}
 
 This guide walks through configuring RBAC grants, defining custom permissions and reading the permission headers in application code. See the [RBAC reference]({{< ref "docs/configuration/rbac/" >}}) for the full config format.
 

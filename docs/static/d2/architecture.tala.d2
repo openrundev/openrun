@@ -1,0 +1,101 @@
+# https://d2lang.com diagram. Use make update-diagrams to generate SVG; the layout engine is the suffix in the file name.
+#
+# The flows are animated connections (style.animated) on a single board: deploy and serve have a color each, the
+# platform connections use the theme color. The colors match app_flows.tala.d2.
+# Every shape is pinned with top/left (supported by TALA only). A child's top/left is relative to its container's
+# top/left plus 60. Server columns are 298 apart and rows are 136 apart.
+
+vars: {
+  d2-config: {pad: 24}
+}
+
+classes: {
+  node: {style.font-size: 20}
+  actor: {shape: person; width: 68; height: 68; style.font-size: 20; label.near: outside-top-center}
+  header: {shape: text; style: {font-size: 17; bold: true}}
+  deploy: {style: {stroke: "#AE3EC9"; stroke-width: 3; animated: true}}
+  serve: {style: {stroke: "#1C7ED6"; stroke-width: 3; animated: true}}
+  platform: {style.animated: true}
+}
+
+title: "OpenRun architecture" {
+  near: top-center
+  shape: text
+  style: {font-size: 36; bold: true}
+}
+
+# Top: clients of the web server, and the identity provider
+users: "App users" {class: actor; top: 30; left: 656}
+agents: "AI agents" {class: actor; top: 30; left: 760}
+idp: "Identity provider\nGoogle, Okta, Entra" {class: node; top: 32; left: 870; width: 206; height: 68}
+
+# Left: what the deploy column talks to
+ops: "Developers, admins" {class: actor; top: 306; left: 56}
+git: "Git repo\napp declarations\nand source" {class: node; top: 426; left: 0; width: 180; height: 92; shape: page}
+registry: "Container\nregistry" {class: node; top: 562; left: 0; width: 180; height: 92}
+
+openrun: "OpenRun server (single binary)" {
+  top: 190; left: 290; width: 904; height: 650
+  label.near: top-left
+  style: {stroke-width: 2; font-size: 26}
+
+  h_deploy: "DEPLOY" {class: header; top: 0; left: 62; style.font-color: "#AE3EC9"}
+  h_serve: "SERVE" {class: header; top: 0; left: 365; style.font-color: "#1C7ED6"}
+  h_platform: "PLATFORM" {class: header; top: 0; left: 646}
+
+  api: "Management API\nCLI, console\nREST, MCP" {class: node; top: 40; left: 0; width: 188; height: 92}
+  sync: "GitOps sync\nstaged, atomic\napp updates" {class: node; top: 176; left: 0; width: 188; height: 92}
+  build: "Builder\nAppSpecs\nimage build" {class: node; top: 312; left: 0; width: 188; height: 92}
+  cm: "Container manager\nblue-green deploy\nscale to zero" {class: node; top: 448; left: 0; width: 188; height: 92}
+
+  web: "Web server\nauto TLS, domain\nand path routing" {class: node; top: 40; left: 298; width: 188; height: 92}
+  auth: "Auth\nOAuth, OIDC, SAML\ncert, builtin" {class: node; top: 176; left: 298; width: 188; height: 92}
+  rbac: "RBAC\napp access\nadmin grants" {class: node; top: 312; left: 298; width: 188; height: 92}
+  apps: "App runtime\nStarlark sandbox\ncontainer proxy" {class: node; top: 448; left: 298; width: 188; height: 92}
+
+  secrets: "Secrets\nresolved on use" {class: node; top: 40; left: 596; width: 188; height: 92}
+  meta: "Metadata DB\nSQLite or Postgres" {class: node; top: 157; left: 596; width: 188; height: 130; shape: cylinder; label.near: center-center}
+  audit: "Audit log\nevery operation\nand API call" {class: node; top: 312; left: 596; width: 188; height: 92}
+  bindings: "Service bindings\ncredentials\nper app" {class: node; top: 448; left: 596; width: 188; height: 92}
+}
+
+# Bottom: where apps run, and the databases they use
+runtime: "Docker, Podman or Kubernetes" {
+  top: 920; left: 290; width: 572; height: 196
+  label.near: top-left
+  style: {stroke-width: 2; font-size: 26}
+
+  appn: "App container" {class: node; top: 0; left: 0; width: 188; height: 92}
+  app1: "App container\nsidecars, jobs" {class: node; top: 0; left: 298; width: 188; height: 92}
+}
+
+dbs: "Databases\nPostgres, MySQL\nRedis, ..." {class: node; top: 952; left: 946; width: 188; height: 148; shape: cylinder; label.near: center-center}
+
+# Right: what the platform column talks to
+vault: "Secret managers\nVault, AWS\nKubernetes" {class: node; top: 290; left: 1318; width: 206; height: 92}
+s3: "S3 storage\nLitestream backups" {class: node; top: 407; left: 1318; width: 206; height: 130; shape: cylinder; label.near: center-center}
+
+# Deploy flow
+ops -> openrun.api: "CLI" {class: deploy}
+openrun.api -> openrun.sync: "apply" {class: deploy}
+git -> openrun.sync: "sync" {class: deploy}
+openrun.sync -> openrun.build: {class: deploy}
+openrun.build -> openrun.cm: {class: deploy}
+openrun.build -> registry: "push" {class: deploy}
+registry -> runtime: "pull" {class: deploy}
+openrun.cm -> runtime: "start, stop" {class: deploy}
+
+# Serve flow
+users -> openrun.web: "HTTPS" {class: serve}
+agents -> openrun.web: "MCP" {class: serve}
+openrun.web -> openrun.auth: {class: serve}
+openrun.auth -> idp: "login" {class: serve}
+openrun.auth -> openrun.rbac: {class: serve}
+openrun.rbac -> openrun.apps: {class: serve}
+openrun.apps -> runtime.app1: "proxy" {class: serve}
+
+# Platform services
+openrun.secrets -> vault: "resolve" {class: platform}
+openrun.meta -> s3: "replicate" {class: platform}
+openrun.bindings -> dbs: "provision" {class: platform}
+runtime.app1 -> dbs: {class: platform}

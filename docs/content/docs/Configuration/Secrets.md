@@ -6,7 +6,7 @@ summary: "Details about working with secret managers"
 
 OpenRun supports secret management when working with apps. Secrets can be passed to containerized apps through the environment params. Secrets can also be passed to any plugin as argument. For OAuth config, the client secrets can be configured as secret in the config file.
 
-{{< theme-image light="/d2/secrets_resolution_light.svg" dark="/d2/secrets_resolution_dark.svg" alt="Secret references in app params, server config and plugin arguments are resolved by OpenRun when used, from the AWS Secrets Manager, AWS SSM, Vault, Kubernetes, embedded store, env or properties providers" >}}
+{{< theme-image light="/d2/secrets_resolution_light.svg" dark="/d2/secrets_resolution_dark.svg" alt="Secret references in app params, server config and plugin arguments are resolved by OpenRun when used, from the AWS Secrets Manager, AWS SSM, Vault, Kubernetes, embedded store, env or properties providers" caption="How secret references are resolved" >}}
 
 ## Supported Providers
 

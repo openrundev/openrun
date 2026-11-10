@@ -90,7 +90,8 @@ SAML/OIDC SSO, fine-grained permissions and audit logs are the features security
 
 Many internal tools are a form in front of a script: look up a customer, rerun a job, issue a credit. OpenRun [actions]({{< ref "docs/actions/" >}}) turn a function and its parameter list into a web form with no UI code.
 
-{{< theme-image light="/images/action_light.png" dark="/images/action_dark.png" alt="OpenRun action form generated from a function's parameters, with a Run button and the script output" >}}
+{{< theme-image light="/images/action_light.png" dark="/images/action_dark.png" alt="OpenRun action form generated from a function's parameters, with a Run button and the script output" caption="Action form generated from a function's parameters" >}}
+
 The same action is also a CLI command and an [MCP tool]({{< ref "docs/actions/#mcp-tools" >}}) that AI agents can call, with the same RBAC checks and audit trail on every path. For actions marked destructive, MCP clients that support it ask the user to confirm before the action runs. The [Jenkins and Rundeck alternative]({{< ref "docs/use-cases/jenkins-rundeck-alternative/" >}}) use case shows this in detail.
 
 ### Hypermedia Apps Without a Frontend Build

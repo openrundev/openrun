@@ -81,6 +81,12 @@ identifier = "usecases"
 weight = 3
 
 [[menu.main]]
+name = "All Use Cases"
+pageRef = "/docs/use-cases/"
+parent = "usecases"
+weight = 1
+
+[[menu.main]]
 name = "Web Apps on a VPS"
 pageRef = "/docs/use-cases/personal/"
 parent = "usecases"

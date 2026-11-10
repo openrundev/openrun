@@ -6,7 +6,7 @@ summary: "Details about authentication mechanisms for app access, including OAut
 
 Each app has an auth type which decides who can reach it. This page covers the login page and sessions, builtin users, the server-wide defaults, forward auth, client certificates, and the OAuth/OIDC and SAML providers.
 
-{{< theme-image light="/d2/auth_flow_light.svg" dark="/d2/auth_flow_dark.svg" alt="Request flow: the browser request is authenticated according to the app's auth type, with a login redirect to the identity provider for OAuth, OIDC and SAML types, then authorized against the RBAC grants, then handed to the app" >}}
+{{< theme-image light="/d2/auth_flow_light.svg" dark="/d2/auth_flow_dark.svg" alt="Request flow: the browser request is authenticated according to the app's auth type, with a login redirect to the identity provider for OAuth, OIDC and SAML types, then authorized against the RBAC grants, then handed to the app" caption="Request authentication and authorization flow" >}}
 
 | Auth type | Who logs in |
 | :--- | :--- |

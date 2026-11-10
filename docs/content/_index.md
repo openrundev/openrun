@@ -76,6 +76,10 @@ cascade:
 <p class="hx:mt-2 hx:text-gray-600 hx:dark:text-gray-400">A self-hosted PaaS alternative for internal tools: every app gets OAuth/OIDC/SAML login, RBAC and audit logs, not just the admin console. Start on a single server with Docker or Podman, move to Kubernetes with the same config. Compare with <a href="{{< ref "compare/cloud-run-app-runner" >}}" class="hx:underline" style="color: #00A200;">Cloud Run and App Runner</a> or <a href="{{< ref "compare/diy-kubernetes" >}}" class="hx:underline" style="color: #00A200;">DIY Kubernetes</a>.</p>
 </div>
 
+<div class="home-diagram">
+{{< theme-image light="/d2/app_flows_light.svg" dark="/d2/app_flows_dark.svg" alt="Two flows through the OpenRun server. Create app: a Git repo with the app config and source is synced, the image is built from an AppSpec or Dockerfile and deployed with a health check and blue-green switch, starting the app container. Serve request: an app user's HTTPS request passes the web server for TLS and routing, then auth and RBAC, and is proxied to the app container on Docker, Podman or Kubernetes" caption="How an app is created from Git and how a request reaches it" >}}
+</div>
+
 <div style="height: 20px;"></div>
 
 {{< hextra/feature-grid >}}

@@ -74,7 +74,7 @@ The RBAC configuration is managed through [dynamic config]({{< ref "docs/configu
 - **`roles`** is a map of role name to permissions. Roles also can be composed, for example role `fullaccess` gets all permissions of role `accessor`.
 - **`grants`** assign roles to users on targets, see [Grants](#grants).
 
-{{< theme-image light="/d2/rbac_model_light.svg" dark="/d2/rbac_model_dark.svg" alt="A grant ties users and groups to roles, which carry permissions, and applies those permissions on its targets: apps, services and bindings" >}}
+{{< theme-image light="/d2/rbac_model_light.svg" dark="/d2/rbac_model_dark.svg" alt="A grant ties users and groups to roles, which carry permissions, and applies those permissions on its targets: apps, services and bindings" caption="RBAC model: grants, roles, permissions and targets" >}}
 
 ### Grants
 

@@ -83,12 +83,33 @@ h2, h3, h4, h5, h6 {
    screenshot pair where only the variant matching the site theme shows.
    Hextra sets the `dark` class on <html> for both the manual toggle and the
    system default, so the class is the single source of truth. */
+.theme-image-figure {
+  margin: 1rem 0 1.5rem;
+}
+.theme-image-figure figcaption {
+  margin: 0.5rem auto 0;
+  max-width: 44rem;
+  text-align: center;
+  font-size: 0.875rem;
+  line-height: 1.4;
+  opacity: 0.75;
+}
 .theme-image {
   display: block;
-  margin: 1rem auto;
+  margin: 0 auto;
   max-width: 100%;
   height: auto;
   border-radius: 8px;
+}
+/* Home page diagram: the svg has a small intrinsic size, so stretch it to the
+   wrapper, which is centered in the page container. */
+.home-diagram {
+  width: 100%;
+  max-width: 1200px;
+  margin: 2.5rem auto 1.5rem;
+}
+.home-diagram .theme-image {
+  width: 100%;
 }
 .theme-image-dark {
   display: none;

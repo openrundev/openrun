@@ -279,7 +279,7 @@ The server picks up embedded providers at startup and serves their modules in-pr
 
 ## How it works: the complete flow
 
-{{< theme-image light="/d2/external_plugin_flow_light.svg" dark="/d2/external_plugin_flow_dark.svg" alt="The app calls a plugin through the OpenRun plugin hook, which uses the registered manifest and runs the standard checks, then calls the plugin provider process for the app over gRPC on a unix socket with mutual TLS" >}}
+{{< theme-image light="/d2/external_plugin_flow_light.svg" dark="/d2/external_plugin_flow_dark.svg" alt="The app calls a plugin through the OpenRun plugin hook, which uses the registered manifest and runs the standard checks, then calls the plugin provider process for the app over gRPC on a unix socket with mutual TLS" caption="External plugin call flow" >}}
 
 1. **Registration**: the server launches the provider binary briefly, performs the go-plugin handshake (a magic cookie distinguishes plugin providers from binding providers), and calls `Describe`. The provider reports its version and a **manifest** per module: function names, read/write classification, and constants. The manifest is registered under both the `<module>.in` and `<module>.ex` paths. After this, no provider process is needed for loading or auditing.
 2. **Load and audit**: `load("notes.in", "notes")` resolves the module from the registered manifest (unless a compiled-in module of that name takes precedence), binding one hooked function per manifest entry (plus constants). `openrun app audit`/`approve` work from the manifest alone, without launching anything.

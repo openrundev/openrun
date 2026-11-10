@@ -278,7 +278,7 @@ The `--reload` option controls whether new source code is loaded for apps during
 
 Without `--clobber`, changes are applied as a three way merge. The old config and new config are compared against the live config. If there are changes between old and new declarative config, those changes are applied. Changes done imperatively are not overwritten.
 
-{{< theme-image light="/d2/apply_merge_light.svg" dark="/d2/apply_merge_dark.svg" alt="openrun apply compares the previous and new declarations and applies what changed between them to the live config, keeping imperative changes unless the same property changed; --clobber makes the new declaration overwrite everything" >}}
+{{< theme-image light="/d2/apply_merge_light.svg" dark="/d2/apply_merge_dark.svg" alt="openrun apply compares the previous and new declarations and applies what changed between them to the live config, keeping imperative changes unless the same property changed; --clobber makes the new declaration overwrite everything" caption="How openrun apply merges declaration changes" >}}
 
 #### Reload Verification
 

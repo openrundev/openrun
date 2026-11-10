@@ -10,7 +10,7 @@ This page covers [how it works](#how-it-works), the [dev stage convention](#the-
 
 ## How it works
 
-{{< theme-image light="/d2/dev_reload_light.svg" dark="/d2/dev_reload_dark.svg" alt="On a file save in dev mode, OpenRun rebuilds the dev image only when the image identity changed; otherwise the bind mounted source change just restarts or recreates the container, or does nothing" >}}
+{{< theme-image light="/d2/dev_reload_light.svg" dark="/d2/dev_reload_dark.svg" alt="On a file save in dev mode, OpenRun rebuilds the dev image only when the image identity changed; otherwise the bind mounted source change just restarts or recreates the container, or does nothing" caption="Dev mode reload decisions on a file save" >}}
 
 - The dev image is built with `docker build --target <stage>`, so the build stops at the _dev stage_ (the stage that still has the toolchain) instead of the final runtime stage.
 - The image is rebuilt only when its identity changes: the Containerfile contents, build args, target stage or the contents of the configured `env_files` (dependency manifests like `requirements.txt`). Ordinary source changes never rebuild the image.

@@ -20,7 +20,7 @@ Both surfaces follow the same rules:
 - **Every call authenticates** with a bearer credential (an API key, or an OAuth token from a browser login) and runs as that credential's user identity with [RBAC]({{< ref "rbac" >}}) enforced.
 - **RBAC is always on.** The default grant gives every authenticated principal read access to apps, and the `admin` account has full authority, so a fresh install needs no RBAC setup before enabling remote access.
 
-{{< theme-image light="/d2/remote_access_light.svg" dark="/d2/remote_access_dark.svg" alt="The local CLI uses the unix domain socket as the trusted admin. The remote CLI uses the REST surface and AI clients use the MCP surface, both with a bearer token and RBAC checks as the credential's user, before reaching the management operations" >}}
+{{< theme-image light="/d2/remote_access_light.svg" dark="/d2/remote_access_dark.svg" alt="The local CLI uses the unix domain socket as the trusted admin. The remote CLI uses the REST surface and AI clients use the MCP surface, both with a bearer token and RBAC checks as the credential's user, before reaching the management operations" caption="Local and remote access to the management operations" >}}
 
 This page covers enabling the surfaces, connecting the remote CLI and MCP clients, API keys, what MCP can do, the defaults and the security practices.
 

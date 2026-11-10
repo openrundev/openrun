@@ -44,7 +44,7 @@ The full list, including jobs, deploy hooks and MCP settings, is in [app configu
 
 ## Apply, Stage, Promote
 
-{{< theme-image light="/d2/quickstart_lifecycle_light.svg" dark="/d2/quickstart_lifecycle_dark.svg" alt="Apply or scheduled sync loads the declaration and app source into the staging app, which is then promoted to the production app" >}}
+{{< theme-image light="/d2/quickstart_lifecycle_light.svg" dark="/d2/quickstart_lifecycle_dark.svg" alt="Apply or scheduled sync loads the declaration and app source into the staging app, which is then promoted to the production app" caption="From declaration to staging to production" >}}
 
 Every production app has a staging app at the same path on the `stage` subdomain, for example `stage.example.com/todo` for `example.com/todo` (and `todo.stage.example.com` for an app on its own subdomain `todo.example.com`). Apply writes to staging. Promotion copies staging to production, so production only ever runs a version that was already running on staging.
 
@@ -115,7 +115,7 @@ Most commands accept a glob such as `"example.com:**"` or `all` to act on many a
 
 The [management console]({{< ref "/console-tour" >}}) creates apps from a form with a validate step that lists the permissions the app will request, shows staging and production versions per app, and manages syncs, bindings, containers and the audit log.
 
-{{< theme-image light="/images/console/09-app-detail-light.png" dark="/images/console/09-app-detail-dark.png" alt="Console app detail page with production and staging versions, approved permissions and links to open the app" >}}
+{{< theme-image light="/images/console/09-app-detail-light.png" dark="/images/console/09-app-detail-dark.png" alt="Console app detail page with production and staging versions, approved permissions and links to open the app" caption="Console app detail page" >}}
 
 Install it with the command in the [quick start]({{< ref "docs/quickstart/#other-ways-to-manage-apps" >}}). Console changes go through the same staging and promotion, and are kept on the next apply unless the file changes the same property.
 

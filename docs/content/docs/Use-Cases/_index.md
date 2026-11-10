@@ -8,6 +8,8 @@ summary: "Self-hosted deployment guides for VPS installations, personal web apps
 
 Complete guides for configuring OpenRun as a self-hosted web app platform on your own VPS, server or private infrastructure, and for replacing Jenkins or Rundeck jobs with GitOps-deployed ops tools. For how different roles use OpenRun, see [Who It's For]({{< ref "solutions" >}}); for how it compares with other platforms, see the [comparisons]({{< ref "compare" >}}).
 
+{{< theme-image light="/d2/use_cases_static_light.svg" dark="/d2/use_cases_static_dark.svg" alt="Developers and admins deploy and configure OpenRun through git push, openrun apply, the console and the CLI; team members use the apps from the browser with SSO login and AI agents through MCP. OpenRun runs internal tools, ops tools, SQLite apps and personal apps" caption="Who uses OpenRun and what runs on it" >}}
+
 {{< cards >}}
 {{< card link="personal" title="Self-Hosted Web Apps on a VPS" subtitle="Deploy personal web apps on a Linux VPS with GitOps and automatic TLS" icon="sparkles">}}
 {{< card link="team" title="Self-Hosted Internal Tools" subtitle="Deploy team applications with SSO, RBAC, auditing and private infrastructure controls" icon="shield-check">}}

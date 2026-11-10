@@ -7,10 +7,20 @@
      ui/console_tests `make todoflow`) generates matching
      NN-name-light.png / NN-name-dark.png pairs.
 
+     The caption is shown below the image; it falls back to the alt text
+     when not set. Keep alt as the full description for screen readers.
+
      Usage:
        {{< theme-image light="/images/console/01-service-form-light.png"
                        dark="/images/console/01-service-form-dark.png"
-                       alt="New service form" >}}
+                       alt="New service form with the connection url stored as a secret"
+                       caption="New service form" >}}
 */ -}}
-<img class="theme-image theme-image-light" src="{{ .Get "light" }}" alt="{{ .Get "alt" }}" loading="lazy" />
-<img class="theme-image theme-image-dark" src="{{ .Get "dark" }}" alt="{{ .Get "alt" }}" loading="lazy" />
+{{- $alt := .Get "alt" -}}
+<figure class="theme-image-figure">
+  <img class="theme-image theme-image-light" src="{{ .Get "light" }}" alt="{{ $alt }}" loading="lazy" />
+  <img class="theme-image theme-image-dark" src="{{ .Get "dark" }}" alt="{{ $alt }}" loading="lazy" />
+  {{- with (.Get "caption" | default $alt) }}
+  <figcaption>{{ . }}</figcaption>
+  {{- end }}
+</figure>

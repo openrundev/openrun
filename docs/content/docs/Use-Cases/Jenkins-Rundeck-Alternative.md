@@ -20,7 +20,7 @@ keywords:
 
 Most teams have a set of small operational tasks: restart a service, rotate a key, re-run a job, look up a record. Their usual home is a job runner, a Jenkins parameterized job or a Rundeck job. OpenRun [actions]({{< ref "docs/actions/" >}}) are an alternative to both: each task is one function in an app kept in git and deployed with GitOps. The same function is then a web form, a CLI command and an MCP tool for AI agents, with the same access checks and the same audit trail on every path.
 
-{{< theme-image light="/d2/action_surfaces_light.svg" dark="/d2/action_surfaces_dark.svg" alt="The form UI, REST API, CLI and MCP tools all pass the same checks (app auth login, RBAC app:access and the action permit list) before calling the action handler, which returns a result and writes an audit event" >}}
+{{< theme-image light="/d2/action_surfaces_light.svg" dark="/d2/action_surfaces_dark.svg" alt="The form UI, REST API, CLI and MCP tools all pass the same checks (app auth login, RBAC app:access and the action permit list) before calling the action handler, which returns a result and writes an audit event" caption="Form UI, REST API, CLI and MCP share the same action checks" >}}
 
 What you will set up on this page:
 

@@ -7,6 +7,8 @@ summary: "How developers, platform teams and organizations use OpenRun."
 
 OpenRun is an open-source, self-hosted GitOps platform for deploying web apps and internal tools to Docker, Podman or Kubernetes. These guides describe how different roles use OpenRun. For step-by-step setups such as [web apps on a VPS]({{< ref "docs/use-cases/personal" >}}) or [internal tools for teams]({{< ref "docs/use-cases/team" >}}), see the [use cases]({{< ref "docs/use-cases" >}}). For how OpenRun stacks up against other platforms, see the [comparisons]({{< ref "compare" >}}).
 
+{{< theme-image light="/d2/use_cases_static_light.svg" dark="/d2/use_cases_static_dark.svg" alt="Developers and admins deploy and configure OpenRun through git push, openrun apply, the console and the CLI; team members use the apps from the browser with SSO login and AI agents through MCP. OpenRun runs internal tools, ops tools, SQLite apps and personal apps" caption="Who uses OpenRun and what runs on it" >}}
+
 {{< cards >}}
 {{< card link="developers" title="For Developers" subtitle="Deploy from Git without managing infrastructure." icon="code" >}}
 {{< card link="platform-teams" title="For Platform Teams" subtitle="Give teams a standardized internal application platform." icon="template" >}}

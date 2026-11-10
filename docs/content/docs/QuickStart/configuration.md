@@ -34,7 +34,7 @@ Settings that change often are kept in the **dynamic config**: RBAC groups, role
 
 Each app has an auth type. The server checks the login first and then the RBAC grants before the request reaches the app.
 
-{{< theme-image light="/d2/quickstart_auth_light.svg" dark="/d2/quickstart_auth_dark.svg" alt="Request flow: the browser request is authenticated according to the app's auth type, with a login redirect to the identity provider for OAuth, OIDC and SAML types, then authorized against the RBAC grants, then handed to the app" >}}
+{{< theme-image light="/d2/quickstart_auth_light.svg" dark="/d2/quickstart_auth_dark.svg" alt="Request flow: the browser request is authenticated according to the app's auth type, with a login redirect to the identity provider for OAuth, OIDC and SAML types, then authorized against the RBAC grants, then handed to the app" caption="Request authentication and authorization flow" >}}
 
 | Auth type | Who can log in | Setup |
 | --- | --- | --- |

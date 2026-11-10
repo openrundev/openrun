@@ -10,7 +10,7 @@ The console's AI app builder creates and edits apps through a coding-agent conve
 - **Requires:** a local Docker or Podman runtime. Not supported when `system.container_command = "kubernetes"`.
 - **Not to be confused with:** the container image [build service]({{< ref "container/build" >}}), configured under `[builder]`.
 
-{{< theme-image light="/d2/app_builder_light.svg" dark="/d2/app_builder_dark.svg" alt="A builder session has a coding agent in a container which edits the source workspace, and a preview app running that workspace. The console user talks to the agent, inspects the preview and publishes the app" >}}
+{{< theme-image light="/d2/app_builder_light.svg" dark="/d2/app_builder_dark.svg" alt="A builder session has a coding agent in a container which edits the source workspace, and a preview app running that workspace. The console user talks to the agent, inspects the preview and publishes the app" caption="App builder session" >}}
 
 ## Enable the Builder
 

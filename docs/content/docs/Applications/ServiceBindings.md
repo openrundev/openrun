@@ -76,7 +76,7 @@ The database server remains under the operator's control and can be self-hosted 
 | **Base Binding**    | Created from a service. It creates the main database account for an app: a schema and role for Postgres, a database and user for MySQL                                  |
 | **Derived Binding** | Created from a base binding. It uses the same schema or database as the base binding but gets a separate account. Grants on the derived binding control what that account can do |
 
-{{< theme-image light="/d2/bindings_overview_light.svg" dark="/d2/bindings_overview_dark.svg" alt="A Postgres service with admin credentials creates a base binding with a new schema and role; derived bindings share the schema with their own roles and grants, and each app gets its binding credentials in its environment" >}}
+{{< theme-image light="/d2/bindings_overview_light.svg" dark="/d2/bindings_overview_dark.svg" alt="A Postgres service with admin credentials creates a base binding with a new schema and role; derived bindings share the schema with their own roles and grants, and each app gets its binding credentials in its environment" caption="Service, base binding and derived bindings" >}}
 
 Bindings always have a staging and a prod environment:
 

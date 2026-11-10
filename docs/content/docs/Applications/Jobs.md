@@ -119,7 +119,7 @@ A `before_deploy` job runs when a new version deploys to an app instance:
 | `app create`                                   | On the stage instance before the create transaction opens, so a failure stops the create before anything is written. When the gate needs a binding the same operation creates (an auto binding, or a binding declared in the same apply file), it runs inside the create instead and a failure rolls the create back |
 | `openrun version switch`, metadata-only updates like `param update --promote` | No gates                                                                                                                                        |
 
-{{< theme-image light="/d2/jobs_deploy_gate_light.svg" dark="/d2/jobs_deploy_gate_dark.svg" alt="A reload, apply or sync builds the new image and runs the before_deploy jobs on the stage instance; when all pass the version is written, and with promote the prod gates run next. The first failure stops the operation while the previous version keeps serving" >}}
+{{< theme-image light="/d2/jobs_deploy_gate_light.svg" dark="/d2/jobs_deploy_gate_dark.svg" alt="A reload, apply or sync builds the new image and runs the before_deploy jobs on the stage instance; when all pass the version is written, and with promote the prod gates run next. The first failure stops the operation while the previous version keeps serving" caption="before_deploy jobs gating a deploy" >}}
 
 - **Order:** gates run in declaration order, and the first failure stops the operation with the run id and the tail of its output.
 - **Dry runs** skip gates: they have real side effects.
