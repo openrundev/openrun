@@ -127,3 +127,29 @@ html.dark .theme-image-dark {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+
+/* demo-replay shortcode (layouts/shortcodes/demo-replay.html): the recorded
+   platform.star replay in an iframe. The iframe reports its own height; the
+   value here is only the size before that first message. */
+.demo-replay {
+  margin: 1.5rem 0 2rem;
+  width: 100%;
+}
+.demo-note a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.demo-replay iframe {
+  display: block;
+  width: 100%;
+  height: 1020px;
+  border: 0;
+}
+.demo-replay figcaption {
+  margin: 0.5rem auto 0;
+  max-width: 44rem;
+  text-align: center;
+  font-size: 0.875rem;
+  line-height: 1.4;
+  opacity: 0.75;
+}

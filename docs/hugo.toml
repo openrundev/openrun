@@ -201,6 +201,12 @@ parent = "more"
 weight = 4
 
 [[menu.main]]
+name = "Demo"
+pageRef = "/demo/"
+parent = "more"
+weight = 5
+
+[[menu.main]]
 name = "Search"
 weight = 7
 [menu.main.params]

@@ -63,7 +63,7 @@ cascade:
 
 <div class="hx:mb-2 hx:flex hx:flex-wrap hx:gap-2">
 {{< hextra/hero-button style="border-radius: 8px;" text="Quick Start" link="docs/quickstart" >}}
-{{< hextra/hero-button style="border-radius: 8px;  padding: 12px 40px;" text="Demo" link="https://utils.demo.clace.io/console" >}}
+{{< hextra/hero-button style="border-radius: 8px;  padding: 12px 40px;" text="Live Demo" link="https://utils.demo.clace.io/console" >}}
 </div>
 
 <div class="hx:mt-8 hx:mb-8 hx:max-w-4xl">

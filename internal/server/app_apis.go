@@ -931,13 +931,16 @@ func (s *Server) DeleteApps(ctx context.Context, appPathGlob string, dryRun bool
 	// backend objects and runtime assets can fail here, which is reported
 	// along with the delete result
 	var cleanupErrs []error
-	if err := accounts.finalizeDeletes(cleanupCtx); err != nil {
-		cleanupErrs = append(cleanupErrs, err)
-	}
 	// Remove the deleted apps' runtime assets: containers and sidecars,
 	// generated images, volumes and networks (docker/podman) or workloads,
-	// services and volume claims (kubernetes), plus each app's run dir
+	// services and volume claims (kubernetes), plus each app's run dir.
+	// This runs before the binding backend objects are dropped: a running
+	// container can hold database sessions open (idle in transaction), and a
+	// schema drop waits behind their locks until the cleanup context expires
 	if err := s.removeAppRuntimeResources(cleanupCtx, deletedAppIds); err != nil {
+		cleanupErrs = append(cleanupErrs, err)
+	}
+	if err := accounts.finalizeDeletes(cleanupCtx); err != nil {
 		cleanupErrs = append(cleanupErrs, err)
 	}
 	if len(cleanupErrs) > 0 {

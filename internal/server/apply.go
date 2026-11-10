@@ -1879,10 +1879,13 @@ func (s *Server) ApplyDelete(ctx context.Context, applyPath, appPathGlob string,
 	// The metadata is deleted; only the cleanup of the backend objects and
 	// runtime assets can fail here, which is reported along with the result
 	var cleanupErrs []error
-	if err := accounts.finalizeDeletes(cleanupCtx); err != nil {
+	// Containers go first: a running app can hold database sessions open, and
+	// the schema drop of its binding would wait behind their locks until the
+	// cleanup context expires (see DeleteApps)
+	if err := s.removeAppRuntimeResources(cleanupCtx, deletedAppIds); err != nil {
 		cleanupErrs = append(cleanupErrs, err)
 	}
-	if err := s.removeAppRuntimeResources(cleanupCtx, deletedAppIds); err != nil {
+	if err := accounts.finalizeDeletes(cleanupCtx); err != nil {
 		cleanupErrs = append(cleanupErrs, err)
 	}
 	if len(cleanupErrs) > 0 {
