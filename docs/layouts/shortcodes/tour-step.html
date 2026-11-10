@@ -1,0 +1,69 @@
+{{- /* One step of the console-tour shortcode, see console-tour.html.
+
+  Params:
+    flow     tab the step belongs to; consecutive steps share a flow
+    chapter  group heading inside the flow
+    title    short step title
+    img      screenshot path without the -light.png / -dark.png suffix
+    user     optional, the signed in user shown on the screenshot
+    role     optional, that user's role (admin, operator, developer, read-only)
+  The body is the step text, in markdown.
+*/ -}}
+{{- $img := .Get "img" -}}
+{{- $flow := .Get "flow" -}}
+{{- $chapter := .Get "chapter" -}}
+{{- $title := .Get "title" -}}
+{{- $light := printf "%s-light.png" $img -}}
+{{- $dark := printf "%s-dark.png" $img -}}
+{{- $id := replace (strings.TrimPrefix "/images/" $img) "/" "-" -}}
+{{- /* The two variants can differ in height, the viewer needs both */ -}}
+{{- $w := 1280 -}}
+{{- $hl := 800 -}}
+{{- $hd := 800 -}}
+{{- with printf "static%s" $light -}}
+  {{- if fileExists . -}}
+    {{- $c := imageConfig . -}}
+    {{- $w = $c.Width -}}
+    {{- $hl = $c.Height -}}
+  {{- else -}}
+    {{- errorf "tour-step: screenshot %s not found (%s)" . $.Position -}}
+  {{- end -}}
+{{- end -}}
+{{- with printf "static%s" $dark -}}
+  {{- if fileExists . -}}
+    {{- $hd = (imageConfig .).Height -}}
+  {{- else -}}
+    {{- errorf "tour-step: screenshot %s not found (%s)" . $.Position -}}
+  {{- end -}}
+{{- end -}}
+{{- /* Flow and chapter headings are emitted where they change. Their ids
+  are the anchors other pages link to (/console-tour/#operate) */ -}}
+{{- $store := .Parent.Store -}}
+{{- if ne ($store.Get "flow") $flow -}}
+  {{- $store.Set "flow" $flow -}}
+  {{- $store.Set "chapter" "" -}}
+  <h2 class="ct-flow-h" id="{{ $flow | anchorize }}">{{ $flow }}</h2>
+{{- end -}}
+{{- if ne ($store.Get "chapter") $chapter -}}
+  {{- $store.Set "chapter" $chapter -}}
+  <h3 class="ct-chapter-h" id="{{ $chapter | anchorize }}">{{ $chapter }}</h3>
+{{- end }}
+<section
+  class="ct-step"
+  id="{{ $id }}"
+  data-flow="{{ $flow }}"
+  data-chapter="{{ $chapter }}"
+  data-title="{{ $title }}"
+  data-img="{{ $img }}"
+  data-w="{{ $w }}"
+  data-h-light="{{ $hl }}"
+  data-h-dark="{{ $hd }}"
+  {{- with .Get "user" }} data-user="{{ . }}"{{ end }}
+  {{- with .Get "role" }} data-role="{{ . }}"{{ end }}>
+  <h4 class="ct-step-h">{{ $title }}</h4>
+  <div class="ct-step-body">{{ .Inner | strings.TrimSpace | .Page.RenderString (dict "display" "block") }}</div>
+  <figure class="theme-image-figure">
+    <img class="theme-image theme-image-light" src="{{ $light }}" alt="{{ $title }}" width="{{ $w }}" height="{{ $hl }}" loading="lazy" />
+    <img class="theme-image theme-image-dark" src="{{ $dark }}" alt="{{ $title }}" width="{{ $w }}" height="{{ $hd }}" loading="lazy" />
+  </figure>
+</section>

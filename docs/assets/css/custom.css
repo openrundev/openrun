@@ -1,7 +1,26 @@
 
-/* Change the default font */
+/* Site fonts: the same as the OpenRun console app. Schibsted Grotesk for
+   body, Space Grotesk for headings, JetBrains Mono for code. The faces are
+   self-hosted (static/fonts/console, @font-face rules in the console skin
+   section below) and the above-the-fold ones are preloaded in
+   layouts/partials/custom/head-end.html. Hextra routes its sans and mono
+   utilities through the --hx-font-sans and --hx-font-mono variables. */
+:root {
+  --hx-font-sans: "Schibsted Grotesk", ui-sans-serif, system-ui, sans-serif,
+    "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --hx-font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
+    Consolas, "Liberation Mono", "Courier New", monospace;
+}
 html {
-  font-family: 'Open Sans', sans-serif;
+  font-family: var(--hx-font-sans);
+}
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: "Space Grotesk", var(--hx-font-sans);
 }
 
 
@@ -128,16 +147,178 @@ html.dark .theme-image-dark {
   text-underline-offset: 2px;
 }
 
+/* ---- Console skin ---------------------------------------------------------
+   The walkthrough and console tour pages are styled like the OpenRun console
+   app instead of the docs theme. The tokens mirror the console's daisyui
+   themes (openrun-light / openrun-dark, OPENRUN_THEMES in the console
+   app.star) and its type: Space Grotesk for headings, Schibsted Grotesk for
+   body, JetBrains Mono for code. The fonts are the console's own woff2 files
+   (static/fonts/console, SIL OFL); a face is only downloaded on pages that
+   use it. Keep the values in sync with the console when its theme changes. */
+@font-face {
+  font-family: "Schibsted Grotesk";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/console/schibsted-grotesk-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Schibsted Grotesk";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/console/schibsted-grotesk-500.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Schibsted Grotesk";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/console/schibsted-grotesk-600.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Space Grotesk";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/console/space-grotesk-500.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Space Grotesk";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/console/space-grotesk-700.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/console/jetbrains-mono-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/console/jetbrains-mono-500.woff2") format("woff2");
+}
+
+.console-skin {
+  --or-base-100: #ffffff; /* cards */
+  --or-base-200: #f9fcf9; /* page background */
+  --or-base-300: #dce8dc; /* borders */
+  --or-content: #142319;
+  --or-muted: #4a5a4e;
+  --or-primary: #00c200;
+  --or-primary-content: #012d01;
+  --or-secondary: #007700;
+  --or-accent-text: #007700; /* readable brand green for text */
+  --or-neutral: #1e2b22;
+  --or-neutral-content: #eef5ee;
+  --or-info: #0b6bcb;
+  --or-success: #0f7d0f;
+  --or-warning: #946000;
+  --or-error: #c02827;
+  --or-radius-box: 0.75rem;
+  --or-radius-field: 0.5rem;
+  --or-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --or-font-sans: "Schibsted Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --or-font-display: "Space Grotesk", var(--or-font-sans);
+  --or-font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  font-family: var(--or-font-sans);
+  color: var(--or-content);
+}
+html.dark .console-skin {
+  --or-base-100: #17221a;
+  --or-base-200: #101a13;
+  --or-base-300: #273b2c;
+  --or-content: #d9e7db;
+  --or-muted: #93a897;
+  --or-accent-text: #00c200;
+  --or-neutral: #22312a;
+  --or-neutral-content: #d3e3d6;
+  --or-info: #55a9ff;
+  --or-success: #37d24c;
+  --or-warning: #ffbe3d;
+  --or-error: #ff6f65;
+}
+.console-skin code {
+  font-family: var(--or-font-mono);
+  font-size: 0.875em;
+}
+.console-skin a:not([class]) {
+  color: var(--or-accent-text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.console-skin :focus-visible {
+  outline: 2px solid var(--or-primary);
+  outline-offset: 2px;
+}
+
+/* A page that uses the skin takes the console page background too,
+   including the strip behind the navbar */
+html:has(.console-skin) body,
+html:has(.console-skin) .hextra-nav-container-blur {
+  background-color: #f9fcf9;
+}
+html.dark:has(.console-skin) body,
+html.dark:has(.console-skin) .hextra-nav-container-blur {
+  background-color: #101a13;
+}
+
+/* console-title shortcode: the console page heading, with the brand accent
+   bar under the title. The !important beats the green heading rule above */
+.console-title {
+  width: 100%;
+  margin: 1.5rem 0 1.75rem;
+}
+.console-title h1 {
+  width: fit-content;
+  margin: 0;
+  font-family: var(--or-font-display);
+  font-size: clamp(2rem, 4.5vw, 2.75rem);
+  font-weight: 700;
+  font-style: italic;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: var(--or-content) !important;
+}
+.console-title h1::after {
+  content: "";
+  display: block;
+  height: 3px;
+  margin-top: 0.4rem;
+  border-radius: 2px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklch, var(--or-secondary) 5%, transparent),
+    var(--or-secondary)
+  );
+}
+.console-title p {
+  max-width: 62rem;
+  margin: 0.9rem 0 0;
+  font-size: 1.0625rem;
+  line-height: 1.55;
+  color: var(--or-muted);
+}
+
 /* walkthrough shortcode (layouts/shortcodes/walkthrough.html): the recorded
    platform.star replay in an iframe. The iframe reports its own height; the
    value here is only the size before that first message. */
 .walkthrough {
-  margin: 1.5rem 0 2rem;
+  margin: 0 0 1.5rem;
   width: 100%;
 }
-.walkthrough-note a {
-  text-decoration: underline;
-  text-underline-offset: 2px;
+.console-note {
+  margin: 0 0 3rem;
+  font-size: 0.9375rem;
+  line-height: 1.55;
+  color: var(--or-muted);
 }
 .walkthrough iframe {
   display: block;

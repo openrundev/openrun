@@ -1,0 +1,38 @@
+{{- /* Interactive console tour: a stage that steps through the pre-generated
+  console screenshots (static/images/console*, light/dark pairs from the
+  console walkthrough tests, copied by `make docs-screenshots`).
+
+  The body is a list of tour-step shortcodes. They render as plain sections
+  (heading, text, screenshot), which is what search engines and browsers
+  without javascript get. assets/js/console-tour.js reads those sections
+  and builds the viewer from them: flow tabs, a step rail, a light/dark
+  compare slider, autoplay, a full window mode and keyboard control. Styles
+  are in assets/css/console-tour.css on top of the console skin tokens in
+  assets/css/custom.css. Use it on a wide page (hextra-home layout).
+
+  Usage:
+  {{< console-tour >}}
+    {{< tour-step flow="Deploy an app" chapter="Overview" title="System at a glance"
+          img="/images/console/01-overview" >}}
+    Step text in markdown.
+    {{< /tour-step >}}
+  {{< /console-tour >}}
+*/ -}}
+{{- $css := resources.Get "css/console-tour.css" -}}
+{{- $js := resources.Get "js/console-tour.js" -}}
+{{- if hugo.IsProduction -}}
+  {{- $css = $css | minify -}}
+  {{- $js = $js | minify -}}
+{{- end -}}
+{{- $css = $css | fingerprint -}}
+{{- $js = $js | fingerprint -}}
+<link rel="stylesheet" href="{{ $css.RelPermalink }}" integrity="{{ $css.Data.Integrity }}" />
+<script>
+  document.documentElement.classList.add("ct-js");
+</script>
+<div class="console-skin ct" data-console-tour>
+  <div class="ct-source">
+    {{ .Inner }}
+  </div>
+</div>
+<script defer src="{{ $js.RelPermalink }}" integrity="{{ $js.Data.Integrity }}"></script>

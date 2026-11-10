@@ -6,18 +6,10 @@ summary: "A recorded OpenRun run, replayed step by step in the browser"
 layout: hextra-home
 ---
 
-<div class="hx:mt-6 hx:mb-6">
-{{< hextra/hero-headline >}}
-  OpenRun Walkthrough
-{{< /hextra/hero-headline >}}
-</div>
-
-<div class="hx:mb-4">
-{{< hextra/hero-subtitle >}}
-  Walkthrough of a real OpenRun demo workload. Every output and timing comes from the real run.
-{{< /hextra/hero-subtitle >}}
-</div>
+{{< console-title title="OpenRun Walkthrough" >}}
+Walkthrough of a real OpenRun demo workload. Every output and timing comes from the real run.
+{{< /console-title >}}
 
 {{< walkthrough >}}
 
-<p class="walkthrough-note hx:mb-12">The source for this walkthrough, with a script to set it up on your own machine, is at <a href="https://github.com/openrundev/demo">github.com/openrundev/demo</a>. To try a running server instead, open the <a href="https://utils.demo.clace.io/console">live console</a>.</p>
+<p class="console-skin console-note">The source for this walkthrough, with a script to set it up on your own machine, is at <a href="https://github.com/openrundev/demo">github.com/openrundev/demo</a>. To try a running server instead, open the <a href="https://utils.demo.clace.io/console">live console</a>, or take the <a href="/console-tour/">console tour</a>.</p>

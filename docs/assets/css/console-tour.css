@@ -1,0 +1,968 @@
+/* Console tour viewer (layouts/shortcodes/console-tour.html, built by
+   assets/js/console-tour.js). Everything uses the console skin tokens
+   (--or-*, assets/css/custom.css) so it follows the site's light/dark theme
+   with the console app's colors, type and radii. */
+
+/* ---- Source steps: the plain list, shown without javascript -------------- */
+html.ct-js .ct-source {
+  display: none;
+}
+.ct-source {
+  max-width: 62rem;
+}
+.ct-source h2,
+.ct-source h3,
+.ct-source h4 {
+  font-family: var(--or-font-display);
+  color: var(--or-content) !important;
+  margin: 2rem 0 0.5rem;
+}
+.ct-source h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+.ct-source h3 {
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+.ct-source h4 {
+  font-size: 1rem;
+  font-weight: 500;
+}
+.ct-source p {
+  margin: 0 0 0.75rem;
+  line-height: 1.6;
+  color: var(--or-muted);
+}
+
+/* ---- Shell ---------------------------------------------------------------- */
+.ct {
+  width: 100%;
+  margin: 0 0 1.5rem;
+  /* clear the sticky navbar when a link lands on the tour */
+  scroll-margin-top: calc(var(--hextra-navbar-height, 4rem) + 1rem);
+  font-size: 0.9375rem;
+  line-height: 1.5;
+}
+.ct button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.ct-app {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--or-base-100);
+  border: 1px solid var(--or-base-300);
+  border-radius: var(--or-radius-box);
+}
+/* Brand hairline on the top edge, as on the console overview tiles */
+.ct-app::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 1rem;
+  width: min(50%, 28rem);
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(
+    90deg,
+    var(--or-secondary),
+    color-mix(in oklch, var(--or-secondary) 5%, transparent)
+  );
+  opacity: 0.7;
+}
+
+/* ---- Top bar: flow tabs and tools ----------------------------------------- */
+.ct-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+  flex-wrap: wrap;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--or-base-300);
+}
+.ct-flows {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  border: 1px solid var(--or-base-300);
+  border-radius: var(--or-radius-field);
+  overflow: hidden;
+  background: var(--or-base-200);
+}
+.ct-flow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.9rem;
+  border: 0;
+  border-right: 1px solid var(--or-base-300);
+  background: none;
+  font-weight: 500;
+  white-space: nowrap;
+  min-width: 0;
+  transition:
+    background-color 150ms ease,
+    color 150ms ease;
+}
+.ct-flow span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ct-flow:last-child {
+  border-right: 0;
+}
+.ct-flow:hover {
+  background: color-mix(in oklab, var(--or-primary) 10%, transparent);
+}
+.ct-flow[aria-selected="true"] {
+  background: var(--or-primary);
+  color: var(--or-primary-content);
+}
+.ct-flow small {
+  font: 500 0.6875rem var(--or-font-mono);
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: color-mix(in oklab, currentColor 12%, transparent);
+}
+.ct-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.ct-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  height: 2.125rem;
+  padding: 0 0.7rem;
+  border: 1px solid var(--or-base-300);
+  border-radius: var(--or-radius-field);
+  background: var(--or-base-100);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  white-space: nowrap;
+  transition:
+    border-color 150ms ease,
+    background-color 150ms ease,
+    color 150ms ease;
+}
+.ct-tool:hover {
+  border-color: var(--or-primary);
+}
+.ct-tool[aria-pressed="true"] {
+  border-color: var(--or-primary);
+  background: color-mix(in oklab, var(--or-primary) 14%, transparent);
+  color: var(--or-accent-text);
+}
+.ct-tool svg,
+.ct-btn svg {
+  width: 1rem;
+  height: 1rem;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ---- Body: step rail and stage -------------------------------------------- */
+.ct-body {
+  display: grid;
+  grid-template-columns: 17.5rem minmax(0, 1fr);
+  min-height: 0;
+}
+.ct-rail {
+  position: relative;
+  border-right: 1px solid var(--or-base-300);
+  min-height: 0;
+}
+/* The rail never drives the row height: it fills the height the stage
+   column needs and scrolls inside it */
+.ct-rail-scroll {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.5rem 0.6rem 1rem 0.9rem;
+  scrollbar-width: thin;
+  scrollbar-color: var(--or-base-300) transparent;
+}
+.ct-rail-h {
+  margin: 0.9rem 0 0.3rem 0.5rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--or-accent-text);
+}
+.ct-rail ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.ct-step-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  border: 0;
+  border-radius: var(--or-radius-field);
+  background: none;
+  text-align: left;
+  font-size: 0.875rem;
+  line-height: 1.3;
+  transition:
+    background-color 150ms ease,
+    translate 200ms var(--or-ease);
+}
+.ct-step-btn:hover:not([aria-current]) {
+  translate: 2px 0;
+  background: color-mix(in oklab, var(--or-content) 6%, transparent);
+}
+/* The console sidebar's active item: neutral fill and a primary accent bar
+   that grows in */
+.ct-step-btn::before {
+  content: "";
+  position: absolute;
+  left: -0.4rem;
+  top: 50%;
+  width: 3px;
+  height: 0;
+  border-radius: 2px;
+  background: var(--or-primary);
+  transform: translateY(-50%);
+  transition: height 250ms var(--or-ease);
+}
+.ct-step-btn[aria-current] {
+  background: var(--or-neutral);
+  color: var(--or-neutral-content);
+}
+.ct-step-btn[aria-current]::before {
+  height: 55%;
+}
+.ct-step-btn .n {
+  font: 400 0.75rem var(--or-font-mono);
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+.ct-step-btn .t {
+  flex: 1;
+  min-width: 0;
+}
+.ct-step-btn.seen:not([aria-current]) .n {
+  color: var(--or-accent-text);
+  opacity: 1;
+}
+
+/* User avatar: the letter circle from the console sidebar, tinted by role */
+.ct-avatar {
+  --tone: var(--or-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 999px;
+  font-size: 0.625rem;
+  font-weight: 600;
+  line-height: 1;
+  text-transform: uppercase;
+  color: var(--tone);
+  background: color-mix(in oklab, var(--tone) 16%, var(--or-base-100));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--tone) 45%, transparent);
+}
+[data-tone="admin"] {
+  --tone: var(--or-content);
+}
+[data-tone="operator"] {
+  --tone: var(--or-accent-text);
+}
+[data-tone="developer"] {
+  --tone: var(--or-info);
+}
+[data-tone="read-only"] {
+  --tone: var(--or-warning);
+}
+
+.ct-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 1rem;
+  /* soft brand glow behind the window */
+  background: radial-gradient(
+    ellipse 70% 55% at 50% 0%,
+    color-mix(in oklab, var(--or-primary) 9%, transparent),
+    transparent 70%
+  );
+}
+
+/* ---- Window frame ---------------------------------------------------------- */
+.ct-frame {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--or-base-300);
+  border-radius: var(--or-radius-box);
+  background: var(--or-base-200);
+  overflow: hidden;
+  box-shadow:
+    0 1px 2px rgb(20 35 25 / 0.05),
+    0 18px 40px -18px rgb(20 35 25 / 0.28);
+}
+html.dark .ct-frame {
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.3),
+    0 22px 48px -18px rgb(0 0 0 / 0.75);
+}
+.ct-chrome {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 0.75rem;
+  height: 2.375rem;
+  padding: 0 0.75rem;
+  border-bottom: 1px solid var(--or-base-300);
+  background: var(--or-base-100);
+}
+.ct-dots {
+  display: inline-flex;
+  gap: 0.375rem;
+}
+.ct-dots i {
+  width: 0.625rem;
+  height: 0.625rem;
+  border-radius: 999px;
+  background: var(--or-base-300);
+}
+.ct-loc {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0.15rem 0.75rem;
+  border-radius: 999px;
+  background: var(--or-base-200);
+  border: 1px solid var(--or-base-300);
+  font: 400 0.75rem var(--or-font-mono);
+  color: var(--or-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ct-loc b {
+  font-weight: 500;
+  color: var(--or-content);
+}
+.ct-user {
+  justify-self: end;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  font-size: 0.75rem;
+  color: var(--or-muted);
+  white-space: nowrap;
+}
+.ct-user b {
+  font: 500 0.75rem var(--or-font-mono);
+  color: var(--or-content);
+}
+.ct-user .role {
+  padding: 0.05rem 0.5rem;
+  border-radius: 999px;
+  font-weight: 500;
+  color: var(--tone);
+  background: color-mix(in oklab, var(--tone) 14%, transparent);
+}
+
+/* The stage shows a 1280x800 console window; taller screenshots scroll
+   inside it */
+.ct-stage {
+  --split: 100%;
+  position: relative;
+  aspect-ratio: 1280 / 800;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--or-base-200);
+  touch-action: pan-y;
+}
+.ct-scroll {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--or-content) 30%, transparent) transparent;
+}
+.ct-scroll:focus-visible {
+  outline-offset: -2px;
+}
+.ct-ghost {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  transition: opacity 320ms ease;
+}
+.ct-ghost.out {
+  opacity: 0;
+}
+.ct-shot {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+}
+.ct-shot img {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  width: 100%;
+  height: auto;
+  max-width: none;
+  margin: 0;
+  opacity: 0;
+  transition:
+    opacity 320ms ease,
+    clip-path 520ms var(--or-ease);
+  user-select: none;
+  -webkit-user-drag: none;
+}
+.ct-shot img.on {
+  opacity: 1;
+}
+/* Light shows left of the split, dark right of it. Outside compare mode the
+   split sits at an edge, so one variant covers the stage; switching the site
+   theme or toggling compare wipes between the two */
+.ct-shot .l {
+  clip-path: inset(0 calc(100% - var(--split)) 0 0);
+}
+.ct-shot .d {
+  clip-path: inset(0 0 0 var(--split));
+}
+.ct-stage.dragging .ct-shot img {
+  transition: opacity 320ms ease;
+}
+.ct-scroll > .ct-shot {
+  animation: ct-shot-in 420ms var(--or-ease);
+}
+@keyframes ct-shot-in {
+  from {
+    transform: translateX(calc(var(--dir, 1) * 14px));
+  }
+  to {
+    transform: none;
+  }
+}
+
+/* Compare slider */
+.ct-divider {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  bottom: 0;
+  left: var(--split-px, 50%);
+  width: 2.75rem;
+  margin-left: -1.375rem;
+  display: none;
+  justify-content: center;
+  cursor: ew-resize;
+  touch-action: none;
+  transition: left 520ms var(--or-ease);
+}
+.ct-stage.dragging .ct-divider {
+  transition: none;
+}
+.ct-stage.compare .ct-divider {
+  display: flex;
+}
+.ct-divider::before {
+  content: "";
+  width: 2px;
+  background: var(--or-primary);
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.25);
+}
+.ct-divider:focus-visible {
+  outline: none;
+}
+.ct-grip {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  margin: -1.125rem 0 0 -1.125rem;
+  border-radius: 999px;
+  background: var(--or-primary);
+  color: var(--or-primary-content);
+  box-shadow:
+    0 0 0 4px color-mix(in oklab, var(--or-primary) 25%, transparent),
+    0 4px 14px rgb(0 0 0 / 0.35);
+  transition: transform 200ms var(--or-ease);
+}
+.ct-divider:hover .ct-grip,
+.ct-divider:focus-visible .ct-grip,
+.ct-stage.dragging .ct-grip {
+  transform: scale(1.12);
+}
+.ct-grip svg {
+  width: 1.1rem;
+  height: 1.1rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.ct-tag {
+  position: absolute;
+  z-index: 2;
+  bottom: 0.75rem;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+.ct-stage.compare .ct-tag {
+  opacity: 1;
+}
+.ct-tag-l {
+  left: 0.75rem;
+  background: #ffffff;
+  color: #142319;
+  box-shadow: 0 0 0 1px #dce8dc;
+}
+.ct-tag-r {
+  right: 0.75rem;
+  background: #17221a;
+  color: #d9e7db;
+  box-shadow: 0 0 0 1px #273b2c;
+}
+
+/* "There is more below" hint on tall screenshots */
+.ct-more {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  bottom: 0.75rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.8rem;
+  border: 0;
+  border-radius: 999px;
+  background: var(--or-neutral);
+  color: var(--or-neutral-content) !important;
+  font-size: 0.75rem !important;
+  font-weight: 500;
+  white-space: nowrap;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.3);
+  transform: translate(-50%, 0.5rem);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 200ms ease,
+    transform 250ms var(--or-ease);
+}
+.ct-more.on {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  pointer-events: auto;
+}
+.ct-more svg {
+  width: 0.85rem;
+  height: 0.85rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  animation: ct-bob 1.4s ease-in-out infinite;
+}
+@keyframes ct-bob {
+  50% {
+    transform: translateY(2px);
+  }
+}
+
+/* ---- Step segments ---------------------------------------------------------- */
+.ct-segs {
+  display: flex;
+  gap: 0.75rem;
+  margin: 0.9rem 0 0;
+}
+.ct-seg-group {
+  display: flex;
+  gap: 3px;
+  min-width: 0;
+}
+.ct-seg {
+  position: relative;
+  flex: 1;
+  min-width: 0.4rem;
+  height: 1.25rem;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.ct-seg::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 4px;
+  margin-top: -2px;
+  border-radius: 2px;
+  background: var(--or-base-300);
+  transition:
+    height 150ms ease,
+    margin 150ms ease,
+    background-color 200ms ease;
+}
+.ct-seg::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 100%;
+  height: 4px;
+  margin-top: -2px;
+  border-radius: 2px;
+  background: var(--or-primary);
+  transform-origin: left;
+  transform: scaleX(0);
+}
+.ct-seg.seen::before {
+  background: color-mix(in oklab, var(--or-secondary) 55%, var(--or-base-300));
+}
+.ct-seg[aria-current]::after {
+  transform: scaleX(var(--p, 1));
+}
+.ct-seg:hover::before,
+.ct-seg:hover::after {
+  height: 8px;
+  margin-top: -4px;
+}
+/* Step title on hover */
+.ct-seg > span {
+  position: absolute;
+  z-index: 5;
+  bottom: 100%;
+  left: 50%;
+  padding: 0.2rem 0.55rem;
+  border-radius: var(--or-radius-field);
+  background: var(--or-neutral);
+  color: var(--or-neutral-content);
+  font-size: 0.75rem;
+  white-space: nowrap;
+  transform: translateX(-50%);
+  pointer-events: none;
+  /* not just transparent: a hidden label near the edge would still widen
+     the page on a phone */
+  display: none;
+}
+.ct-seg:hover > span,
+.ct-seg:focus-visible > span {
+  display: block;
+}
+.ct-seg-group:first-child .ct-seg:first-child > span {
+  left: 0;
+  transform: none;
+}
+.ct-seg-group:last-child .ct-seg:last-child > span {
+  left: auto;
+  right: 0;
+  transform: none;
+}
+
+/* ---- Caption ----------------------------------------------------------------- */
+.ct-caption {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0 1.25rem;
+  align-items: start;
+  margin-top: 0.6rem;
+}
+/* Step number: the console's overview numerals */
+.ct-count {
+  display: flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  font-family: var(--or-font-display);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.ct-count b {
+  font-size: clamp(2.5rem, 4.5vw, 3.25rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--or-accent-text);
+}
+.ct-count span {
+  font-size: 1.125rem;
+  font-weight: 700;
+  color: var(--or-muted);
+}
+.ct-text {
+  min-width: 0;
+  /* room for three lines of text, so stepping does not move the page */
+  min-height: 7.75rem;
+}
+.ct-text.swap > * {
+  animation: ct-rise 380ms var(--or-ease) both;
+}
+.ct-text.swap > :nth-child(2) {
+  animation-delay: 40ms;
+}
+.ct-text.swap > :nth-child(3) {
+  animation-delay: 80ms;
+}
+@keyframes ct-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+.ct-eyebrow {
+  margin: 0.15rem 0 0.2rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--or-accent-text);
+}
+/* The console page title: display face, italic, brand accent bar */
+.ct .ct-title {
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 0 0.5rem;
+  font-family: var(--or-font-display);
+  font-size: 1.5rem;
+  font-weight: 700;
+  font-style: italic;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  color: var(--or-content) !important;
+}
+.ct .ct-title::after {
+  content: "";
+  display: block;
+  height: 3px;
+  margin-top: 0.3rem;
+  border-radius: 2px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklch, var(--or-secondary) 5%, transparent),
+    var(--or-secondary)
+  );
+}
+.ct-desc {
+  max-width: 68ch;
+  color: var(--or-muted);
+}
+.ct-desc p {
+  margin: 0 0 0.4rem;
+}
+.ct-nav {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+}
+.ct-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  height: 2.375rem;
+  padding: 0 0.9rem;
+  border: 1px solid var(--or-base-300);
+  border-radius: var(--or-radius-field);
+  background: var(--or-base-100);
+  font-size: 0.875rem;
+  font-weight: 600;
+  white-space: nowrap;
+  transition:
+    border-color 150ms ease,
+    background-color 150ms ease;
+}
+.ct-btn:hover:not(:disabled) {
+  border-color: var(--or-primary);
+}
+.ct-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.ct-btn.primary {
+  border-color: var(--or-primary);
+  background: var(--or-primary);
+  color: var(--or-primary-content);
+}
+.ct-btn.primary:hover {
+  background: color-mix(in oklab, var(--or-primary) 88%, #000);
+}
+
+.ct-keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 1.1rem;
+  margin: 0;
+  padding: 0.6rem 1rem;
+  border-top: 1px solid var(--or-base-300);
+  font-size: 0.75rem;
+  color: var(--or-muted);
+}
+.ct-keys kbd {
+  display: inline-block;
+  min-width: 1.35rem;
+  margin-right: 0.15rem;
+  padding: 0 0.3rem;
+  border: 1px solid var(--or-base-300);
+  border-bottom-width: 2px;
+  border-radius: 0.3rem;
+  background: var(--or-base-200);
+  font: 500 0.6875rem/1.5 var(--or-font-mono);
+  text-align: center;
+  color: var(--or-content);
+}
+
+/* ---- Full window mode --------------------------------------------------------- */
+html.ct-lock {
+  overflow: hidden;
+}
+.ct.ct-theater {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  margin: 0;
+  padding: 0.75rem;
+  background: var(--or-base-200);
+  animation: ct-rise 300ms var(--or-ease);
+}
+.ct-theater .ct-app {
+  height: 100%;
+}
+.ct-theater .ct-body {
+  flex: 1;
+}
+.ct-theater .ct-frame {
+  flex: 1;
+}
+.ct-theater .ct-stage {
+  aspect-ratio: auto;
+  flex: 1;
+}
+.ct-theater .ct-text {
+  min-height: 5.5rem;
+}
+
+/* ---- Narrow screens ------------------------------------------------------------ */
+@media (max-width: 62rem) {
+  .ct-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  /* The rail moves under the stage as a plain list */
+  .ct-rail {
+    order: 2;
+    border-right: 0;
+    border-top: 1px solid var(--or-base-300);
+  }
+  .ct-rail-scroll {
+    position: static;
+    max-height: 18rem;
+  }
+  .ct-theater .ct-rail {
+    display: none;
+  }
+  .ct-tool span {
+    display: none;
+  }
+  .ct-bar {
+    flex-wrap: nowrap;
+  }
+  .ct-keys {
+    display: none;
+  }
+}
+@media (max-width: 40rem) {
+  .ct-main {
+    padding: 0.6rem;
+  }
+  .ct-bar {
+    padding: 0.6rem;
+  }
+  .ct-bar {
+    flex-wrap: wrap;
+  }
+  .ct-flows {
+    width: 100%;
+  }
+  .ct-flow:last-child {
+    flex: 1;
+  }
+  .ct-tools {
+    margin-left: auto;
+  }
+  .ct-flow {
+    padding: 0.4rem 0.6rem;
+    font-size: 0.875rem;
+  }
+  .ct-chrome {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+  .ct-user .who {
+    display: none;
+  }
+  .ct-caption {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .ct-count b {
+    font-size: 2rem;
+  }
+  .ct-count span {
+    font-size: 0.9rem;
+  }
+  .ct-nav {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    justify-content: space-between;
+    margin: 0 0 0.75rem;
+  }
+  .ct-text {
+    min-height: 0;
+  }
+  .ct .ct-title {
+    font-size: 1.25rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ct *,
+  .ct *::before,
+  .ct *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

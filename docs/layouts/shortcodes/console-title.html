@@ -1,0 +1,17 @@
+{{- /* Page heading in the console app's style (see the console skin section
+  of assets/css/custom.css): the title with the brand accent bar under it
+  and an optional intro paragraph, written as the shortcode body in
+  markdown. Used on pages with the hextra-home layout, which has no title
+  of its own.
+
+  Usage:
+  {{< console-title title="Console Tour" >}}
+  A short intro, with [links](/docs/).
+  {{< /console-title >}}
+*/ -}}
+<header class="console-skin console-title">
+  <h1 class="not-prose">{{ .Get "title" }}</h1>
+  {{- with .Inner | strings.TrimSpace }}
+    <p>{{ . | $.Page.RenderString }}</p>
+  {{- end }}
+</header>
