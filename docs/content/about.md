@@ -7,7 +7,7 @@ summary: "About OpenRun"
 
 ## What is OpenRun?
 
-OpenRun (previously called Clace) is an open-source, self-hosted GitOps platform for deploying web apps to Docker, Podman or Kubernetes, with a focus on deploying internal tools for teams. Apps are declared in a config file in Git; OpenRun builds the containers, routes requests and keeps the running platform in sync with what Git describes.
+OpenRun (previously called Clace) is an open-source, self-hosted GitOps platform for deploying web apps to Docker, Podman or Kubernetes, with a focus on deploying internal tools for teams. Apps are declared in a config file in Git; OpenRun builds the containers, routes requests and keeps the running platform in sync with what Git describes. The source code is on GitHub at [github.com/openrundev/openrun](https://github.com/openrundev/openrun), under the Apache-2.0 license.
 
 OpenRun provides declarative GitOps based blue-green deployment, OAuth/OIDC/SAML access controls for every app, automatic TLS certs, secrets management, RBAC and audit logs. Idle apps scale down to zero. The same declarative config works on a single server and on a Kubernetes cluster.
 
@@ -17,7 +17,15 @@ The goal of this project is to make it easy for individuals and teams to develop
 
 Application deployments should support a true GitOps approach: not just code updates, but app creation and configuration managed through Git. It should be easy, for the original developer or a new one, to make application code changes and deploy - after six months or after six years.
 
-## FAQ
+## Frequently Asked Questions {#faq}
+
+### Is OpenRun the same project as Clace?
+
+Yes. Clace was renamed to OpenRun in 2025. The GitHub repository moved from `claceio/clace` to [openrundev/openrun](https://github.com/openrundev/openrun), and the `clace` CLI became `openrun`. Older blog posts and links that mention Clace refer to the same project.
+
+### Is OpenRun an open-source, self-hosted PaaS?
+
+Yes. OpenRun is an Apache-2.0 licensed platform as a service that you run on your own infrastructure. Like Heroku or Cloud Run, it builds apps from source, deploys them in containers, routes requests and handles TLS. Unlike most self-hosted PaaS tools, apps are created and configured through Git, and every app gets SSO, RBAC and audit logs. It runs on a single server with Docker or Podman, or on Kubernetes.
 
 ### How does OpenRun compare to Coolify, CapRover, Kamal and Dokku?
 
@@ -65,9 +73,24 @@ Yes, deployment of internal tools by teams is the primary [use case]({{< ref "do
 
 If not used for internal tools, the auth and auditing features can be disabled, in which case OpenRun is suitable for deploying any web application.
 
+### How do you plan a self-hosted deployment of an internal tools platform?
+
+Decide on four things:
+
+- **Where it runs**: one server or VM to start, Kubernetes when you need high availability
+- **How users log in**: connect your OIDC or SAML identity provider and map its groups to [RBAC]({{< ref "docs/configuration/rbac" >}}) roles
+- **How apps reach data**: register shared Postgres or MySQL services once and give each app scoped credentials through [service bindings]({{< ref "docs/applications/servicebindings" >}})
+- **How changes are managed**: a Git repo with the app declarations, synced automatically with staged deployments
+
+The [team setup guide]({{< ref "docs/use-cases/team" >}}) covers a private deployment behind a VPN end to end.
+
+### Can OpenRun deploy AI-generated apps safely?
+
+Yes. Apps written with AI coding tools usually lack login, access control and audit logging. OpenRun adds them at the platform level: every app can require SSO login, RBAC decides which users or IdP groups can open it, and the audit log records operations, with no code changes in the app. [Service bindings]({{< ref "docs/applications/servicebindings" >}}) give each app its own scoped database credentials instead of shared admin access. See the [comparison with Retool, Appsmith and Budibase]({{< ref "compare/retool-appsmith-budibase" >}}) for building internal tools this way.
+
 ### Is SSO only for the admin console, or for apps too?
 
-For every app. Configure [OAuth, OpenID Connect, SAML or client certificate auth]({{< ref "docs/configuration/authentication" >}}) once at the server level and any app can require login, with no code changes in the app. Group information from the IdP feeds [RBAC]({{< ref "docs/configuration/rbac" >}}) grants that control which users can access which apps. Setting `auth_required = true` ensures no app can be served without authentication. Most deployment platforms authenticate only their own dashboard; with them, each deployed app must implement login itself.
+For every app. Configure [OAuth, OpenID Connect, SAML or client certificate auth]({{< ref "docs/configuration/authentication" >}}) once at the server level and any app can require login, with no code changes in the app. Group information from the IdP feeds [RBAC]({{< ref "docs/configuration/rbac" >}}) grants that control which users can access which apps. Setting `auth_required = true` ensures no app can be served without authentication. Most deployment platforms authenticate only their own dashboard; with them, each deployed app must implement login itself. SAML is included in the open-source version, with no SSO tax.
 
 ### How do apps get access to a database?
 
@@ -85,9 +108,13 @@ OpenRun can be deployed on a single node easily (Linux, Windows or macOS), using
 
 OpenRun can also be deployed on Kubernetes using a Helm chart. On Kubernetes, OpenRun avoids the need to set up a build system like Jenkins, CD with ArgoCD and an IDP like Backstage. Apps deployed using OpenRun run as Kubernetes services, with OpenRun acting as the API server and request router.
 
+### How do I deploy an app to my own server?
+
+Install OpenRun on a Linux VPS or any machine with Docker or Podman, start the server, and declare apps in a config file with one line per app, pointing at a Git repo. OpenRun builds the container (no Dockerfile needed for Streamlit, Gradio, Flask, ASGI apps like FastAPI and other supported frameworks), sets up the domain with automatic TLS and keeps the app in sync with Git. The [quick start]({{< ref "docs/quickstart" >}}) and the [VPS guide]({{< ref "docs/use-cases/personal" >}}) walk through it.
+
 ### Can OpenRun run behind a VPN with no public Internet access?
 
-Yes. OpenRun serves apps fully on private infrastructure, with no dependency on a public cloud service. The [team use case guide]({{< ref "docs/use-cases/team" >}}) walks through a setup behind a VPN, including OIDC/SAML auth, manually managed TLS certs and a GitOps sync from a private repo. Note that installs and container builds download packages from the Internet by default; fully air-gapped setups need local mirrors and registries.
+Yes. OpenRun serves apps fully on private infrastructure, such as inside your VPC, with no dependency on a public cloud service. App containers, metadata, audit logs and app data stay on servers you control. The [team use case guide]({{< ref "docs/use-cases/team" >}}) walks through a setup behind a VPN, including OIDC/SAML auth, manually managed TLS certs and a GitOps sync from a private repo. Note that installs and container builds download packages from the Internet by default; fully air-gapped setups need local mirrors and registries.
 
 ### How do I move from a single server to Kubernetes?
 

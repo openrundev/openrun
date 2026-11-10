@@ -51,7 +51,8 @@
   </script>
 {{- end }}
 
-{{- if and .IsPage (eq .Section "compare") }}
+{{- /* Emitted only when the page has a "Frequently Asked Questions" h2 section. */ -}}
+{{- if .IsPage }}
   {{- partial "custom/faq-jsonld.html" . }}
 {{- end }}
 

@@ -1,7 +1,7 @@
 ---
-title: "OpenRun - Self-Hosted GitOps Platform for Docker and Kubernetes"
+title: "OpenRun - Open-Source Self-Hosted PaaS and GitOps Platform"
 layout: hextra-home
-description: "Open-source, self-hosted GitOps platform for deploying web apps and internal tools to Docker or Kubernetes. A self-hosted PaaS alternative with declarative deployments, SSO, RBAC, TLS, secrets, staged releases and scale-to-zero."
+description: "Open-source, self-hosted PaaS for deploying web apps and internal tools to your own server or Kubernetes. GitOps deployments with SSO, RBAC, audit logs, TLS, secrets and scale-to-zero."
 keywords:
   [
     "GitOps",
@@ -73,7 +73,7 @@ cascade:
 
 <div class="hx:mt-6 hx:mb-6 hx:max-w-4xl">
 <h2 class="hx:text-2xl hx:font-bold hx:tracking-tight">Built for Internal Tools and Team Web Apps</h2>
-<p class="hx:mt-2 hx:text-gray-600 hx:dark:text-gray-400">A self-hosted PaaS alternative for internal tools: every app gets OAuth/OIDC/SAML login, RBAC and audit logs, not just the admin console. Start on a single server with Docker or Podman, move to Kubernetes with the same config. Compare with <a href="{{< ref "compare/cloud-run-app-runner" >}}" class="hx:underline" style="color: #00A200;">Cloud Run and App Runner</a> or <a href="{{< ref "compare/diy-kubernetes" >}}" class="hx:underline" style="color: #00A200;">DIY Kubernetes</a>.</p>
+<p class="hx:mt-2 hx:text-gray-600 hx:dark:text-gray-400">An open-source, self-hosted internal tools platform: every app gets OAuth/OIDC/SAML single sign-on, RBAC and audit logs, not just the admin console. Deploy web apps, dashboards and <a href="{{< ref "docs/use-cases/jenkins-rundeck-alternative" >}}" class="hx:underline" style="color: #00A200;">ops automation scripts</a> on your own server or inside your VPC. Start on a single server with Docker or Podman, move to Kubernetes with the same config. Compare with <a href="{{< ref "compare/cloud-run-app-runner" >}}" class="hx:underline" style="color: #00A200;">Cloud Run and App Runner</a>, <a href="{{< ref "compare/retool-appsmith-budibase" >}}" class="hx:underline" style="color: #00A200;">Retool</a> or <a href="{{< ref "compare/diy-kubernetes" >}}" class="hx:underline" style="color: #00A200;">DIY Kubernetes</a>.</p>
 </div>
 
 <div class="home-diagram">
@@ -277,6 +277,8 @@ function copyCode(codeId, buttonElem) {
 </a>
 </div>
 
+<div style="height: 20px;"></div>
+
 <style>
   @media screen and (min-width: 768px) {
     .responsive-picture { width: 60%; }
@@ -301,6 +303,7 @@ function copyCode(codeId, buttonElem) {
   <source media="(prefers-color-scheme: dark)" src="https://openrun.dev/demo_dark.mp4" type="video/mp4">
   <source media="(prefers-color-scheme: light)" src="https://openrun.dev/demo_light.mp4" type="video/mp4">
 </video>
-<br>
+
+<div style="height: 20px;"></div>
 
 <!-- Begin Mailchimp Signup Form --><div id="mc_embed_signup" class="mc-signup"><div class="mc-signup-text"><div style="font-size: 18px; font-weight: 700; margin-bottom: 4px; background: linear-gradient(135deg, #00C200, #2ED82E); color: transparent; background-clip: text; -webkit-background-clip: text;">Stay in the loop</div><div style="font-size: 13px; color: #6b7280;">Get updates on new features and releases.</div></div><form action="https://clace.us21.list-manage.com/subscribe/post?u=3e38430549570438cbc8b7513&amp;id=57d9eeea29&amp;f_id=00afa8e1f0" method="post" id="mc-embedded-subscribe-form" name="mc-embedded-subscribe-form" class="validate mc-signup-form" target="_blank"><input type="email" placeholder="Enter your email" name="EMAIL" id="mce-EMAIL" required><div aria-hidden="true" id="mce-responses" class="clear foot" style="display:none"><div class="response" id="mce-error-response" style="display:none"></div><div class="response" id="mce-success-response" style="display:none"></div></div><input aria-hidden="true" type="hidden" name="b_3e38430549570438cbc8b7513_57d9eeea29" value=""><button type="submit" name="subscribe" id="mc-embedded-subscribe">Subscribe</button></form></div><!--End mc_embed_signup-->

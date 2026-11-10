@@ -1,6 +1,6 @@
 ---
 title: "SQLite in Production with Built-In Litestream Replication"
-description: "OpenRun adds built-in Litestream replication for SQLite apps, with automatic backup to S3-compatible storage and restore on Docker, Podman, and Kubernetes."
+description: "Running SQLite in production: host SQLite web apps on your own server or Kubernetes with continuous Litestream backup to S3 and automatic restore, managed by the platform."
 summary: "Continuous SQLite replication to S3 with automatic restore, managed by the platform instead of the app."
 date: 2026-08-25
 ---
@@ -13,9 +13,11 @@ The result is that application developers use SQLite normally without having to 
 
 ## Background
 
-SQLite is a great fit for internal tools and small web apps: the database is file-backed, reads are fast, and there is no separate database server to operate. Litestream continuously replicates SQLite changes to object storage, providing durable off-node backups and point-in-time recovery.
+SQLite is a great fit for internal tools and small web apps in production: the database is file-backed, reads are fast, and there is no separate database server to operate. SQLite is not a server, though. "Hosting" a SQLite app means giving it a persistent local disk (not a network file system), running a single writer at a time and backing up the file continuously. The two things that usually go wrong are data loss when a container's disk goes away and backups that were never tested.
 
-Without platform integration, however, you still need to deploy Litestream alongside the app, configure the replica, and handle database restoration during startup.
+[Litestream](https://litestream.io/) solves the backup part. It is an open-source tool that streams changes from SQLite's write-ahead log to S3-compatible object storage, providing durable off-node backups and point-in-time recovery, with no changes to the app's SQL.
+
+Without platform integration, however, you still need to deploy Litestream alongside the app, configure the replica, and handle database restoration during startup. In Docker that typically means adding Litestream to the image and wrapping the app in `litestream replicate -exec`, or running a sidecar container and adding a `litestream restore` step to the entrypoint, for every app.
 
 OpenRun moves that operational work into the platform. Litestream settings are defined once in the server configuration, while OpenRun manages replication and restoration outside the app container. The app image stays unchanged, and new SQLite apps can use replication without any Litestream-specific setup.
 
@@ -105,3 +107,21 @@ App states combine the replica listing in object storage with the replication co
 See the [Litestream reference]({{< ref "/docs/applications/litestream" >}}) for the full config options and the [SQLite hosting use case]({{< ref "/docs/use-cases/sqliteapps" >}}) for app best practices (WAL mode, busy timeouts, short write transactions).
 
 Replication status is also visible in the [Console App]({{< ref "/console-tour" >}}) - see the [live demo](https://utils.demo.clace.io/console/containers?query=&filter=litestream).
+
+## Frequently Asked Questions
+
+### Is SQLite good for production web apps?
+
+Yes, for most internal tools and small to medium web apps. SQLite handles many concurrent readers and one writer at a time; with WAL mode, a busy timeout and short write transactions, that covers typical internal tool traffic. It is a poor fit when several app servers must write to the same database, which needs a client-server database such as PostgreSQL.
+
+### How do I back up SQLite to S3?
+
+Use Litestream to continuously replicate the database to an S3 bucket instead of copying the file on a schedule, which can capture a database mid-write. With OpenRun, you define the bucket once in the server config and enable replication on the SQLite service; every app bound to it is backed up and restored automatically.
+
+### Where can I host a SQLite web app?
+
+Any server or Kubernetes cluster that gives the app a persistent local volume. OpenRun runs on a single Linux, macOS or Windows server with Docker or Podman, or on Kubernetes, and provides the volume, the backups and the restore. See the [SQLite web app hosting guide]({{< ref "/docs/use-cases/sqliteapps" >}}). Platforms with ephemeral file systems, such as Google Cloud Run, need extra work to keep SQLite data; see [Cloud Run vs OpenRun]({{< ref "/compare/cloud-run-app-runner" >}}).
+
+### How much data can be lost with Litestream?
+
+Replication is asynchronous. With the default one-second `sync_interval`, a sudden crash can lose roughly the last second of writes. An orderly shutdown, including OpenRun's scale-to-zero idle stop, performs a final sync first.

@@ -10,7 +10,7 @@
   {{ partialCached "favicons.html" . -}}
   <title>
     {{- if .IsHome -}}
-      {{ .Site.Title -}}
+      {{ .Title | default .Site.Title -}}
     {{ else -}}
       {{- $suffix := .Site.Params.titleSuffix | default .Site.Title -}}
       {{- /* Skip the suffix when the title already names the product */ -}}

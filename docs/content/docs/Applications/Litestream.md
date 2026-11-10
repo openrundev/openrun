@@ -1,11 +1,14 @@
 ---
-title: "SQLite + Litestream Replication to S3"
+title: "Litestream: SQLite Replication to S3, R2 and MinIO"
+linkTitle: "SQLite + Litestream"
 weight: 550
-description: "Deploy SQLite-backed web apps with continuous Litestream replication to AWS S3, Cloudflare R2, MinIO and other S3-compatible storage, with automatic restore on Docker, Podman and Kubernetes."
+description: "Run Litestream SQLite replication to AWS S3, Cloudflare R2 or MinIO without adding it to your Docker image: managed sidecar, automatic restore and Kubernetes support."
 summary: "Continuous SQLite replication to S3-compatible storage with Litestream and automatic restore."
 ---
 
-OpenRun is an open-source web app deployment platform with built-in [Litestream](https://litestream.io/) support for SQLite applications. App SQLite databases are continuously replicated to AWS S3 or S3-compatible object storage such as Cloudflare R2, MinIO and SeaweedFS, and are automatically restored before the app starts if its local volume is lost. Applications do not need to package, configure or run Litestream themselves: OpenRun manages the replication and restore lifecycle on Docker, Podman and Kubernetes.
+[Litestream](https://litestream.io/) is an open-source tool that continuously streams changes from a SQLite database's write-ahead log (WAL) to object storage such as AWS S3, giving a SQLite app off-server backups and point-in-time restore without running a database server. The SQLite database itself stays on a local disk; S3 holds the replica.
+
+OpenRun is an open-source web app deployment platform with built-in Litestream support for SQLite applications. App SQLite databases are continuously replicated to AWS S3 or S3-compatible object storage such as Cloudflare R2, MinIO and SeaweedFS, and are automatically restored before the app starts if its local volume is lost. Applications do not need to package, configure or run Litestream themselves: OpenRun manages the replication and restore lifecycle on Docker, Podman and Kubernetes.
 
 Two types of SQLite data can be replicated:
 
@@ -29,6 +32,28 @@ OpenRun's Litestream integration works with:
 - MinIO
 - SeaweedFS
 - Other S3-compatible object stores
+
+Example configs for Cloudflare R2 and MinIO (see [Litestream Configs](#litestream-configs) for all keys):
+
+```toml {filename="openrun.toml"}
+# Cloudflare R2: use the account's S3 API endpoint and region "auto"
+[litestream.r2]
+endpoint = "https://<ACCOUNT_ID>.r2.cloudflarestorage.com"
+bucket = "openrun-backups"
+region = "auto"
+access_key_id = '{{secret_from "env" "R2_ACCESS_KEY_ID"}}'
+secret_access_key = '{{secret_from "env" "R2_SECRET_ACCESS_KEY"}}'
+force_path_style = true
+
+# Self-hosted MinIO
+[litestream.minio]
+endpoint = "http://localhost:9000"
+bucket = "openrun-backups"
+region = "us-east-1"
+access_key_id = '{{secret_from "env" "MINIO_ACCESS_KEY"}}'
+secret_access_key = '{{secret_from "env" "MINIO_SECRET_KEY"}}'
+force_path_style = true
+```
 
 ## How It Works
 
@@ -171,6 +196,30 @@ For disaster recovery, preserve `openrun.toml`, object-store credentials and the
 - **Windows**: fully supported. App replication runs in Linux containers; metadata replication runs on the host through the embedded library.
 
 ## Frequently Asked Questions
+
+### What is Litestream?
+
+Litestream is an open-source streaming replication tool for SQLite. It runs alongside the app, copies new WAL pages to S3-compatible object storage about every second, and can restore the database from that replica. OpenRun runs and configures Litestream for each app, so the app only uses SQLite.
+
+### Can SQLite run directly on S3?
+
+No. SQLite needs a local file system with working file locks; it cannot use S3 (or NFS) as its storage. The usual pattern, which OpenRun implements, is to keep the database on a local volume and continuously replicate it to S3 with Litestream, restoring from S3 when the volume is empty.
+
+### How do I run Litestream with Docker?
+
+Without a platform, the common approaches are to add the Litestream binary to the app image and start the app through `litestream replicate -exec`, or to run Litestream as a second container sharing the data volume and add a `litestream restore -if-replica-exists` step to the startup script. OpenRun does this for you: it runs the `litestream/litestream` image as a companion container next to the unchanged app image and runs the restore before the app container starts.
+
+### Do I need `litestream restore -if-replica-exists` in my entrypoint?
+
+No. OpenRun lists the replica in object storage and restores each database with `litestream restore -if-db-not-exists` before the app starts. A new app with no replica starts with an empty volume, and an app with existing local data is not overwritten.
+
+### Can I restore a SQLite database to an earlier point in time?
+
+Automatic restore always uses the latest replicated state. To recover an earlier state, use the Litestream CLI from the same 0.5 image series with its `restore -timestamp` option against the binding's replica path. The `retention` setting bounds how far back you can go.
+
+### Can I run SQLite on Kubernetes with Litestream?
+
+Yes. The app's SQLite volume becomes a PersistentVolumeClaim, and OpenRun adds the restore init container and Litestream sidecar to the pod. SQLite allows one writer, so apps with a SQLite binding run as a single replica with the `Recreate` update strategy.
 
 ### Does OpenRun automatically back up SQLite databases to S3?
 

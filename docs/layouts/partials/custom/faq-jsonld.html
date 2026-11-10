@@ -1,9 +1,13 @@
 {{- /* Emits FAQPage structured data from the "Frequently Asked Questions" section of a page.
-       Each h3 in that section is a question, the content up to the next h3 is the answer. */ -}}
+       Each h3 in that section is a question, the content up to the next h3 is the answer.
+       The section ends at the next h2, or at a `<!-- /faq -->` marker, whichever comes first.
+       Add the marker after the last answer whenever other content (callouts, forms, media)
+       follows the FAQ without a new h2, so that content is not read into the last answer. */ -}}
 {{- $faqs := slice -}}
 {{- range after 1 (split .Content "<h2") -}}
   {{- if hasPrefix (index (split (printf "<h2%s" .) "</h2>") 0 | plainify | htmlUnescape | strings.TrimSpace) "Frequently Asked Questions" -}}
-    {{- range after 1 (split . "<h3") -}}
+    {{- $section := index (split . "<!-- /faq -->") 0 -}}
+    {{- range after 1 (split $section "<h3") -}}
       {{- $parts := split (printf "<h3%s" .) "</h3>" -}}
       {{- $question := index $parts 0 | plainify | htmlUnescape | strings.TrimSpace -}}
       {{- $answer := delimit (after 1 $parts) "" | plainify | htmlUnescape | replaceRE `\s+` " " | strings.TrimSpace -}}

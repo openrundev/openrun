@@ -1,7 +1,9 @@
 ---
-title: "Python as a Configuration Language Using Starlark"
+title: "Starlark: Python as a Configuration Language"
+description: "What the Starlark language is, how it differs from Python, who uses it (Bazel, Buck2, Tilt) and lessons from using Starlark instead of YAML for app config in Go."
 summary: "Experience with using Starlark (which has a Pythonic syntax) for most configuration needs in OpenRun."
 date: 2025-10-14
+lastmod: 2026-11-10
 ---
 
 {{< openrun-intro >}}
@@ -12,7 +14,25 @@ OpenRun implements a platform for deploying web apps declaratively. The specific
 
 For teams, a declarative interface works better than imperative commands. GitOps enables you to do code reviews and version management for your config, same as done for code. OpenRun implements a declarative interface using [Starlark](https://starlark-lang.org/) for deploying web apps.
 
-Starlark, a dialect of Python, is designed to be embedded in other applications for configuration or scripting abilities. Starlark was initially developed in Google for build tools like Blaze/Bazel, but it is now being used for other [use-cases](https://github.com/laurentlb/awesome-starlark?tab=readme-ov-file#users). There have been many discussions about the issues with YAML and other config languages. This post looks at the experience with using Starlark as the configuration language in OpenRun.
+There have been many discussions about the issues with YAML and other config languages. This post looks at the experience with using Starlark as the configuration language in OpenRun.
+
+## What Is Starlark?
+
+Starlark is a configuration language with Python syntax, designed to be embedded in other applications for configuration or scripting. It was developed at Google for the Blaze/Bazel build system, where it is used for `BUILD` files, and was originally called Skylark. Implementations exist in [Go](https://github.com/google/starlark-go) (used by OpenRun), Java (used by Bazel) and [Rust](https://github.com/facebook/starlark-rust) (used by Buck2).
+
+Starlark is used by build and dev tools such as Bazel, Buck2, Tilt (`Tiltfile`), Drone CI and Copybara, and in other [projects](https://github.com/laurentlb/awesome-starlark?tab=readme-ov-file#users).
+
+### Starlark vs Python
+
+Starlark looks like Python but is deliberately restricted, so config files are safe to run inside a host program:
+
+- **Deterministic and hermetic**: no file, network or clock access unless the host application provides a builtin for it, so the same input always gives the same output
+- **No unbounded loops**: no `while` loops or recursion by default, so evaluation always terminates
+- **Frozen values**: data is immutable once a module finishes loading, so modules can be evaluated in parallel
+- **No classes, exceptions or imports from the Python standard library**: `load()` brings in other Starlark files instead
+- **Embedded, not standalone**: there is no `pip`; the host language defines which functions are available
+
+Any valid Starlark file is close to valid Python, so Python developers can read and write it without learning a new syntax, and Python IDE tooling such as formatters mostly works.
 
 ## How OpenRun Uses Starlark
 
@@ -106,6 +126,22 @@ In addition to Starlark, OpenRun uses TOML for the static config file. See [use-
 For API interaction and data serialization, OpenRun uses JSON. For example, the dynamic config uses JSON since there are API calls which can update the values dynamically. JSON works well for that scenario. Its limitations like not being able to add comments do not matter when the user is expected to use a UI to update the dynamic values.
 
 For scenarios where configuration flexibility is good to have, Starlark is a great option.
+
+## Frequently Asked Questions
+
+### Is Starlark the same as Python?
+
+No. Starlark uses Python syntax but is a separate, smaller language. It removes features such as classes, exceptions, `while` loops, recursion and standard library imports, and has no access to files or the network unless the host application adds them. This makes it safe and deterministic as a configuration language.
+
+### What is Starlark used for?
+
+Mainly configuration and build files. Bazel and Buck2 use it for build rules, Tilt uses it for `Tiltfile` dev environments, and OpenRun uses it to declare apps and define app behavior instead of YAML.
+
+### How do I use Starlark in Go?
+
+Use the [starlark-go](https://github.com/google/starlark-go) library: execute a file with `starlark.ExecFileOptions`, expose Go functions as builtins with `starlark.NewBuiltin`, and read the resulting global values back into Go structs. OpenRun's [builtins](https://github.com/openrundev/openrun/blob/main/internal/app/apptype/builtins.go) are a working example.
+
+<!-- /faq -->
 
 {{<callout emoji="💬" >}}
 Discussion thread on [lobste.rs](https://lobste.rs/s/knnz1l/python_as_configuration_language_via)

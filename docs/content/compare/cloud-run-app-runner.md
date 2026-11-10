@@ -1,15 +1,19 @@
 ---
-title: "OpenRun vs Google Cloud Run and AWS App Runner"
+title: "Cloud Run vs AWS App Runner: AWS Equivalent, Pricing and Self-Hosted Alternative"
+linkTitle: "vs Cloud Run, App Runner"
 weight: 200
 date: 2026-08-10
-description: "OpenRun vs Google Cloud Run and AWS App Runner: scale-to-zero containers with GitOps, SSO and RBAC on your own servers, without per-request cloud pricing."
-summary: "OpenRun compared with managed serverless container platforms from Google and AWS."
+lastmod: 2026-11-10
+description: "What is the AWS equivalent of Google Cloud Run? Compare Cloud Run, App Runner, ECS Express Mode, Fargate and Lambda on pricing and scale-to-zero, and see the self-hosted OpenRun alternative."
+summary: "Cloud Run vs App Runner, the AWS equivalents of Cloud Run, pricing, and OpenRun as a self-hosted alternative."
 ---
 
 Google Cloud Run and AWS App Runner are managed serverless container platforms. You hand them a container image or a repo, and they run it with automatic scaling, HTTPS and usage-based pricing. Cloud Run scales services down to zero when idle. App Runner does not: its autoscaling retains at least one provisioned instance whose memory is billed, and reducing compute to zero requires [manually pausing](https://docs.aws.amazon.com/apprunner/latest/dg/manage-pause.html) the service, which makes it unavailable.
 
+**What is the AWS equivalent of Cloud Run?** App Runner was the closest AWS equivalent of Google Cloud Run, but it is now in maintenance mode and closed to new customers. AWS recommends [Amazon ECS Express Mode](https://docs.aws.amazon.com/apprunner/latest/dg/apprunner-availability-change.html) for new container web services. For request-driven scale-to-zero on AWS, AWS Lambda with container images is the closest match. See [AWS equivalents of Cloud Run](#what-is-the-aws-equivalent-of-google-cloud-run) below.
+
 {{< callout type="info" >}}
-AWS [stopped accepting new App Runner customers](https://docs.aws.amazon.com/general/latest/gr/maintenance_services.html) on March 31, 2026. Existing services continue to run; the comparison here applies to existing deployments and to teams evaluating a replacement.
+AWS [announced on March 31, 2026](https://docs.aws.amazon.com/general/latest/gr/maintenance_services.html) that App Runner is in maintenance and [no longer open to new customers](https://docs.aws.amazon.com/apprunner/latest/dg/apprunner-availability-change.html). Existing customers can keep running and creating services, but no new features are planned. AWS points migrating customers to Amazon ECS Express Mode. The comparison here covers existing deployments and teams evaluating a replacement.
 {{< /callout >}}
 
 OpenRun brings the serverless container deployment model to infrastructure you control. Apps run in containers, scale to zero when idle and start lazily on the first request, but they run on your own server, node or Kubernetes cluster. For internal tools, this changes the economics and simplifies keeping apps private.
@@ -20,7 +24,7 @@ OpenRun brings the serverless container deployment model to infrastructure you c
 
 | Capability | OpenRun | Google Cloud Run | AWS App Runner |
 | --- | --- | --- | --- |
-| Availability | Open source, self-hosted | Generally available | Closed to new customers since March 31, 2026 |
+| Availability | Open source, self-hosted | Generally available | Maintenance mode, closed to new customers (announced March 31, 2026) |
 | Hosting | Self-hosted: single server, node or your Kubernetes cluster | Google managed | AWS managed |
 | Pricing | Free, open source; you pay for your infrastructure | Per vCPU-second, memory and requests | Per vCPU and memory; at least one instance's memory always billed while running |
 | Scale to zero | Yes, idle containers stopped | Yes | No; manual pause makes the service unavailable |
@@ -37,7 +41,34 @@ OpenRun brings the serverless container deployment model to infrastructure you c
 | Audit logs | Built in, app operations and API calls | Cloud Audit Logs | CloudTrail |
 | Vendor lock-in | Low: Apache-2.0 open source, runs on any infrastructure; app declarations use OpenRun's Starlark config format | Google Cloud | AWS |
 
-Comparison last verified on August 10, 2026 against the [Cloud Run documentation](https://cloud.google.com/run/docs), [Cloud Run IAP documentation](https://docs.cloud.google.com/run/docs/securing/identity-aware-proxy-cloud-run), [App Runner pricing](https://aws.amazon.com/apprunner/pricing/) and [App Runner pause behavior](https://docs.aws.amazon.com/apprunner/latest/dg/manage-pause.html).
+Comparison last verified on November 10, 2026 against the [Cloud Run documentation](https://cloud.google.com/run/docs), [Cloud Run pricing](https://cloud.google.com/run/pricing), [Cloud Run IAP documentation](https://docs.cloud.google.com/run/docs/securing/identity-aware-proxy-cloud-run), [App Runner pricing](https://aws.amazon.com/apprunner/pricing/), [App Runner pause behavior](https://docs.aws.amazon.com/apprunner/latest/dg/manage-pause.html) and the [App Runner availability change](https://docs.aws.amazon.com/apprunner/latest/dg/apprunner-availability-change.html).
+
+## What Is the AWS Equivalent of Google Cloud Run?
+
+AWS has no single service that matches Cloud Run feature for feature. The options, from closest to furthest:
+
+| AWS service | How it compares to Cloud Run | Scale to zero |
+| --- | --- | --- |
+| AWS App Runner | Closest match: deploy from an image or repo, HTTPS and autoscaling included. In maintenance mode and closed to new customers | No, one provisioned instance stays billed |
+| Amazon ECS Express Mode | AWS's recommended App Runner replacement. Creates an ECS service on Fargate with a load balancer, HTTPS and autoscaling from a container image, with no extra charge beyond the underlying resources | No request-driven scale to zero |
+| Amazon ECS on AWS Fargate | Serverless containers without managing servers, but you configure the load balancer, networking and scaling yourself | No request-driven scale to zero |
+| AWS Lambda (container images) | Runs container images and scales to zero, billed per request and duration. Functions have a 15-minute execution limit and use the Lambda runtime interface instead of a plain HTTP server | Yes |
+| AWS Elastic Beanstalk | The AWS equivalent of Google App Engine rather than Cloud Run: managed environments on EC2 instances | No |
+
+If the goal is Cloud Run's model, containers that start on demand and cost nothing when idle, without committing to one cloud, OpenRun provides it on your own servers or Kubernetes cluster on any provider, including AWS EC2 or EKS.
+
+## Cloud Run vs App Runner Pricing
+
+| | Google Cloud Run | AWS App Runner | OpenRun |
+| --- | --- | --- | --- |
+| Compute | Per vCPU-second; with request-based billing, charged only while handling requests | $0.064 per vCPU-hour while active (US East) | No charge; you pay for your own server or cluster |
+| Memory | Per GiB-second | $0.007 per GB-hour; the provisioned instance's memory is billed even while idle (US East) | No charge |
+| Requests | Per million requests beyond the free tier | Not billed per request | No charge |
+| Idle cost | Zero when scaled to zero | At least one instance's memory | Fixed cost of your infrastructure |
+| Other fees | Build (Cloud Build) and networking charges | Monthly fee per app for automatic deployments, plus a build fee for source-based deploys | None |
+| Free tier | Monthly free allowance of vCPU-seconds, GiB-seconds and 2 million requests | No App Runner free tier | Free, open source |
+
+For a single always-busy service, the managed platforms are cost-effective. For a catalog of internal tools that are idle most of the day, per-service charges add up, and a single server running OpenRun usually costs less than a few always-on App Runner services. Check the [Cloud Run pricing](https://cloud.google.com/run/pricing) and [App Runner pricing](https://aws.amazon.com/apprunner/pricing/) pages for your region; rates differ by region and billing mode.
 
 ## Where OpenRun Differs
 
@@ -71,9 +102,29 @@ For public, spiky, customer-facing workloads on a team already invested in GCP, 
 
 Yes. OpenRun provides the core Cloud Run experience, deploying containers that scale to zero and start on demand, on your own server, node or Kubernetes cluster, with GitOps management and built-in SSO and RBAC.
 
+### What is the AWS equivalent of Google Cloud Run?
+
+AWS App Runner was the closest equivalent, but it is closed to new customers. AWS recommends Amazon ECS Express Mode for new container web services. ECS on Fargate runs serverless containers with more manual setup, and AWS Lambda with container images is the AWS option that scales to zero per request. Google App Engine's AWS equivalent is Elastic Beanstalk.
+
 ### Is OpenRun an alternative to AWS App Runner?
 
-Yes, and since AWS closed App Runner to new customers on March 31, 2026, teams that wanted the App Runner model need an alternative. OpenRun provides source-to-running-container deployment with automatic HTTPS on infrastructure you control, and unlike App Runner it scales idle apps fully to zero.
+Yes. Since AWS closed App Runner to new customers, teams that wanted the App Runner model need an alternative. OpenRun provides source-to-running-container deployment with automatic HTTPS on infrastructure you control, and unlike App Runner it scales idle apps fully to zero. Unlike ECS Express Mode, it also adds SSO, RBAC and GitOps management for every app.
+
+### How much does AWS App Runner cost?
+
+In US East, App Runner charges $0.064 per vCPU-hour and $0.007 per GB-hour while instances are active. While idle, it still bills the memory of at least one provisioned instance at $0.007 per GB-hour. Automatic deployments add a monthly fee per app, and source-based deploys add a build fee. App Runner has no free tier.
+
+### Is Cloud Run cheaper than App Runner?
+
+For services that are idle part of the day, usually yes. With request-based billing, Cloud Run charges only while handling requests and scales to zero, and it has a monthly free tier. App Runner keeps at least one instance's memory billed at all times.
+
+### What is the difference between AWS App Runner and Lambda?
+
+App Runner runs a long-lived web server container and keeps at least one instance provisioned. Lambda runs functions, including container images, per request, scales to zero and has a 15-minute execution limit. Web frameworks run on Lambda through an adapter, while App Runner and Cloud Run run them as-is.
+
+### Can I run a SQLite app on Cloud Run?
+
+Cloud Run's local filesystem is in memory and lost when an instance stops, and SQLite is not safe on network file systems, so persistent SQLite needs extra work on Cloud Run. OpenRun gives each SQLite app a persistent volume plus continuous [Litestream replication to S3]({{< ref "docs/applications/litestream" >}}) with automatic restore.
 
 ### Can OpenRun scale out like Cloud Run?
 
