@@ -12,6 +12,9 @@ TAG :=
 
 DIAGRAMS := $(wildcard ./static/d2/*.d2)
 ARTICLE_HEADER_SIZE := 744x400
+# Background overrides prepended to each diagram, see the files for details
+D2_THEME_LIGHT := ./static/d2/theme/light.d2
+D2_THEME_DARK := ./static/d2/theme/dark.d2
 
 help: ## Display this help section
 > @awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-38s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -23,12 +26,12 @@ update-diagrams: ## Update diagrams. Source files are named <name>.<engine>.d2, 
 > @for d in $(DIAGRAMS); do \
 > base="$${d%.d2}"; engine="$${base##*.}"; name="$${base%.*}"; \
 > case "$$engine" in dagre|elk|tala) ;; *) echo "$$d: file name must be <name>.<dagre|elk|tala>.d2"; exit 1;; esac; \
-> d2 --layout "$$engine" --theme 104 --dark-theme 201 "$$d" "$$name.svg"; \
-> d2 --layout "$$engine" --theme 104 "$$d" "$${name}_light.svg"; \
-> d2 --layout "$$engine" --theme 201 "$$d" "$${name}_dark.svg"; \
+> cat $(D2_THEME_LIGHT) "$$d" | d2 --layout "$$engine" --theme 104 --dark-theme 201 - "$$name.svg"; \
+> cat $(D2_THEME_LIGHT) "$$d" | d2 --layout "$$engine" --theme 104 - "$${name}_light.svg"; \
+> cat $(D2_THEME_DARK) "$$d" | d2 --layout "$$engine" --theme 201 - "$${name}_dark.svg"; \
 > if grep -q 'animated: true' "$$d"; then \
-> sed 's/animated: true/animated: false/g' "$$d" | d2 --layout "$$engine" --theme 104 - "$${name}_static_light.svg"; \
-> sed 's/animated: true/animated: false/g' "$$d" | d2 --layout "$$engine" --theme 201 - "$${name}_static_dark.svg"; \
+> cat $(D2_THEME_LIGHT) "$$d" | sed 's/animated: true/animated: false/g' | d2 --layout "$$engine" --theme 104 - "$${name}_static_light.svg"; \
+> cat $(D2_THEME_DARK) "$$d" | sed 's/animated: true/animated: false/g' | d2 --layout "$$engine" --theme 201 - "$${name}_static_dark.svg"; \
 > fi; \
 > d2 --layout "$$engine" --theme 104 "$$d" "$$name.png"; \
 > magick "$$name.png" -resize '$(ARTICLE_HEADER_SIZE)' -background white -gravity center -extent '$(ARTICLE_HEADER_SIZE)' -alpha remove -alpha off -strip -define png:compression-level=9 "$${name}_small.png"; \

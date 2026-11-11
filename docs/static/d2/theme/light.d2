@@ -1,0 +1,10 @@
+# Prepended to every diagram by make update-diagrams. Sets the diagram
+# background (N7) to the docs page background, which is the console app's
+# base-200 color. The dark override applies to <name>.svg, which carries
+# both themes.
+vars: {
+  d2-config: {
+    theme-overrides: {N7: "#f9fcf9"}
+    dark-theme-overrides: {N7: "#101a13"}
+  }
+}

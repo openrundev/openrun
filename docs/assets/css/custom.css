@@ -28,6 +28,70 @@ h1:not(.not-prose) {
     color: #00C200 !important;
 }
 
+/* Site backgrounds: the console app's surfaces (OPENRUN_THEMES in the
+   console's app.star). The page sits on base-200 and raised surfaces such as
+   menus and dialogs on base-100.
+   Dark: Hextra paints everything through three theme colors, so those are
+   remapped. Light: the page color is Hextra's white, which is also used for
+   text, so the page level surfaces are set directly instead. */
+html.dark {
+  --hx-color-dark: #101a13; /* page, navbar, sidebar and toc footers */
+  --hx-color-neutral-900: #17221a; /* footer, menus, search dialog */
+  --hx-color-neutral-800: #1e2c22; /* cards, badges, borders */
+  --hx-color-neutral-700: #273b2c; /* borders, hover */
+}
+html:not(.dark) {
+  --hx-color-gray-100: #eef4ee; /* footer, cards, badges */
+}
+html:not(.dark) body,
+html:not(.dark) .hextra-sidebar-container,
+html:not(.dark) .hextra-sidebar-container [class~="hx:bg-white"],
+html:not(.dark) .hextra-toc [class~="hx:bg-white"] {
+  background-color: #f9fcf9;
+}
+html:not(.dark) .hextra-nav-container-blur {
+  background-color: color-mix(in oklab, #f9fcf9 85%, transparent) !important;
+}
+/* the fade above the sticky sidebar and toc footers */
+html:not(.dark) :is(.hextra-sidebar-container, .hextra-toc) [class~="hx:bg-white"] {
+  --tw-shadow-color: #f9fcf9;
+}
+html.dark :is(.hextra-sidebar-container, .hextra-toc) [class~="hx:dark:bg-dark"] {
+  --tw-shadow-color: #101a13;
+}
+
+/* Page titles carry the console's accent bar (.page-title in the console's
+   style.css): the heading shrinks to its text so the bar spans exactly the
+   title, and the gradient runs from nearly transparent to the brand
+   secondary green. Hero headings (.not-prose) are left alone; the
+   console-title shortcode draws its own bar. */
+:root {
+  --or-title-bar: #007700;
+}
+html.dark {
+  --or-title-bar: #00c200;
+}
+h1:not(.not-prose) {
+  width: fit-content;
+  max-width: 100%;
+}
+h1:not(.not-prose)[class~="hx:text-center"] {
+  margin-inline: auto;
+}
+h1:not(.not-prose)::after {
+  content: "";
+  display: block;
+  width: 100%;
+  height: 3px;
+  margin-top: 0.3rem;
+  border-radius: 2px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklch, var(--or-title-bar) 5%, transparent),
+    var(--or-title-bar)
+  );
+}
+
 h2, h3, h4, h5, h6 {
     color: #00C200 !important;
 }
@@ -257,17 +321,6 @@ html.dark .console-skin {
 .console-skin :focus-visible {
   outline: 2px solid var(--or-primary);
   outline-offset: 2px;
-}
-
-/* A page that uses the skin takes the console page background too,
-   including the strip behind the navbar */
-html:has(.console-skin) body,
-html:has(.console-skin) .hextra-nav-container-blur {
-  background-color: #f9fcf9;
-}
-html.dark:has(.console-skin) body,
-html.dark:has(.console-skin) .hextra-nav-container-blur {
-  background-color: #101a13;
 }
 
 /* console-title shortcode: the console page heading, with the brand accent
