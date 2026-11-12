@@ -897,3 +897,71 @@ func TestMCPAppPRMShadowing(t *testing.T) {
 		t.Fatalf("management challenge must use the alias path, got %q", ch)
 	}
 }
+
+// An OPTIONS request to the MCP region carries no credential, so it must
+// never reach the upstream of an app that requires auth; a preflight from an
+// allowed origin is answered by OpenRun itself
+func TestMCPAppOptionsNotForwarded(t *testing.T) {
+	server, ts, _ := newMCPAppTestServer(t)
+	upstream := newUpstreamRecorder(t)
+	createMCPTestApp(t, server, "/apps/orders", upstream.server.URL, "builtin",
+		`{"path":"/","allowed_origins":["https://client.example.com"]}`)
+
+	options := func(headers map[string]string) *http.Response {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodOptions, ts.URL+"/apps/orders/internal/metrics?x=1", strings.NewReader("payload"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		resp, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		readBody(t, resp)
+		return resp
+	}
+	assertNotForwarded := func() {
+		t.Helper()
+		if p, _, _ := upstream.last(); p != "" {
+			t.Fatalf("OPTIONS request reached the upstream at %q", p)
+		}
+	}
+
+	// No Origin: not a preflight
+	resp := options(nil)
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405 for OPTIONS without Origin, got %d", resp.StatusCode)
+	}
+	assertNotForwarded()
+
+	// Allowed Origin without Access-Control-Request-Method: not a preflight
+	resp = options(map[string]string{"Origin": "https://client.example.com"})
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405 for OPTIONS without request method, got %d", resp.StatusCode)
+	}
+	assertNotForwarded()
+
+	// Origin not in the allow list
+	resp = options(map[string]string{"Origin": "https://evil.example.com", "Access-Control-Request-Method": "POST"})
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 for a disallowed origin, got %d", resp.StatusCode)
+	}
+	assertNotForwarded()
+
+	// A real preflight is answered locally
+	resp = options(map[string]string{"Origin": "https://client.example.com", "Access-Control-Request-Method": "POST",
+		"Access-Control-Request-Headers": "authorization, content-type"})
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204 for a preflight, got %d", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "https://client.example.com" {
+		t.Fatalf("unexpected Access-Control-Allow-Origin %q", got)
+	}
+	if got := resp.Header.Get("Access-Control-Allow-Headers"); got != "authorization, content-type" {
+		t.Fatalf("unexpected Access-Control-Allow-Headers %q", got)
+	}
+	assertNotForwarded()
+}

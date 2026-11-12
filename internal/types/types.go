@@ -91,6 +91,10 @@ const (
 	// of locally created entries), see system.WithDiskSourceAccess
 	DISK_SOURCE     ContextKey = "disk_source"
 	APPLY_OPERATION ContextKey = "apply_operation" // set when the current operation is a declarative apply
+	// APPLY_PREPARE is set on the apply pre-pass, which prepares app creates
+	// before the transaction: permission checks made there are the apply
+	// ones, the apply info is stored only under APPLY_OPERATION
+	APPLY_PREPARE ContextKey = "apply_prepare"
 	// SYNC_RBAC holds the frozen creator authorization (rbac.SyncAuthorizer) for
 	// background sync runs. Set only when the sync entry carries an RBAC snapshot
 	// and RBAC is enabled; never present on interactive requests.

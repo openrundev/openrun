@@ -425,6 +425,15 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 	var err error
 	opts.Verify = opts.Verify && !opts.DryRun
 
+	// Before any git or Starlark work: the checkout below fetches a caller
+	// named url with the server's git credentials and the apply file is
+	// evaluated with the node config, neither is for a caller without apply
+	// rights. The per app checks follow once the file is loaded
+	if err := s.enforceHoldsAppPermSomewhere(ctx, types.PermissionApply,
+		types.PermissionBindingCreate, types.PermissionBindingUpdate); err != nil {
+		return nil, nil, err
+	}
+
 	if opts.Reload == "" {
 		opts.Reload = types.AppReloadOptionUpdated
 	}
@@ -483,6 +492,22 @@ func (s *Server) Apply(ctx context.Context, inputTx types.Transaction, applyPath
 		}
 		verifyRequested = verifyRequested || applyConfig[appPathDomain].Verify
 		filteredApps = append(filteredApps, appPathDomain)
+	}
+	// The app sources are fetched with the git auth each declaration names:
+	// enforce the caller's permissions on the matched apps before that (they
+	// are enforced again inside the transaction)
+	if s.rbacManager.APIEnforced(ctx) {
+		currentApps, err := s.apps.GetAllAppsInfo()
+		if err != nil {
+			return nil, nil, err
+		}
+		currentAppsMap := make(map[types.AppPathDomain]types.AppInfo, len(currentApps))
+		for _, appInfo := range currentApps {
+			currentAppsMap[appInfo.AppPathDomain] = appInfo
+		}
+		if err := s.enforceApplyAppPerms(ctx, filteredApps, currentAppsMap, opts.DeployOptions); err != nil {
+			return nil, nil, err
+		}
 	}
 	s.prefetchApplyAppSources(ctx, applyConfig, filteredApps, repoCache, opts.IsDev)
 
@@ -1718,6 +1743,11 @@ func bindingDefToApplyInfo(bindingDef *starlarkstruct.Struct) (*types.CreateBind
 // ref is the apply file's revision.
 func (s *Server) ApplyDelete(ctx context.Context, applyPath, appPathGlob string, dryRun bool,
 	ref GitRef) (*types.ApplyDeleteResponse, error) {
+	// Before the checkout, which uses the server's git credentials, see Apply
+	if err := s.enforceHoldsAppPermSomewhere(ctx, types.PermissionDelete,
+		types.PermissionBindingDelete); err != nil {
+		return nil, err
+	}
 	repoCache, err := NewRepoCache(s)
 	if err != nil {
 		return nil, err
@@ -1963,7 +1993,7 @@ func (s *Server) prepareApplyDeploys(ctx context.Context, applyConfig map[types.
 			if opts.IsDev {
 				applyInfo.IsDev = true // Override the dev status from the apply command cli, as the create does
 			}
-			prep, err := s.prepareCreate(ctx, appPathDomain.String(),
+			prep, err := s.prepareCreate(context.WithValue(ctx, types.APPLY_PREPARE, "true"), appPathDomain.String(),
 				DeployOptions{Approve: opts.Approve, Verify: opts.Verify || applyInfo.Verify}, applyInfo, repoCache)
 			if prep != nil {
 				preps[appPathDomain] = prep

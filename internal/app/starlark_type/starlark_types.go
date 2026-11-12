@@ -14,6 +14,8 @@ type StarlarkType struct {
 	name string
 	data map[string]starlark.Value
 	keys []string
+	// sealed makes the value read only, see Seal
+	sealed bool
 }
 
 var _ starlark.Value = (*StarlarkType)(nil)
@@ -44,6 +46,9 @@ func (s *StarlarkType) AttrNames() []string {
 }
 
 func (s *StarlarkType) SetField(name string, val starlark.Value) error {
+	if s.sealed {
+		return fmt.Errorf("cannot set attribute '%s' of type %s: the value is read only", name, s.name)
+	}
 	if _, ok := s.data[name]; !ok {
 		return starlark.NoSuchAttrError(fmt.Sprintf("type %s has no attribute '%s'", s.name, name))
 	}
@@ -62,6 +67,46 @@ func (s *StarlarkType) Type() string {
 
 func (s *StarlarkType) Freeze() {
 	// Not supported
+}
+
+// Seal makes the value and everything it holds read only. Used for plugin
+// results which the platform acts on after the plugin call's permission
+// check (proxy and container config): the app must not be able to change
+// them once checked
+func (s *StarlarkType) Seal() {
+	if s.sealed {
+		return
+	}
+	s.sealed = true
+	for _, v := range s.data {
+		SealValue(v)
+	}
+}
+
+// SealValue makes a value read only, at any depth: StarlarkType values are
+// sealed, the standard collections are frozen
+func SealValue(v starlark.Value) {
+	switch val := v.(type) {
+	case nil:
+	case *StarlarkType:
+		val.Seal()
+	case *starlark.List:
+		for i := range val.Len() {
+			SealValue(val.Index(i))
+		}
+		val.Freeze()
+	case starlark.Tuple:
+		for _, elem := range val {
+			SealValue(elem)
+		}
+	case *starlark.Dict:
+		for _, item := range val.Items() {
+			SealValue(item[1])
+		}
+		val.Freeze()
+	default:
+		v.Freeze()
+	}
 }
 
 func (s *StarlarkType) Truth() starlark.Bool {

@@ -6,6 +6,7 @@ package app
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/openrundev/openrun/internal/app/apptype"
 	"github.com/openrundev/openrun/internal/app/starlark_type"
@@ -24,6 +25,53 @@ type PluginResponse struct {
 	startStream   func() error
 	closeStream   func()
 	streamStarted bool
+	// source is the plugin call which produced the response, as
+	// <module path without account>.<function> ("proxy.in.config"). Set by
+	// the plugin hook after the call's permission checks passed, so it
+	// cannot be set from Starlark
+	source string
+}
+
+// Plugin calls whose result the platform acts on when the app is set up:
+// the proxy route target and the app's container config
+const (
+	pluginSourceProxyConfig     = "proxy.in.config"
+	pluginSourceContainerConfig = "container.in.config"
+)
+
+// markPluginSource records the plugin call a response came from. The result
+// of a config call is sealed: the route setup reads it after the permission
+// check, the app must not be able to change it in between
+func markPluginSource(val starlark.Value, modulePath, functionName string) {
+	resp, ok := val.(*PluginResponse)
+	if !ok {
+		return
+	}
+	basePath, _, _ := parseModulePath(modulePath)
+	resp.source = basePath + "." + functionName
+	if resp.source == pluginSourceProxyConfig || resp.source == pluginSourceContainerConfig {
+		if v, ok := resp.value.(starlark.Value); ok {
+			starlark_type.SealValue(v)
+		} else if resp.value != nil && resp.err == nil && !resp.isStream {
+			// Convert once, so that every read sees the same sealed value
+			if v, err := starlark_type.FromGo(resp.value); err == nil {
+				starlark_type.SealValue(v)
+				resp.value = v
+			}
+		}
+	}
+}
+
+// pluginConfigResponse checks that a config value passed by the app
+// definition is the unmodified result of the named plugin call. A struct
+// built by the app with the same attributes is refused: it would not have
+// gone through the permission checks of the plugin call
+func pluginConfigResponse(value starlark.Value, source, what string) (*PluginResponse, error) {
+	resp, ok := value.(*PluginResponse)
+	if !ok || resp.source != source {
+		return nil, fmt.Errorf("%s has to be the value returned by %s", what, strings.Replace(source, ".in.", ".", 1))
+	}
+	return resp, nil
 }
 
 func NewErrorResponse(err error, thread *starlark.Thread) *PluginResponse {

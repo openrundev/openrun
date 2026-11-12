@@ -15,6 +15,15 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   - A relative bind source on an app whose source directory is not available at container start now fails with an error. It was previously passed to the container runtime as a named volume.
 - Generated secret files (`cl_secret` volumes) and the litestream config are written without following symlinks. The litestream config is created with mode 0600.
 - Secret keys with empty, `.` or `..` path segments are rejected for all providers. Vault secret paths must be clean and relative.
+- MCP apps: CORS preflight requests from an allowed origin are answered by OpenRun and no longer reach the app. Other `OPTIONS` requests to the MCP path get a 405. If the app sets `cors.allow_origin`, the preflight is answered from the app's CORS settings.
+- A login session is valid only on the hostname the user logged in for (the hostname of the app URL they were returned to after login). A session cookie presented on another hostname is not accepted and the user is sent to login. Sessions created before the upgrade are not affected until they expire.
+- The proxy and container config of an app has to be the value returned by `proxy.config` / `container.config`. The returned value is read only. An app which builds the config itself or modifies the returned value fails to load.
+- `permissions.disallow` entries now also match plugin calls which use an account suffix, for example a `proxy.in` entry matches `proxy.in#account`.
+- RBAC changes:
+  - `apply` and declarative delete are refused before the apply file is fetched when the caller holds no relevant permission on any app or binding (`app:apply`, `binding:create` or `binding:update` for apply; `app:delete` or `binding:delete` for delete). This also applies to dry runs.
+  - A custom `stage_at` domain passed in a create or apply request needs `app:create` (`app:apply` for apply) on the stage location, in addition to the permission on the app path.
+- An app on the default domain and an app without a domain share one path namespace, so they can no longer overlap.
+- The source folder of a git app has to resolve to a location inside the checkout. A folder which is a symlink pointing outside the repository is rejected.
 
 ## [v0.20.15] - 2026-11-05
 

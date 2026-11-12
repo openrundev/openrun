@@ -5,9 +5,12 @@ package server
 
 import (
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/gorilla/sessions"
+	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 )
 
@@ -42,13 +45,59 @@ const (
 	// session; never changed by renewals, it anchors the absolute cap.
 	// Sessions without it are stamped at their next renewal
 	LOGIN_AT_KEY = "login_at"
+	// SESSION_HOST_KEY holds the host the login was completed for (the host
+	// of the post-login redirect). The session is valid on that host only:
+	// the login completion token is sent to the redirect host, and when that
+	// host name does not resolve to this server (a stage or app domain whose
+	// DNS someone else controls) whoever receives it can mint a session. The
+	// binding limits such a session to that one host, it is not accepted on
+	// the other app domains or the auth domain. Sessions saved before the
+	// key existed have no binding and are accepted until they expire
+	SESSION_HOST_KEY = "session_host"
 )
+
+// normalizeSessionHost returns the host name a session is bound to or checked
+// against: lower case, without port and trailing dot, with the loopback
+// addresses treated as localhost (as app matching does)
+func normalizeSessionHost(host string) string {
+	host = strings.TrimSuffix(strings.ToLower(system.GetHostname(host)), ".")
+	if host == "127.0.0.1" || host == "::1" {
+		return "localhost"
+	}
+	return host
+}
+
+// sessionHostOfUrl returns the normalized host of an absolute url, empty for
+// a relative or unparseable one
+func sessionHostOfUrl(rawUrl string) string {
+	parsed, err := url.Parse(rawUrl)
+	if err != nil || parsed.Host == "" {
+		return ""
+	}
+	return normalizeSessionHost(parsed.Host)
+}
+
+// sessionHostMatches reports whether an authenticated session may be used
+// for the request: the session is not bound to a host, or it is bound to the
+// host of the request
+func sessionHostMatches(session *sessions.Session, r *http.Request) bool {
+	bound, ok := session.Values[SESSION_HOST_KEY].(string)
+	if !ok || bound == "" {
+		return true
+	}
+	return bound == normalizeSessionHost(r.Host)
+}
 
 // markSessionLogin stamps a newly authenticated session with its login and
 // issue time and caps its max-age to the absolute lifetime. Call it whenever
 // an authenticated session is saved at login
-func markSessionLogin(session *sessions.Session, absoluteMaxAge int) {
+func markSessionLogin(session *sessions.Session, absoluteMaxAge int, redirectUrl string) {
 	now := time.Now()
+	if host := sessionHostOfUrl(redirectUrl); host != "" {
+		session.Values[SESSION_HOST_KEY] = host
+	} else {
+		delete(session.Values, SESSION_HOST_KEY)
+	}
 	session.Values[LOGIN_AT_KEY] = now.Unix()
 	session.Values[SESSION_ISSUED_KEY] = now.Unix()
 	session.Options.MaxAge = cappedMaxAge(session.Options.MaxAge, now.Unix(), absoluteMaxAge, now)

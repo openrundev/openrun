@@ -161,20 +161,22 @@ tests:
       curl -sk -X POST -H "Authorization: Bearer $(cat mcp_bob_shop.txt)" -d '{}' https://localhost:${MAIN_HTTPS_PORT}/apps/mcp_shop/mcp
     stdout: "does not have access"
     exit-code: 0
-  mcpapp0130: # browser origins: unlisted refused; an allowed preflight reaches the upstream
-    # without a credential; the 401 for an allowed origin carries CORS headers
+  mcpapp0130: # browser origins: unlisted refused; an allowed preflight is answered by OpenRun
+    # and does not reach the upstream; the 401 for an allowed origin carries CORS headers
     command: |
       U=https://localhost:${MAIN_HTTPS_PORT}/apps/mcp_shop/mcp
       curl -sk -o /dev/null -w 'evil=%{http_code}\n' -X POST -H "Authorization: Bearer $(cat mcp_alice_shop.txt)" -H 'Origin: https://evil.example.com' -d '{}' $U
-      curl -sk -X OPTIONS -H 'Origin: https://app.example.com' -H 'Access-Control-Request-Method: POST' -H 'Authorization: Bearer bogus' $U \
-        | jq -r '.result.method, (.result.headers.Authorization // "no-auth")'
+      curl -sk -D - -X OPTIONS -H 'Origin: https://app.example.com' -H 'Access-Control-Request-Method: POST' -H 'Authorization: Bearer bogus' $U \
+        | tr -d '\r' | grep -i "^HTTP\|access-control-allow-methods\|result" | tr 'A-Z' 'a-z' | sed 's/^/preflight /'
+      curl -sk -o /dev/null -w 'notpreflight=%{http_code}\n' -X OPTIONS -H 'Origin: https://app.example.com' $U
       curl -sk -o /dev/null -D - -X POST -H 'Origin: https://app.example.com' -H 'Content-Type: application/json' -d '{}' $U \
         | grep -i "^HTTP\|access-control" | tr 'A-Z' 'a-z'
     stdout:
       contains:
         - "evil=403"
-        - "OPTIONS"
-        - "no-auth"
+        - "preflight http/2 204"
+        - "preflight access-control-allow-methods: get, post, delete"
+        - "notpreflight=405"
         - "401"
         - "access-control-allow-origin: https://app.example.com"
         - "access-control-expose-headers: www-authenticate"

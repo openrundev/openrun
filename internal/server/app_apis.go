@@ -574,6 +574,21 @@ func (s *Server) prepareStageAppEntry(ctx context.Context, appEntry *types.AppEn
 	if err != nil {
 		return nil, err
 	}
+	// A custom stage domain named in the request is a location the caller
+	// picked: the grant which allows the prod path does not cover it, so the
+	// caller needs the permission on the stage location too. The derived
+	// modes (path, domain, domain_suffix) and the server config's stage_at
+	// are the operator's choice and follow the prod app's grant
+	if isCustomStageAt(stageAt) && stagePathDomain.Domain != appEntry.Domain {
+		perm := types.PermissionCreate
+		if system.GetContextValue(ctx, types.APPLY_OPERATION) != "" ||
+			system.GetContextValue(ctx, types.APPLY_PREPARE) != "" {
+			perm = types.PermissionApply
+		}
+		if err := s.enforceAppPerm(ctx, perm, stagePathDomain, ""); err != nil {
+			return nil, err
+		}
+	}
 	// The derived stage domain (stage_at "domain" or a custom stage_at value)
 	// must also stay off the reserved auth callback domain
 	if authDomain, clash := s.reservedAuthDomainClash(stagePathDomain.Domain); clash {
@@ -1611,7 +1626,59 @@ func (s *Server) MatchApp(hostHeader, matchPath string) (types.AppInfo, error) {
 	return types.AppInfo{}, errors.New("no matching app found")
 }
 
+// checkFolderInCheckout verifies that the folder of a git source url is
+// inside the checkout after symlinks are resolved
+func checkFolderInCheckout(repo, checkoutFolder string) error {
+	resolvedRepo, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		return fmt.Errorf("error resolving git checkout: %w", err)
+	}
+	resolvedFolder, err := filepath.EvalSymlinks(checkoutFolder)
+	if err != nil {
+		return fmt.Errorf("error resolving source folder in git checkout: %w", err)
+	}
+	inside, err := system.PathWithinDir(resolvedRepo, resolvedFolder)
+	if err != nil {
+		return err
+	}
+	if !inside {
+		return fmt.Errorf("source folder in the git repo resolves outside the checkout through a symlink")
+	}
+	return nil
+}
+
+// isCustomStageAt reports whether a request's stage_at value names a custom
+// stage domain, as opposed to one of the derived modes or no value
+func isCustomStageAt(stageAt string) bool {
+	switch strings.ToLower(strings.TrimSpace(stageAt)) {
+	case "", stageAtPath, stageAtDomain, stageAtDomainSuffix:
+		return false
+	}
+	return true
+}
+
+// CheckAppValid returns the existing app whose path overlaps matchPath on the
+// domain, empty if there is none. Apps without a domain are served on the
+// default domain, so no domain and the default domain are one namespace
 func (s *Server) CheckAppValid(domain, matchPath string) (string, error) {
+	domains := []string{domain}
+	if defaultDomain := s.Config().System.DefaultDomain; defaultDomain != "" {
+		if domain == "" {
+			domains = append(domains, defaultDomain)
+		} else if strings.EqualFold(domain, defaultDomain) {
+			domains = append(domains, "")
+		}
+	}
+	for _, d := range domains {
+		matchedApp, err := s.checkAppValidDomain(d, matchPath)
+		if err != nil || matchedApp != "" {
+			return matchedApp, err
+		}
+	}
+	return "", nil
+}
+
+func (s *Server) checkAppValidDomain(domain, matchPath string) (string, error) {
 	paths, err := s.db.GetAppsForDomain(domain)
 	if err != nil {
 		return "", err
@@ -2086,6 +2153,12 @@ func (s *Server) checkoutAppSource(ctx context.Context, appEntry *types.AppEntry
 	checkoutFolder := repo
 	if folder != "" {
 		checkoutFolder = path.Join(repo, folder)
+		// The folder comes from the repository: a symlink there (the folder
+		// itself or a parent of it) must not make the server load files
+		// from outside the checkout
+		if err := checkFolderInCheckout(repo, checkoutFolder); err != nil {
+			return "", err
+		}
 	}
 
 	if appEntry.IsDev {

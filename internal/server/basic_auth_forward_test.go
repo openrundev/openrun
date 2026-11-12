@@ -89,7 +89,7 @@ func TestBasicLoginCredentialsAreNotForwarded(t *testing.T) {
 		session.Values[PROVIDER_NAME_KEY] = "builtin"
 		session.Values[USER_KEY] = "alice"
 		session.Values[CRED_FP_KEY] = fp
-		markSessionLogin(session, s.formLogin.sessionAbsoluteMaxAge)
+		markSessionLogin(session, s.formLogin.sessionAbsoluteMaxAge, "")
 		if err := session.Save(httptest.NewRequest(http.MethodGet, "/apps/builtin/", nil), setupRec); err != nil {
 			t.Fatal(err)
 		}

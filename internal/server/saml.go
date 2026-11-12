@@ -218,6 +218,11 @@ func (s *SAMLManager) checkSAMLAuth(w http.ResponseWriter, r *http.Request, appP
 		redirectCaller = true
 	}
 
+	if !redirectCaller && !sessionHostMatches(session, r) {
+		s.Warn().Msg("saml session was issued for another host, redirecting to login")
+		redirectCaller = true
+	}
+
 	if redirectCaller {
 		// do the SAML login flow
 		s.startLogin(w, r, appProvider, requestUrl)
@@ -1021,7 +1026,7 @@ func (s *SAMLManager) redirect(w http.ResponseWriter, r *http.Request) {
 	session.Values[SESSION_INDEX_KEY] = sessionIndex
 	delete(session.Values, REDIRECT_URL)
 	delete(session.Values, NONCE_KEY)
-	markSessionLogin(session, s.getConfig().Security.SessionAbsoluteMaxAge)
+	markSessionLogin(session, s.getConfig().Security.SessionAbsoluteMaxAge, redirectUrl)
 	if err = session.Save(r, w); err != nil {
 		http.Error(w, "error saving session: "+err.Error(), http.StatusInternalServerError)
 		return

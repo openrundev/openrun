@@ -7,7 +7,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 
+	"github.com/openrundev/openrun/internal/rbac"
 	"github.com/openrundev/openrun/internal/system"
 	"github.com/openrundev/openrun/internal/types"
 )
@@ -55,6 +57,76 @@ func (s *Server) enforceAppPerm(ctx context.Context, perm types.RBACPermission,
 		return s.rbacDenied(ctx, perm, target.String())
 	}
 	return nil
+}
+
+// enforceHoldsAppPermSomewhere refuses a caller who holds the app permission
+// on no app at all: no grant confers it on any target and the caller owns no
+// app with it. Used ahead of work which is done before the affected apps are
+// known (fetching an apply file); the per app checks still follow. A sync is
+// not checked here, its url is authorized by sync:create
+func (s *Server) enforceHoldsAppPermSomewhere(ctx context.Context, perm types.RBACPermission,
+	resourcePerms ...types.RBACPermission) error {
+	if !s.rbacManager.APIEnforced(ctx) || rbac.HasSyncAuthorizer(ctx) ||
+		system.GetContextValue(ctx, types.SYNC_ID) != "" {
+		// A sync create or run: fetching the sync's url is covered by
+		// sync:create, the apps it declares are checked per app
+		return nil
+	}
+	perms, err := s.rbacManager.GetAPIPermissions(ctx, types.AppPathDomain{}, "")
+	if err != nil {
+		return err
+	}
+	if slices.Contains(perms, string(perm)) {
+		return nil
+	}
+	// A file which declares only bindings needs no app permission: holding
+	// one of the binding permissions the operation checks is enough here
+	for _, resourcePerm := range resourcePerms {
+		if slices.Contains(perms, string(resourcePerm)) {
+			return nil
+		}
+	}
+	if userId := system.GetContextUserId(ctx); userId != "" {
+		apps, err := s.apps.GetAllAppsInfo()
+		if err != nil {
+			return err
+		}
+		for _, appInfo := range apps {
+			if appInfo.UserID != userId {
+				continue
+			}
+			target := mainAppPathDomain(appInfo.AppPathDomain, appInfo.MainApp, appInfo.LinkedAppPath)
+			if authorized, err := s.rbacManager.AuthorizeAPI(ctx, perm, target, appInfo.UserID); err == nil && authorized {
+				return nil
+			}
+		}
+		// The owner of a binding holds the binding permissions on it
+		// without a grant
+		if len(resourcePerms) > 0 {
+			// A short read only transaction, closed before the caller
+			// starts any git work
+			tx, err := s.db.BeginTransaction(ctx)
+			if err != nil {
+				return err
+			}
+			allBindings, err := s.db.ListBindings(ctx, tx, "")
+			_ = tx.Rollback()
+			if err != nil {
+				return err
+			}
+			for _, binding := range allBindings {
+				if binding.CreatedBy != userId {
+					continue
+				}
+				for _, resourcePerm := range resourcePerms {
+					if authorized, err := s.rbacManager.AuthorizeResourceAPI(ctx, resourcePerm, binding.Path, binding.CreatedBy); err == nil && authorized {
+						return nil
+					}
+				}
+			}
+		}
+	}
+	return s.rbacDenied(ctx, perm, "any app")
 }
 
 // appDetailAllowed reports whether the caller holds app:read_detail on the app

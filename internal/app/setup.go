@@ -1023,8 +1023,11 @@ func getProxyConfig(count int, proxyDef *starlarkstruct.Struct) (starlark.HasAtt
 	if err != nil {
 		return nil, err
 	}
-	if responseAttr, ok = pluginResponse.(starlark.HasAttrs); !ok {
-		return nil, fmt.Errorf("proxy entry %d:%s is not a proxy response", count, pathStr)
+	// The proxy target is permission checked by the proxy.config plugin
+	// call, only its unmodified result is accepted
+	if responseAttr, err = pluginConfigResponse(pluginResponse, pluginSourceProxyConfig,
+		fmt.Sprintf("proxy entry %d:%s config", count, pathStr)); err != nil {
+		return nil, err
 	}
 
 	errorValue, err := responseAttr.Attr("error")

@@ -928,8 +928,11 @@ func (a *App) loadContainerManager(ctx context.Context, stripAppPath bool) error
 
 	var ok bool
 	var responseAttr starlark.HasAttrs
-	if responseAttr, ok = containerConfig.(starlark.HasAttrs); !ok {
-		return fmt.Errorf("container config is not valid type")
+	// The container config (image source, sidecars, volumes) is permission
+	// checked by the container.config plugin call, only its unmodified
+	// result is accepted
+	if responseAttr, err = pluginConfigResponse(containerConfig, pluginSourceContainerConfig, "container config"); err != nil {
+		return err
 	}
 
 	errorValue, err := responseAttr.Attr("error")

@@ -731,7 +731,10 @@ func TestOAuthRedirectState(t *testing.T) {
 			if _, err := db.FetchKV(t.Context(), sessionID); err == nil {
 				t.Error("expected error fetching deleted state")
 			}
-			authed := httptest.NewRequest(http.MethodGet, "/some-path", nil)
+			authedURL, err := url.Parse(redirectURL)
+			testutil.AssertNoError(t, err)
+			// The session is bound to the host of the login's redirect
+			authed := httptest.NewRequest(http.MethodGet, authedURL.Scheme+"://"+authedURL.Host+"/some-path", nil)
 			for _, cookie := range w.Result().Cookies() {
 				authed.AddCookie(cookie)
 			}
@@ -857,7 +860,10 @@ func TestOAuthCallbackRotatesState(t *testing.T) {
 	manager.redirect(w, r)
 	testutil.AssertEqualsInt(t, "redirect status", http.StatusFound, w.Code)
 	testutil.AssertEqualsString(t, "redirect location", redirectURL, w.Header().Get("Location"))
-	authed := httptest.NewRequest(http.MethodGet, "/some-path", nil)
+	authedURL, err := url.Parse(redirectURL)
+	testutil.AssertNoError(t, err)
+	// The session is bound to the host of the login's redirect
+	authed := httptest.NewRequest(http.MethodGet, authedURL.Scheme+"://"+authedURL.Host+"/some-path", nil)
 	for _, cookie := range w.Result().Cookies() {
 		authed.AddCookie(cookie)
 	}

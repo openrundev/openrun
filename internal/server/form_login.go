@@ -934,7 +934,7 @@ func (s *FormLoginManager) complete(w http.ResponseWriter, r *http.Request) {
 	session.Values[USER_KEY] = username
 	session.Values[CRED_FP_KEY] = credFp
 	delete(session.Values, NONCE_KEY)
-	markSessionLogin(session, s.sessionAbsoluteMaxAge)
+	markSessionLogin(session, s.sessionAbsoluteMaxAge, redirectUrl)
 	if err := session.Save(r, w); err != nil {
 		http.Error(w, "error saving session: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -963,6 +963,10 @@ func (s *FormLoginManager) sessionAuth(w http.ResponseWriter, r *http.Request, a
 		return "", nil, false
 	}
 	if provider, ok := sessionValueString(session, PROVIDER_NAME_KEY); !ok || provider != authType {
+		return "", nil, false
+	}
+	if !sessionHostMatches(session, r) {
+		// Issued for another host, see SESSION_HOST_KEY
 		return "", nil, false
 	}
 	user, ok := sessionValueString(session, USER_KEY)

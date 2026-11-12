@@ -1538,12 +1538,14 @@ func TestApplyBindingRBAC(t *testing.T) {
 		Roles: map[string][]types.RBACPermission{
 			"apps-only": {types.PermissionApply},
 			"no-bind":   {types.PermissionApply, types.PermissionBindingCreate, types.PermissionBindingUpdate},
+			"bind-only": {types.PermissionBindingCreate, types.PermissionBindingUpdate},
 			"binder": {types.PermissionApply, types.PermissionBindingCreate, types.PermissionBindingUpdate,
 				types.PermissionServiceBind},
 		},
 		Grants: []types.RBACGrant{
 			{Description: "apps only", Users: []string{"apponly"}, Roles: []string{"apps-only"}, Targets: []string{"all"}},
 			{Description: "no bind", Users: []string{"nobind"}, Roles: []string{"no-bind"}, Targets: []string{"all"}},
+			{Description: "bind only", Users: []string{"bindonly"}, Roles: []string{"bind-only"}, Targets: []string{"all"}},
 			{Description: "binder", Users: []string{"binder"}, Roles: []string{"binder"}, Targets: []string{"all"}},
 		},
 	}); err != nil {
@@ -1564,6 +1566,13 @@ func TestApplyBindingRBAC(t *testing.T) {
 	err := runApply("apponly")
 	if err == nil || !strings.Contains(err.Error(), string(types.PermissionBindingCreate)) {
 		t.Fatalf("expected binding:create denial for new binding, got %v", err)
+	}
+
+	// A caller with binding permissions and no app permission is not stopped
+	// by the early apply check, the binding checks decide
+	err = runApply("bindonly")
+	if err == nil || !strings.Contains(err.Error(), string(types.PermissionServiceBind)) {
+		t.Fatalf("expected service:bind denial for a binding only caller, got %v", err)
 	}
 
 	// Creating a base binding provisions an account on the service, which
@@ -1589,6 +1598,26 @@ func TestApplyBindingRBAC(t *testing.T) {
 	// Trusted calls (CLI over unix socket) stay unrestricted
 	if _, _, err := server.Apply(system.WithTrustedOperation(ctx), types.Transaction{}, applyPath, "all", ApplyOptions{Reload: types.AppReloadOptionNone}, nil); err != nil {
 		t.Fatalf("trusted apply: %v", err)
+	}
+
+	// The binding's owner keeps its authority over the binding when the
+	// grants are gone: the early apply check counts owned bindings
+	if err := server.rbacManager.UpdateRBACConfig(&types.RBACConfig{
+		Roles: map[string][]types.RBACPermission{"apps-only": {types.PermissionApply}},
+		Grants: []types.RBACGrant{
+			{Description: "apps only", Users: []string{"apponly"}, Roles: []string{"apps-only"}, Targets: []string{"all"}},
+		},
+	}); err != nil {
+		t.Fatalf("rbac config update: %v", err)
+	}
+	if err := runApply("binder"); err != nil {
+		t.Fatalf("owner update apply without grants: %v", err)
+	}
+	if _, err := server.ApplyDelete(rbacEnforcedCtx(ctx, "nobind"), applyPath, "all", false, GitRef{}); err == nil {
+		t.Fatal("expected apply delete to be denied for a caller who owns nothing")
+	}
+	if _, err := server.ApplyDelete(rbacEnforcedCtx(ctx, "binder"), applyPath, "all", false, GitRef{}); err != nil {
+		t.Fatalf("owner apply delete without grants: %v", err)
 	}
 }
 

@@ -372,9 +372,11 @@ func (a *App) pluginHook(appPath, modulePath, accountName, functionName string, 
 
 			val, err := newBuiltin.CallInternal(thread, args, kwargs)
 			telemetry.RecordError(span, err)
+			markPluginSource(val, modulePath, functionName)
 			return val, err
 		}
 		val, err := newBuiltin.CallInternal(thread, args, kwargs)
+		markPluginSource(val, modulePath, functionName)
 		return val, err
 	}
 
@@ -528,8 +530,12 @@ func matchArgPatterns(patterns []string, args starlark.Tuple) (int, string, erro
 // meaning on a deny rule and are ignored. what names the value being checked
 // in the error ("the call", a resolved argument, a redirect target)
 func (a *App) checkDisallowed(modulePath, functionName string, args starlark.Tuple, kwargs []starlark.Tuple, what string) error {
+	// The module path of a call can carry an account suffix (http.in#acct).
+	// An entry without an account blocks the plugin for every account, an
+	// entry with an account blocks that account only
+	basePath, _, _ := parseModulePath(modulePath)
 	for _, p := range a.serverConfig.Permissions.Disallow {
-		if p.Plugin != modulePath {
+		if p.Plugin != modulePath && p.Plugin != basePath {
 			continue
 		}
 		if p.Method != "" {

@@ -506,14 +506,34 @@ func (s *Server) serveMCPApp(w http.ResponseWriter, r *http.Request, application
 	}
 	if r.Method == http.MethodOptions {
 		// CORS preflight from an allowed origin carries no credential by
-		// design; the app's own CORS handler answers it. Nothing is
-		// executed and no identity is attached
-		r.Header.Del("Authorization")
-		r.Header.Del("Cookie")
-		anon := &authContext{Context: r.Context(), userId: types.ANONYMOUS_USER, appId: string(application.Id),
-			pathDomain: application.AppPathDomain(), appAuth: application.Metadata.AuthnType,
-			groups: []string{}, customPerms: []string{}}
-		application.ServeHTTP(w, r.WithContext(anon))
+		// design, so it is answered here and never reaches the app's
+		// handlers or its upstream: an OPTIONS request is unauthenticated,
+		// and a method agnostic upstream route would otherwise serve it
+		if origin == "" || r.Header.Get("Access-Control-Request-Method") == "" {
+			w.Header().Set("Allow", "GET, POST, DELETE")
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if application.AppConfig.CORS.AllowOrigin != "" {
+			// The app has its own CORS settings: App.ServeHTTP answers the
+			// preflight from those without running a handler
+			r.Header.Del("Authorization")
+			r.Header.Del("Cookie")
+			anon := &authContext{Context: r.Context(), userId: types.ANONYMOUS_USER, appId: string(application.Id),
+				pathDomain: application.AppPathDomain(), appAuth: application.Metadata.AuthnType,
+				groups: []string{}, customPerms: []string{}}
+			application.ServeHTTP(w, r.WithContext(anon))
+			return
+		}
+		h := w.Header()
+		h.Set("Access-Control-Allow-Origin", origin)
+		h.Add("Vary", "Origin")
+		h.Set("Access-Control-Allow-Methods", "GET, POST, DELETE")
+		if reqHeaders := r.Header.Get("Access-Control-Request-Headers"); reqHeaders != "" {
+			h.Set("Access-Control-Allow-Headers", reqHeaders)
+		}
+		h.Set("Access-Control-Max-Age", "600")
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	resource := s.appMCPResource(appPath, domain, mcp)

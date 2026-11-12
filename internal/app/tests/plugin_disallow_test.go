@@ -201,3 +201,41 @@ def handler(req):
 		})
 	}
 }
+
+// TestPluginDisallowAccountSuffix verifies that a disallow entry for a plugin
+// also blocks the plugin when it is loaded with an account suffix
+func TestPluginDisallowAccountSuffix(t *testing.T) {
+	logger := testutil.TestLogger()
+	files := map[string]string{
+		"app.star": `
+load ("testdis.in#acct", "testdis")
+app = ace.app("testApp", routes = [ace.api("/", type=ace.TEXT)],
+    permissions=[ace.permission("testdis.in#acct", "run")])
+
+def handler(req):
+	return testdis.run("ls").value
+`,
+	}
+	plugins := []string{"testdis.in#acct"}
+	perms := []types.Permission{{Plugin: "testdis.in#acct", Method: "run"}}
+	serve := func(disallow ...types.Permission) *httptest.ResponseRecorder {
+		t.Helper()
+		sc := &types.ServerConfig{}
+		sc.Permissions.Disallow = disallow
+		a, _, err := CreateTestAppPluginServerConfig(logger, files, plugins, perms, sc)
+		if err != nil {
+			t.Fatalf("Error %s", err)
+		}
+		response := httptest.NewRecorder()
+		a.ServeHTTP(response, httptest.NewRequest("GET", "/test", nil))
+		return response
+	}
+
+	testutil.AssertEqualsInt(t, "no disallow", 200, serve().Code)
+	testutil.AssertEqualsInt(t, "other account", 200, serve(types.Permission{Plugin: "testdis.in#other"}).Code)
+	for _, entry := range []types.Permission{{Plugin: "testdis.in", Method: "run"}, {Plugin: "testdis.in#acct"}} {
+		resp := serve(entry)
+		testutil.AssertEqualsInt(t, "blocked code "+entry.Plugin, 500, resp.Code)
+		testutil.AssertStringContains(t, resp.Body.String(), "disallowed by the server config (permissions.disallow)")
+	}
+}
