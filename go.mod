@@ -3,7 +3,7 @@
 
 module github.com/openrundev/openrun
 
-go 1.27.3
+go 1.27.4
 
 require (
 	al.essio.dev/pkg/shellescape v1.5.1 // indirect

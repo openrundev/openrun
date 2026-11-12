@@ -310,7 +310,7 @@ The release binaries are available at [releases](https://github.com/openrundev/o
 
 ### Install the Go toolchain
 
-Install the Go toolchain required by the checked-out revision's [go.mod](https://github.com/openrundev/openrun/blob/main/go.mod). The current source requires Go 1.27.3 or newer.
+Install the Go toolchain required by the checked-out revision's [go.mod](https://github.com/openrundev/openrun/blob/main/go.mod). The current source requires Go 1.27.4 or newer.
 
 ### Set the environment variables
 

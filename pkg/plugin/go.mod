@@ -8,7 +8,7 @@
 // converts Starlark values at the wire boundary.
 module github.com/openrundev/openrun/pkg/plugin
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/hashicorp/go-hclog v1.6.3

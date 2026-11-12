@@ -285,7 +285,7 @@ to install the app.
 
 ### Build from source
 
-Use the Go version required by the revision's [go.mod](go.mod) (currently Go 1.27.3 or newer):
+Use the Go version required by the revision's [go.mod](go.mod) (currently Go 1.27.4 or newer):
 
 ```shell
 git clone https://github.com/openrundev/openrun.git

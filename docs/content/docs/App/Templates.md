@@ -4,7 +4,7 @@ weight: 500
 summary: "HTML templates functions, static file handling and customizations"
 ---
 
-OpenRun uses [Go HTML templates](https://pkg.go.dev/html/template@go1.21.2) for returning data to the client. See [template](https://pkg.go.dev/text/template@go1.21.2) for an overview of the template syntax. [Hugo docs](https://gohugo.io/templates/introduction/) are a good source for an overview of using go templates.
+OpenRun uses [Go HTML templates](https://pkg.go.dev/html/template@go1.27.4) for returning data to the client. See [template](https://pkg.go.dev/text/template@go1.27.4) for an overview of the template syntax. [Hugo docs](https://gohugo.io/templates/introduction/) are a good source for an overview of using go templates.
 
 The [Sprig template library functions](http://masterminds.github.io/sprig/) are included automatically. Two functions from Sprig which are excluded for security considerations are `env` and `expandenv`.
 
