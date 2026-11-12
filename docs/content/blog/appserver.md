@@ -3,7 +3,7 @@ title: "Self-Hosted PaaS vs. Application Servers"
 description: "Compare self-hosted PaaS platforms with application servers and learn how OpenRun simplifies containerized web app deployment on your infrastructure."
 summary: "Why a focused, self-hosted PaaS alternative can simplify containerized web app deployment."
 date: 2024-11-07
-lastmod: 2026-08-09
+lastmod: 2026-11-12
 ---
 
 {{< openrun-intro >}}
@@ -16,7 +16,7 @@ Application servers can make deployment easy. They do not support every service 
 
 An [Application Server](https://en.wikipedia.org/wiki/Application_server) is a service that makes it easy to deploy applications and provides common features required by most apps. This includes implementing connection handling (HTTP request routing), deployment and versioning, logging, monitoring and authentication features.
 
-Many application servers are programming language [specific](https://en.wikipedia.org/wiki/List_of_application_servers). In the Java and .NET ecosystems, class loader level isolation is used to implement app servers. The request processing model of PHP also makes app servers suitable for serving PHP apps. For interpreted languages like Python and Ruby, there are some app servers which provide cross-language support. App server support is limited for compiled languages. This article will focus on app servers which support multiple languages, since those are more widely usable.
+Many application servers are programming language [specific](https://en.wikipedia.org/wiki/List_of_application_servers). In the Java and .NET ecosystems, in-process isolation (class loaders in Java, application domains in .NET Framework) is used to implement app servers. The request processing model of PHP also makes app servers suitable for serving PHP apps. For interpreted languages like Python and Ruby, there are some app servers which provide cross-language support. App server support is limited for compiled languages. This article will focus on app servers which support multiple languages, since those are more widely usable.
 
 ## Multi-Language AppServers
 
@@ -30,15 +30,15 @@ These projects either run the app in-process or use a process model to run each 
 
 ## AppServers Miss the Cloud-Native Train
 
-Since the initial release of Docker in 2013, containers have become very popular for application deployment. Containers have the advantage of encapsulating the application runtime and dependencies in an easily deployable image. Being able to set resource limits on CPU/memory/disk usage enables isolation across applications.
+Since the initial release of Docker in 2013, containers have become very popular for application deployment. Containers have the advantage of encapsulating the application runtime and dependencies in an easily deployable image. Each container gets its own filesystem and process namespace, and resource limits can be set on CPU/memory/disk usage. This enables isolation across applications.
 
-No application server currently supports running apps within containers. App servers are missing from the crowded cloud native [landscape](https://landscape.cncf.io/) (possibly the only infrastructure software component missing there).
+None of the application servers listed above support running apps within containers. App servers as a category are missing from the crowded cloud native [landscape](https://landscape.cncf.io/) (possibly the only infrastructure software component missing there).
 
 ## Self-Hosted PaaS vs. Application Servers
 
 Most of the recent innovation in the container orchestration space has focused on providing support for hosting the complete software stack. This includes deploying stateless applications, stateful databases, object stores and any other type of application. The goal has been to build Platform-As-A-Service solutions (PaaS). Kubernetes is built as a [platform for building platforms](https://www.opensourcerers.org/2021/12/06/kubernetes-is-a-platform-for-building-platforms/). Even beyond Kubernetes, most container deployment platforms focus on trying to provide a complete PaaS solution. Since the scope of applicable use cases is large, even the simplest use case requires complex configuration with a PaaS solution.
 
-AppServers by definition are simpler. They support deploying stateless applications. Given the source code for a service, an AppServer can run the service and give an HTTP endpoint to access the service. An AppServer can provide a standardized deployment approach, irrespective of the language/framework. AppServers do not support deploying databases or queues or object stores.
+AppServers have a narrower scope, which makes them simpler. They support deploying stateless applications. Given the source code for a service, an AppServer can run the service and give an HTTP endpoint to access the service. An AppServer can provide a standardized deployment approach, irrespective of the language/framework. AppServers do not support deploying databases or queues or object stores.
 
 Many teams choose managed services (like AWS RDS or MSK) for data persistence. If the stateful applications are externally managed, then AppServers can be used for deploying the stateless applications. This avoids the complexity of having to maintain PaaS configurations.
 
@@ -58,13 +58,13 @@ The AppServer is not replacing the language-specific services. For example, with
 
 OpenRun is built as a platform for teams to deploy internal tools. As part of that, OpenRun implements an AppServer to deploy containerized apps. The goal is to make it easy for teams to deploy and manage Streamlit/Gradio type apps for internal users. OpenRun provides blue-green staged deployment, GitOps, OAuth access control, secrets management etc. for the apps.
 
-With OpenRun, any Containerized app (having a `Dockerfile`) can be installed using a command like
+With OpenRun, any containerized app (having a `Dockerfile`) can be installed using a command like
 
 ```sh
 openrun app create --spec container --approve github.com/<USERID>/<REPO> /myapp
 ```
 
-The app will be available at the /myapp URL. For many [frameworks](https://github.com/openrundev/appspecs), zero-config is required. Not even a `Dockerfile` is required. For example
+The app will be available at the /myapp URL. For many [frameworks](https://github.com/openrundev/appspecs), no configuration is required, not even a `Dockerfile`. For example
 
 ```sh
 openrun app create --spec python-streamlit --branch master --approve github.com/streamlit/streamlit-example /streamlit_app
@@ -72,7 +72,7 @@ openrun app create --spec python-streamlit --branch master --approve github.com/
 
 deploys a [Streamlit](https://streamlit.io/) based app.
 
-Each app has a dedicated URL, domain-based or path-based. OpenRun ensures that no other app can conflict with that path. OpenRun can currently scale between zero and one instance of the container. More than one is not supported since OpenRun runs on a single machine (multi-node support is planned). OpenRun currently has a CLI interface; a [declarative interface](https://github.com/openrundev/openrun/issues/34) based on the CLI is planned.
+Each app has a dedicated URL, domain-based or path-based. OpenRun ensures that no other app can conflict with that path. On a single machine with Docker or Podman, OpenRun scales an app between zero and one instance of the container. On [Kubernetes]({{< ref "/docs/container/kubernetes/" >}}), an app can run with multiple replicas and scale based on load. Apps can be managed imperatively using the CLI or [declaratively]({{< ref "/docs/applications/overview/#declarative-app-management" >}}) using `openrun apply`.
 
 <picture  class="responsive-picture" style="display: block; margin-left: auto; margin-right: auto;">
   <source media="(prefers-color-scheme: dark)" srcset="/AppServerDark.png">
