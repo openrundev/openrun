@@ -724,3 +724,82 @@ func TestCommandOptionArgsRegexMatchesWholeValue(t *testing.T) {
 		t.Fatalf("CommandOptionArgs = %#v", got)
 	}
 }
+
+// A bind source which was valid when the app was loaded is refused at mount
+// time when a path component has since been replaced by a symlink
+func TestGenMountArgsRefusesSymlinkedBindSource(t *testing.T) {
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	mounts := filepath.Join(base, "mounts")
+	outside := filepath.Join(base, "outside")
+	data := filepath.Join(mounts, "data")
+	for _, dir := range []string{data, outside} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cm := NewCommandCM(testutil.TestLogger(), &types.ServerConfig{}, "app_prd_test", filepath.Join(base, "run"))
+	volumes := []*VolumeInfo{{SourcePath: data, TargetPath: "/data"}}
+
+	args, err := cm.genMountArgs("", volumes, nil)
+	if err != nil || len(args) != 1 || args[0] != "--volume="+data+":/data" {
+		t.Fatalf("unexpected mount args %v err %v", args, err)
+	}
+
+	if err := os.Remove(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, data); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cm.genMountArgs("", volumes, nil); err == nil {
+		t.Fatal("expected a bind source replaced by a symlink to be refused")
+	}
+
+	// Source relative binds must stay inside the source dir
+	sourceDir := filepath.Join(base, "source")
+	if err := os.MkdirAll(sourceDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(sourceDir, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cm.genMountArgs(sourceDir, []*VolumeInfo{{SourcePath: "./escape", TargetPath: "/data"}}, nil); err == nil {
+		t.Fatal("expected a source relative bind which resolves outside the source to be refused")
+	}
+	if _, err := cm.genMountArgs(sourceDir, []*VolumeInfo{{SourcePath: "./conf", TargetPath: "/conf"}}, nil); err != nil {
+		t.Fatalf("source relative bind inside the source dir failed: %v", err)
+	}
+}
+
+// The rendered secret file replaces a symlink at the target instead of
+// writing through it
+func TestRenderTemplateDoesNotFollowSymlink(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "secret.tmpl")
+	victim := filepath.Join(dir, "victim")
+	target := filepath.Join(dir, "secret.tmpl.gen")
+	if err := os.WriteFile(src, []byte("value={{.params.key}}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(victim, []byte("original"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, target); err != nil {
+		t.Fatal(err)
+	}
+	if err := renderTemplate(src, target, map[string]any{"params": map[string]string{"key": "v1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(victim); string(got) != "original" {
+		t.Fatalf("symlink target was overwritten: %q", got)
+	}
+	if info, err := os.Lstat(target); err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("target should be a regular file: %v %v", info, err)
+	}
+	if got, _ := os.ReadFile(target); string(got) != "value=v1" {
+		t.Fatalf("unexpected rendered content %q", got)
+	}
+}

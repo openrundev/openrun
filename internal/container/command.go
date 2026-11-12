@@ -1031,6 +1031,44 @@ func (c CommandCM) VolumeCreate(ctx context.Context, name VolumeName, size strin
 	return nil
 }
 
+// checkBindSourceUnchanged is run when a bind mount is passed to the container
+// runtime. The source was resolved and checked against the allowed mount
+// directories when the app was loaded; a container with write access to a
+// mounted directory could since have replaced a path component with a symlink,
+// which the runtime would follow to a host path outside the allowed
+// directories. An absolute source has to still resolve to itself, a source
+// relative path has to stay inside the source directory
+func checkBindSourceUnchanged(sourceDir, configured, sourcePath string) error {
+	if !filepath.IsAbs(sourcePath) {
+		return nil
+	}
+	resolved, err := system.ResolveExistingPath(sourcePath)
+	if err != nil {
+		return fmt.Errorf("error resolving bind mount source %s: %w", sourcePath, err)
+	}
+	if filepath.IsAbs(configured) {
+		if resolved != filepath.Clean(sourcePath) {
+			return fmt.Errorf("bind mount source %s now resolves to %s through a symlink, refusing to mount", sourcePath, resolved)
+		}
+		return nil
+	}
+	if sourceDir == "" {
+		return nil
+	}
+	resolvedDir, err := system.ResolveExistingPath(sourceDir)
+	if err != nil {
+		return fmt.Errorf("error resolving source dir %s: %w", sourceDir, err)
+	}
+	inside, err := system.PathWithinDir(resolvedDir, resolved)
+	if err != nil {
+		return err
+	}
+	if !inside {
+		return fmt.Errorf("bind mount source %s resolves to %s outside the app source, refusing to mount", configured, resolved)
+	}
+	return nil
+}
+
 func (c *CommandCM) genMountArgs(sourceDir string, volumeInfo []*VolumeInfo, paramMap map[string]string) ([]string, error) {
 	args := make([]string, 0, len(volumeInfo))
 
@@ -1048,6 +1086,10 @@ func (c *CommandCM) genMountArgs(sourceDir string, volumeInfo []*VolumeInfo, par
 				if err != nil {
 					return nil, fmt.Errorf("error rendering template %s: %w", srcFile, err)
 				}
+			} else if info, err := os.Lstat(destFile); err == nil && !info.Mode().IsRegular() {
+				// Not rendered in this run: only a file left by an earlier
+				// render is mounted, never a symlink or directory
+				return nil, fmt.Errorf("generated secret file %s is not a regular file", destFile)
 			}
 			volStr := fmt.Sprintf("%s:%s", destFile, volInfo.TargetPath)
 			if volInfo.ReadOnly {
@@ -1061,6 +1103,15 @@ func (c *CommandCM) genMountArgs(sourceDir string, volumeInfo []*VolumeInfo, par
 		if volInfo.VolumeName == "" {
 			// bind mount
 			sourcePath := makeAbsolute(sourceDir, volInfo.SourcePath)
+			if !filepath.IsAbs(sourcePath) {
+				// Without a source dir a relative source would be passed as
+				// is, and the runtime would take it as the name of a volume
+				// shared by every app on the host
+				return nil, fmt.Errorf("bind mount source %s is relative to the app source, which is not available for this app", volInfo.SourcePath)
+			}
+			if err := checkBindSourceUnchanged(sourceDir, volInfo.SourcePath, sourcePath); err != nil {
+				return nil, err
+			}
 			volStr := fmt.Sprintf("%s:%s", sourcePath, volInfo.TargetPath)
 			if volInfo.ReadOnly {
 				volStr += ":ro"

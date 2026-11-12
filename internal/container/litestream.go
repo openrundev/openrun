@@ -222,8 +222,21 @@ func (c *CommandCM) EnsureLitestreamSidecar(ctx context.Context, appEntry *types
 	if err := os.MkdirAll(c.appRunDir, 0700); err != nil {
 		return fmt.Errorf("error creating app run dir: %w", err)
 	}
-	if err := os.WriteFile(configPath, []byte(spec.ConfigYAML), 0600); err != nil {
+	// The old file is removed and the new one created exclusively, so a
+	// symlink at the path is replaced and never written through
+	if err := os.Remove(configPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("error removing old litestream config: %w", err)
+	}
+	configFile, err := os.OpenFile(configPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
 		return fmt.Errorf("error writing litestream config: %w", err)
+	}
+	_, writeErr := configFile.WriteString(spec.ConfigYAML)
+	if closeErr := configFile.Close(); writeErr == nil {
+		writeErr = closeErr
+	}
+	if writeErr != nil {
+		return fmt.Errorf("error writing litestream config: %w", writeErr)
 	}
 
 	args := []string{"run", "--name", string(name), "--detach"}

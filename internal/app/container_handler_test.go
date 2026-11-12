@@ -963,7 +963,11 @@ func TestStaleInPlaceHandlerKeepsRunningOnVersionLookupError(t *testing.T) {
 func newVolumeTestHandler(t *testing.T) (*ContainerHandler, string) {
 	t.Helper()
 
-	home := t.TempDir()
+	// Bind sources are symlink resolved, use a resolved home for comparisons
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv(types.OPENRUN_HOME, home)
 
 	appID := types.AppId("app_prd_volume_test")
@@ -1011,6 +1015,42 @@ func TestParseVolumeStringRejectsBindSourceOutsideAllowedMounts(t *testing.T) {
 
 	if _, err := h.parseVolumeString(source + ":/etc/config.yaml"); err == nil {
 		t.Fatal("parseVolumeString should reject bind sources outside allowed mount roots")
+	}
+}
+
+// The app run directory holds server generated files which are mounted by
+// path, a container must not be able to bind mount (and write to) it
+func TestParseVolumeStringRejectsAppRunDir(t *testing.T) {
+	h, _ := newVolumeTestHandler(t)
+	if err := os.MkdirAll(h.app.AppRunPath, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.parseVolumeString(h.app.AppRunPath + ":/run"); err == nil {
+		t.Fatal("parseVolumeString should reject the app run directory as a bind source")
+	}
+	if _, err := h.parseVolumeString(filepath.Join(h.app.AppRunPath, "x.gen") + ":/x"); err == nil {
+		t.Fatal("parseVolumeString should reject files in the app run directory as a bind source")
+	}
+}
+
+// A symlink under an allowed mount directory is resolved before the check,
+// also when the leaf below the symlink does not exist yet
+func TestParseVolumeStringRejectsSymlinkOutOfAllowedMounts(t *testing.T) {
+	h, home := newVolumeTestHandler(t)
+	mounts := filepath.Join(home, "mounts")
+	outside := filepath.Join(home, "outside")
+	for _, dir := range []string{mounts, outside} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(outside, filepath.Join(mounts, "link")); err != nil {
+		t.Fatal(err)
+	}
+	for _, src := range []string{"link", "link/newdir"} {
+		if _, err := h.parseVolumeString(filepath.Join(mounts, src) + ":/data"); err == nil {
+			t.Fatalf("parseVolumeString should reject %s which resolves outside the allowed mounts", src)
+		}
 	}
 }
 
@@ -2397,4 +2437,28 @@ func TestRetiredPinnedAppStopsBackgroundAndCloseRequests(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 	release()
+}
+
+// The dev source mount is generated from the app source path, which can go
+// through a symlink (/tmp and /var on macOS): it is stored resolved, so the
+// unchanged check at container start does not see the symlink as a change
+func TestCanonicalBindSourceResolvesSymlink(t *testing.T) {
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(base, "real")
+	if err := os.Mkdir(real, 0700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	if got := canonicalBindSource(filepath.Join(link, "app")); got != filepath.Join(real, "app") {
+		t.Fatalf("expected %s, got %s", filepath.Join(real, "app"), got)
+	}
+	if got := canonicalBindSource("rel/path"); got != "rel/path" {
+		t.Fatalf("relative path changed to %s", got)
+	}
 }

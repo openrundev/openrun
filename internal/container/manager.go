@@ -390,8 +390,13 @@ func renderTemplate(srcFilename, targetFilename string, data map[string]any) err
 		return fmt.Errorf("failed to parse template file: %w", err)
 	}
 
-	// Create the target file (overwrite if it exists)
-	targetFile, err := os.Create(targetFilename)
+	// Create the target file, replacing an existing one. The old entry is
+	// removed and the file created exclusively, so a symlink at the target
+	// is never written through
+	if err := os.Remove(targetFilename); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove old target file: %w", err)
+	}
+	targetFile, err := os.OpenFile(targetFilename, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0666)
 	if err != nil {
 		return fmt.Errorf("failed to create target file: %w", err)
 	}

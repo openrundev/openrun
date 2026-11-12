@@ -5,6 +5,7 @@ package system
 
 import (
 	"fmt"
+	"os"
 	"path"
 	"path/filepath"
 	"slices"
@@ -138,6 +139,35 @@ func CleanAbsolutePath(name string) (string, error) {
 		absPath = resolvedPath
 	}
 	return absPath, nil
+}
+
+// ResolveExistingPath resolves the symlinks of an absolute path. Unlike
+// filepath.EvalSymlinks it accepts a path whose tail does not exist yet: the
+// deepest existing ancestor is resolved and the missing tail is appended, so
+// a symlink in the existing part cannot hide behind a missing leaf
+func ResolveExistingPath(absPath string) (string, error) {
+	absPath = filepath.Clean(absPath)
+	tail := ""
+	current := absPath
+	for {
+		resolved, err := filepath.EvalSymlinks(current)
+		if err == nil {
+			return filepath.Join(resolved, tail), nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		if _, lerr := os.Lstat(current); lerr == nil {
+			// The entry exists but does not resolve: a dangling symlink
+			return "", fmt.Errorf("path %s has a symlink which does not resolve", current)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return absPath, nil
+		}
+		tail = filepath.Join(filepath.Base(current), tail)
+		current = parent
+	}
 }
 
 // PathWithinDir reports whether targetPath is lexically inside root.

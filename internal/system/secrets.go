@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"regexp"
 	"sort"
 	"strings"
@@ -128,6 +129,20 @@ func (s *SecretManager) appTemplateSecretFunc(checkAppPerms bool, appPerms [][]s
 	provider, ok := s.providers[providerName]
 	if !ok {
 		panic(fmt.Errorf("unknown secret provider %s", providerName))
+	}
+
+	// Keys are joined into a path for providers like Vault, whose client
+	// cleans the request path: a "." or ".." segment would let a key which
+	// passes the pattern check below resolve to a different secret
+	for _, key := range secretKeys {
+		if key == "" {
+			panic(fmt.Errorf("%w: empty secret key", ErrSecretNotAllowed))
+		}
+		for _, segment := range strings.Split(key, "/") {
+			if segment == "." || segment == ".." {
+				panic(fmt.Errorf("%w: secret key cannot have a . or .. path segment", ErrSecretNotAllowed))
+			}
+		}
 	}
 
 	if checkAppPerms {
@@ -814,6 +829,11 @@ func (v *vaultSecretProvider) Configure(ctx context.Context, conf map[string]any
 // GetSecret reads the secret at the given path and returns the one string value it contains.
 // It handles both KV v1 and v2 engines automatically.
 func (v *vaultSecretProvider) GetSecret(ctx context.Context, fullPath string) (string, error) {
+	// The vault client cleans the request path, so a path which is not
+	// already clean would be read from another location than the one named
+	if fullPath == "" || strings.HasPrefix(fullPath, "/") || path.Clean(fullPath) != strings.TrimSuffix(fullPath, "/") {
+		return "", fmt.Errorf("invalid vault secret path %q", fullPath)
+	}
 	// 1) List all mounts so we can detect KV versions.
 	mounts, err := v.client.Sys().ListMountsWithContext(ctx)
 	if err != nil {

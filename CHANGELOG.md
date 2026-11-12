@@ -7,6 +7,15 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- Container bind mounts are checked more strictly.
+  - Symlinks in a bind source are resolved before the source is checked against the app source directory and `security.allowed_mounts`, and the source is checked again when the container is created.
+  - The app runtime directory is no longer an allowed bind source.
+  - A relative bind source on an app whose source directory is not available at container start now fails with an error. It was previously passed to the container runtime as a named volume.
+- Generated secret files (`cl_secret` volumes) and the litestream config are written without following symlinks. The litestream config is created with mode 0600.
+- Secret keys with empty, `.` or `..` path segments are rejected for all providers. Vault secret paths must be clean and relative.
+
 ## [v0.20.15] - 2026-11-05
 
 ### Changed
