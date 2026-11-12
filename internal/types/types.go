@@ -24,7 +24,25 @@ import (
 var (
 	gitCommit  string // gitCommit is the git commit that was compiled
 	gitVersion string // gitVersion is the build tag
+	gitChannel string // gitChannel is the release channel, tip or pro
+	gitLicense string // gitLicense is the SPDX identifier of the license the build is released under
 )
+
+const (
+	CHANNEL_TIP     = "tip"
+	LICENSE_DEFAULT = "Apache-2.0"
+)
+
+// GetChannel returns the release channel of this build. Versions are only
+// comparable within one channel
+func GetChannel() string {
+	return cmp.Or(gitChannel, CHANNEL_TIP)
+}
+
+// GetLicense returns the SPDX identifier of the license this build is released under
+func GetLicense() string {
+	return cmp.Or(gitLicense, LICENSE_DEFAULT)
+}
 
 func GetVersion() string {
 	return cmp.Or(gitVersion, "dev")

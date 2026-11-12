@@ -401,6 +401,8 @@ type ServerStatusResponse struct {
 type ServerVersionResponse struct {
 	Version string `json:"version"`
 	Commit  string `json:"commit"`
+	Channel string `json:"channel,omitempty"` // release channel, empty from servers older than the channel split
+	License string `json:"license,omitempty"` // SPDX license identifier of the server build
 }
 
 // DatabasePoolMetrics is the database/sql connection pool snapshot returned

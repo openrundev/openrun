@@ -321,7 +321,12 @@ func serverVersion(cCtx *cli.Context, clientConfig *types.ClientConfig) error {
 	if err != nil {
 		return err
 	}
-	printStdout(cCtx, "%s (commit %s)\n", response.Version, response.Commit)
+	if response.Channel == "" {
+		// server older than the release channel split
+		printStdout(cCtx, "%s (commit %s)\n", response.Version, response.Commit)
+		return nil
+	}
+	printStdout(cCtx, "%s (commit %s, %s, %s)\n", response.Version, response.Commit, response.Channel, response.License)
 	return nil
 }
 

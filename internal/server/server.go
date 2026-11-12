@@ -267,7 +267,8 @@ func NewServer(config *types.ServerConfig) (*Server, error) {
 	}
 
 	l := types.NewLogger(&config.Log)
-	l.Info().Str("version", types.GetVersion()).Str("commit", types.GetCommit()).Msg("Initializing server")
+	l.Info().Str("version", types.GetVersion()).Str("commit", types.GetCommit()).
+		Str("channel", types.GetChannel()).Str("license", types.GetLicense()).Msg("Initializing server")
 
 	// A config loaded from toml is already normalized; one built or edited
 	// in Go by an embedder (pkg/api) is not, and the origin settings are
@@ -637,7 +638,8 @@ func (s *Server) ServerVersion(ctx context.Context) (*types.ServerVersionRespons
 	if err := s.enforceGlobalPerm(ctx, types.PermissionConfigBasicRead, ""); err != nil {
 		return nil, err
 	}
-	return &types.ServerVersionResponse{Version: types.GetVersion(), Commit: types.GetCommit()}, nil
+	return &types.ServerVersionResponse{Version: types.GetVersion(), Commit: types.GetCommit(),
+		Channel: types.GetChannel(), License: types.GetLicense()}, nil
 }
 
 // StopServer requests a graceful server stop. Requires server:stop

@@ -53,7 +53,7 @@ tests:
   basic054: # server version reports the server build version
     command: ../openrun server version
     stdout:
-      exactly: "dev (commit dev_build)" # test binary is built without version ldflags
+      exactly: "dev (commit dev_build, tip, Apache-2.0)" # test binary is built without version ldflags
     exit-code: 0
 
   basic060: ## create test1 app with default of authentication enabled

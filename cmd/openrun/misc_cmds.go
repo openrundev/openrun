@@ -131,5 +131,6 @@ func readPassword() (string, error) {
 }
 
 func printVersion(cCtx *cli.Context) {
-	printStdout(cCtx, "OpenRun version %s build %s\n", types.GetVersion(), types.GetCommit())
+	printStdout(cCtx, "OpenRun version %s build %s (%s, %s)\n", types.GetVersion(), types.GetCommit(),
+		types.GetChannel(), types.GetLicense())
 }

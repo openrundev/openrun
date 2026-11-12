@@ -10,6 +10,7 @@ MAKEFLAGS += --no-builtin-rules
 OPENRUN_HOME := `pwd`
 INPUT := $(word 2,$(MAKECMDGOALS))
 INPUT2 := $(word 3,$(MAKECMDGOALS))
+INPUT3 := $(word 4,$(MAKECMDGOALS))
 # GOWORK=off: package lists are computed in module mode so a local go.work
 # (used for pkg/binding development) does not change what gets built/linted.
 # In workspace mode `go list -m` returns every workspace module and
@@ -67,7 +68,7 @@ ifeq ($(origin .RECIPEPREFIX), undefined)
 endif
 .RECIPEPREFIX = >
 
-.PHONY: help test unit int testui testconsole covtest covtest-parallel covbuild covunit covint covui covclient covreport release-sdk release fullrelease update-dep update-go int_single lint verify build-linux image tags docs-screenshots
+.PHONY: help test unit int testui testconsole covtest covtest-parallel covbuild covunit covint covui covclient covreport next-version release-sdk release fullrelease update-dep update-go int_single lint verify build-linux image tags docs-screenshots
 
 help: ## Display this help section
 > @awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-38s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -254,16 +255,34 @@ update-go: ## Update the Go version in all modules and Actions workflows; args: 
 # ---------------------------------------------------------------------------
 # Releases
 #
-# Versions are given without the v prefix (e.g. 0.20.0); the tags add it:
-#   v<version>                              OpenRun server (this repo)
+# The OpenRun server is released on the Tip channel (Apache-2.0, from main)
+# with tags of the form vMAJOR.YYMM.PATCH:
+#   MAJOR   the number in deploy/TIP_MAJOR, the latest shipped Pro major
+#   YYMM    release year and month (UTC)
+#   PATCH   DD * 10 + V, DD the day of the month (UTC) and V the zero-based
+#           release sequence for that day (0-9)
+# e.g. v1.2611.120 is the first release on November 12, 2026 and v1.2611.121
+# the second. The version is computed from the UTC date and the existing
+# tags. A version passed on the command line is only accepted if it is the
+# computed one, so it works as a confirmation. A tag whose release job fails
+# is not reused, the retry takes the next sequence number.
+#
+# The SDK modules, binding providers and Helm chart use conventional SemVer,
+# given without the v prefix (e.g. 0.20.0), and are versioned independently
+# of the server:
 #   pkg/binding/v<version>, pkg/plugin/v<version>  SDK modules (this repo)
 #   <provider>/v<version>                   binding providers (../bindings)
 #   openrun-<version>                       Helm chart (../openrun-helm-charts)
 #
+#   make next-version                       print the next server version
+#   make release [<version>] [<helm_version>]
+#                                           tag + push the server, then create
+#                                           the Helm chart release commit; the
+#                                           chart version defaults to the
+#                                           server version
 #   make release-sdk <version>              tag + push both SDK modules only
-#   make release <version> [<helm_version>] tag + push the server, then create
-#                                           the Helm chart release commit
-#   make fullrelease <version>              SDKs + server + every binding
+#   make fullrelease <sdk_version> <bindings_version> [<version>]
+#                                           SDKs + server + every binding
 #                                           provider + Helm chart commit
 #   make -C ../bindings release <sdk_version> <bindings_version> PUSH=1
 #                                           binding providers only
@@ -272,11 +291,24 @@ update-go: ## Update the Go version in all modules and Actions workflows; args: 
 # origin/main. The Helm chart commit is never pushed automatically: its
 # appVersion is the server image tag, so push it after the OpenRun release
 # job has published the images.
+#
+# Pro channel tags (pro/vMAJOR.MINOR.PATCH, from maintenance branches) are not
+# handled here yet. The tip_* helpers below only look at v tags, so pro/ tags
+# can be added without affecting them.
 # ---------------------------------------------------------------------------
 
-# Bash helpers shared by the release targets; expanded as the first recipe line
+# Sub-make for the release recipes. GNU Make runs any recipe that mentions
+# MAKE directly even under -n, and with .ONESHELL that is the whole recipe,
+# so `make -n fullrelease` would tag and push. Going through this variable
+# keeps -n a real dry run that only prints the recipe.
+RELEASE_MAKE = $(MAKE)
+
+# Bash helpers shared by the release targets; expanded as the first recipe
+# line. Helpers whose output is captured by a command substitution return
+# explicitly on errors, since bash does not apply errexit inside one.
 define RELEASE_SH
 semver_re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$$'
+tip_re='^(0|[1-9][0-9]*)\.([0-9]{4})\.([1-9][0-9]{1,2})$$'
 # version_arg <name> <value>: print the version without a v prefix, or fail
 version_arg() {
   local v="$${2#v}"
@@ -289,6 +321,113 @@ version_arg() {
     return 1
   fi
   echo "$$v"
+}
+# tip_major: print the Tip major version from deploy/TIP_MAJOR
+tip_major() {
+  local major
+  major="$$(tr -d '[:space:]' < deploy/TIP_MAJOR)" || return 1
+  if ! [[ "$$major" =~ ^(0|[1-9][0-9]*)$$ ]]; then
+    echo "Error: deploy/TIP_MAJOR must hold a single number, found '$$major'" >&2
+    return 1
+  fi
+  echo "$$major"
+}
+# require_date <YYMMDD>: fail unless it is a real calendar date (years 2000-2099)
+require_date() {
+  local yy mm dd days
+  if ! [[ "$$1" =~ ^[0-9]{6}$$ ]]; then
+    echo "Error: date '$$1' is not in YYMMDD form" >&2
+    return 1
+  fi
+  yy="$$((10#$${1:0:2}))"
+  mm="$$((10#$${1:2:2}))"
+  dd="$$((10#$${1:4:2}))"
+  case "$$mm" in
+    1|3|5|7|8|10|12) days=31 ;;
+    4|6|9|11) days=30 ;;
+    2) if (( yy % 4 == 0 )); then days=29; else days=28; fi ;;
+    *) days=0 ;;
+  esac
+  if (( dd < 1 || dd > days )); then
+    echo "Error: '$$1' (YYMMDD) is not a valid calendar date" >&2
+    return 1
+  fi
+}
+# latest_server_version: print the highest vX.Y.Z server tag without the v
+# prefix, or nothing if there is none (run after fetching tags)
+latest_server_version() {
+  git tag -l 'v[0-9]*' | { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$$' || true; } \
+    | sed 's/^v//' | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1
+}
+# tip_version [<version>] [<YYMMDD>]: print the next Tip version,
+# MAJOR.YYMM.PATCH for today's UTC date. A version passed in must be exactly
+# that version. The date argument replaces today's date; only next-version
+# passes it, the targets that tag and push always use the real date.
+tip_version() {
+  local v="$${1#v}" today="$${2:-}" major yymm dd latest expected
+  local seq=0 lmaj=0 lyymm=0 lpatch=0
+  major="$$(tip_major)" || return 1
+  if [[ -z "$$today" ]]; then
+    today="$$(date -u +%y%m%d)" || return 1
+  fi
+  require_date "$$today" || return 1
+  yymm="$${today:0:4}"
+  dd="$$((10#$${today:4:2}))"
+  latest="$$(latest_server_version)" || return 1
+  if [[ -n "$$latest" ]]; then
+    IFS=. read -r lmaj lyymm lpatch <<< "$$latest"
+    if (( 10#$$lmaj == 10#$$major && 10#$$lyymm == 10#$$yymm && 10#$$lpatch / 10 == dd )); then
+      seq="$$((10#$$lpatch % 10 + 1))"
+    fi
+  fi
+  if (( seq > 9 )); then
+    echo "Error: v$$latest is already the tenth Tip release for today (UTC), the daily limit" >&2
+    return 1
+  fi
+  expected="$$major.$$yymm.$$((dd * 10 + seq))"
+  if [[ -n "$$latest" ]] && (( 10#$$major < 10#$$lmaj \
+      || (10#$$major == 10#$$lmaj && 10#$$yymm < 10#$$lyymm) \
+      || (10#$$major == 10#$$lmaj && 10#$$yymm == 10#$$lyymm && dd * 10 + seq <= 10#$$lpatch) )); then
+    echo "Error: next Tip version v$$expected is not greater than the latest tag v$$latest;" \
+      "check deploy/TIP_MAJOR and the system clock" >&2
+    return 1
+  fi
+  if [[ -n "$$v" ]]; then
+    if ! [[ "$$v" =~ $$tip_re ]]; then
+      echo "Error: version '$$1' is not a Tip version (MAJOR.YYMM.PATCH), the next one is $$expected" >&2
+      return 1
+    fi
+    if (( 10#$${BASH_REMATCH[1]} != 10#$$major )); then
+      echo "Error: version '$$1' must use major $$major from deploy/TIP_MAJOR, the next one is $$expected" >&2
+      return 1
+    fi
+    if [[ "$${BASH_REMATCH[2]}" != "$$yymm" ]] || (( 10#$${BASH_REMATCH[3]} / 10 != dd )); then
+      echo "Error: version '$$1' is not dated today (UTC), the next one is $$expected" >&2
+      return 1
+    fi
+    if [[ "$$v" != "$$expected" ]]; then
+      echo "Error: version '$$1' has the wrong daily sequence number, the next one is $$expected" >&2
+      return 1
+    fi
+  fi
+  echo "$$expected"
+}
+# require_tip_ancestry: HEAD must contain the commit of the latest server tag
+require_tip_ancestry() {
+  local latest
+  latest="$$(latest_server_version)"
+  if [[ -n "$$latest" ]] && ! git merge-base --is-ancestor "v$$latest^{commit}" HEAD; then
+    echo "Error: HEAD does not contain the latest release v$$latest" >&2
+    return 1
+  fi
+}
+# tip_tag <version>: create the annotated Tip tag for HEAD, the tag message
+# records the release metadata
+tip_tag() {
+  local commit
+  commit="$$(git rev-parse HEAD)"
+  git tag -a "v$$1" -m "Release v$$1" \
+    -m "Channel: tip" -m "Version: $$1" -m "Commit: $$commit" -m "License: Apache-2.0"
 }
 # require_release_ready <repo>: clean working tree, on main, synchronized with origin/main
 require_release_ready() {
@@ -334,6 +473,11 @@ helm_chart_commit() {
 }
 endef
 
+next-version: ## Print the Tip version the next server release would get, tags nothing; args: [<version> to validate], TIP_TODAY=YYMMDD to preview another date
+> @$(RELEASE_SH)
+> version=$$(tip_version "$(INPUT)" "$${TIP_TODAY:-}")
+> echo "v$$version"
+
 release-sdk: ## Tag and push the pkg/binding and pkg/plugin SDK modules; args: <version>
 > @$(RELEASE_SH)
 > version=$$(version_arg version "$(INPUT)")
@@ -344,24 +488,29 @@ release-sdk: ## Tag and push the pkg/binding and pkg/plugin SDK modules; args: <
 > git push --atomic origin "pkg/binding/v$$version" "pkg/plugin/v$$version"
 > echo "Pushed pkg/binding/v$$version and pkg/plugin/v$$version; consumers can now require them"
 
-release: ## Tag and push the OpenRun server, then create the Helm chart release commit; args: <version> [<helm_version>, default <version>]
+release: ## Tag and push the OpenRun server (Tip channel), then create the Helm chart release commit; args: [<version>, default computed] [<helm_version>, default <version>]
 > @$(RELEASE_SH)
-> version=$$(version_arg version "$(INPUT)")
-> helm_version=$$(version_arg helm_version "$(if $(INPUT2),$(INPUT2),$(INPUT))")
 > require_release_ready .
 > require_release_ready ../openrun-helm-charts
+> version=$$(tip_version "$(INPUT)")
+> helm_version=$$(version_arg helm_version "$(if $(INPUT2),$(INPUT2),$$version)")
+> require_tip_ancestry
 > require_no_tag . "v$$version"
 > require_no_tag ../openrun-helm-charts "openrun-$$helm_version"
-> git tag -a "v$$version" -m "Release v$$version"
+> tip_tag "$$version"
 > git push origin "v$$version"
+> echo "Tagged and pushed Tip release v$$version"
 > helm_chart_commit "$$helm_version" "$$version"
 
-fullrelease: ## Release everything at one version: SDKs, server, every binding provider, Helm chart commit; args: <version>
+fullrelease: ## Release everything: SDKs, server (Tip channel), every binding provider, Helm chart commit; args: <sdk_version> <bindings_version> [<version>, default computed]
 > @$(RELEASE_SH)
-> version=$$(version_arg version "$(INPUT)")
+> sdk_version=$$(version_arg sdk_version "$(INPUT)")
+> bindings_version=$$(version_arg bindings_version "$(INPUT2)")
 > for repo in . ../bindings ../openrun-helm-charts; do require_release_ready "$$repo"; done
-> for tag in "v$$version" "pkg/binding/v$$version" "pkg/plugin/v$$version"; do require_no_tag . "$$tag"; done
-> for module in $$($(MAKE) --no-print-directory -s -C ../bindings modules); do require_no_tag ../bindings "$$module/v$$version"; done
+> version=$$(tip_version "$(INPUT3)")
+> require_tip_ancestry
+> for tag in "v$$version" "pkg/binding/v$$sdk_version" "pkg/plugin/v$$sdk_version"; do require_no_tag . "$$tag"; done
+> for module in $$($(RELEASE_MAKE) --no-print-directory -s -C ../bindings modules); do require_no_tag ../bindings "$$module/v$$bindings_version"; done
 > require_no_tag ../openrun-helm-charts "openrun-$$version"
 > if grep -q "^version: $$version$$" ../openrun-helm-charts/charts/openrun/Chart.yaml; then
 >   echo "Error: Chart.yaml is already at $$version but tag openrun-$$version does not exist; finish that chart release first"
@@ -369,17 +518,18 @@ fullrelease: ## Release everything at one version: SDKs, server, every binding p
 > fi
 > # The server tag must require the SDK versions being released: downstream
 > # consumers of the server module do not see the local replace directives.
-> go mod edit -require=github.com/openrundev/openrun/pkg/binding@v$$version -require=github.com/openrundev/openrun/pkg/plugin@v$$version
+> go mod edit -require=github.com/openrundev/openrun/pkg/binding@v$$sdk_version -require=github.com/openrundev/openrun/pkg/plugin@v$$sdk_version
 > if ! git diff --quiet go.mod; then
 >   git add go.mod
->   git commit -q -m "Pin SDK modules to v$$version for release"
+>   git commit -q -m "Pin SDK modules to v$$sdk_version for release"
 > fi
 > # Server and SDK tags go out in one push; the bindings release below runs
 > # go mod tidy against the published pkg/binding tag.
-> for tag in "v$$version" "pkg/binding/v$$version" "pkg/plugin/v$$version"; do git tag -a "$$tag" -m "Release $$tag"; done
-> git push --atomic origin HEAD:main "v$$version" "pkg/binding/v$$version" "pkg/plugin/v$$version"
-> $(MAKE) -C ../bindings release INPUT="$$version" INPUT2="$$version" PUSH=1
-> echo "Tagged and pushed v$$version, pkg/binding/v$$version, pkg/plugin/v$$version and every bindings <provider>/v$$version"
+> tip_tag "$$version"
+> for tag in "pkg/binding/v$$sdk_version" "pkg/plugin/v$$sdk_version"; do git tag -a "$$tag" -m "Release $$tag"; done
+> git push --atomic origin HEAD:main "v$$version" "pkg/binding/v$$sdk_version" "pkg/plugin/v$$sdk_version"
+> $(RELEASE_MAKE) -C ../bindings release INPUT="$$sdk_version" INPUT2="$$bindings_version" PUSH=1
+> echo "Tagged and pushed v$$version, pkg/binding/v$$sdk_version, pkg/plugin/v$$sdk_version and every bindings <provider>/v$$bindings_version"
 > helm_chart_commit "$$version" "$$version"
 
 # Swallow extra command-line words (e.g. `make int_single test_reload.yaml`)

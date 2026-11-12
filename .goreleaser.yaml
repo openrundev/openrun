@@ -38,6 +38,9 @@ builds:
       - -w
       - -X github.com/openrundev/openrun/internal/types.gitCommit={{.ShortCommit}}
       - -X github.com/openrundev/openrun/internal/types.gitVersion={{.Version}}
+      # Release channel and license of this build. This config builds the Tip channel
+      - -X github.com/openrundev/openrun/internal/types.gitChannel=tip
+      - -X github.com/openrundev/openrun/internal/types.gitLicense=Apache-2.0
     env:
       - GO111MODULE=on
       - CGO_ENABLED=0
