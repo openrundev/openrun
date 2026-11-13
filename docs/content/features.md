@@ -76,13 +76,13 @@ layout: hextra-home
 
 <!-- prettier-ignore --> {{< hextra/feature-card title="Management Console" link="/console-tour/" subtitle="Manage applications, deployments, service bindings, containers, audit events and server configuration through OpenRun’s browser-based administration console."  icon="desktop-computer" class="openrun-feature-card openrun-feature-card-light" >}}
 
-<!-- prettier-ignore --> {{< hextra/feature-card title="Compare OpenRun" link="/compare/" subtitle="See how OpenRun compares with Coolify, CapRover, Kamal, Dokku, Google Cloud Run, AWS App Runner and DIY Kubernetes platforms."  icon="scale" class="openrun-feature-card openrun-feature-card-light" >}}
-
 {{< /hextra/feature-grid >}}
 
 <div style="height: 20px;"></div>
 
 <iframe
-  src="/intro.html?v=20260808-storage"
-  style="width:100%; height:80vh; border:0;"
+  src="/intro/?v=20261113"
+  title="OpenRun introduction slides"
+  style="width:100%; aspect-ratio:16/9; min-height:560px; max-height:85vh; border:1px solid rgba(127,127,127,0.25); border-radius:12px;"
+  allowfullscreen
 ></iframe>

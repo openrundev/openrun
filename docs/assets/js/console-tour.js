@@ -212,6 +212,7 @@
     shot.style.setProperty("--dir", dir);
     scroller.append(shot);
     scroller.scrollTop = 0;
+    scroller.scrollLeft = 0;
     scroller.setAttribute("aria-label", `Screenshot: ${s.title}`);
     paintSplit();
   }
@@ -432,7 +433,9 @@
   scroller.addEventListener("scroll", hint, { passive: true });
   scroller.addEventListener("wheel", stop, { passive: true });
 
-  // swipe between steps on touch screens
+  // swipe between steps on touch screens. On phones the screenshot is zoomed
+  // and wider than the stage (see the narrow screen css): a sideways drag
+  // pans it there, and the Back / Next buttons step
   let touch = null;
   scroller.addEventListener("touchstart", (e) => {
     stop();
@@ -443,6 +446,7 @@
     const dx = e.changedTouches[0].clientX - touch.x;
     const dy = e.changedTouches[0].clientY - touch.y;
     touch = null;
+    if (scroller.scrollWidth > scroller.clientWidth + 1) return;
     if (Math.abs(dx) > 60 && Math.abs(dx) > 2 * Math.abs(dy)) dx < 0 ? next() : back();
   }, { passive: true });
 

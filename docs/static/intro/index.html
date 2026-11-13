@@ -1,0 +1,2127 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenRun: introduction</title>
+    <meta
+      name="description"
+      content="An introduction to OpenRun, the open source, self-hosted GitOps platform for deploying web apps and internal tools to Docker, Podman or Kubernetes." />
+    <link rel="icon" href="/favicon.svg" />
+    <link rel="stylesheet" href="/fonts/console/fonts.css" />
+    <script>
+      /* Theme: ?theme=, else the embedding docs page (same origin), else the last
+   choice made here, else the system setting. Set before first paint. */
+      const theme = {
+        key: "openrun-intro-theme",
+        embedded: window.parent !== window,
+        fromParent() {
+          try {
+            const c = parent.document.documentElement.classList;
+            return c.contains("dark")
+              ? "dark"
+              : c.contains("light")
+              ? "light"
+              : null;
+          } catch (e) {
+            return null; /* cross origin embed */
+          }
+        },
+        stored() {
+          try {
+            return localStorage.getItem(this.key);
+          } catch (e) {
+            return null;
+          }
+        },
+        system() {
+          return matchMedia("(prefers-color-scheme: dark)").matches
+            ? "dark"
+            : "light";
+        },
+        resolve() {
+          return (
+            new URLSearchParams(location.search).get("theme") ||
+            (this.embedded && this.fromParent()) ||
+            this.stored() ||
+            this.system()
+          );
+        },
+        apply(t) {
+          document.documentElement.dataset.theme =
+            t === "dark" ? "dark" : "light";
+        },
+        toggle() {
+          const t =
+            document.documentElement.dataset.theme === "dark"
+              ? "light"
+              : "dark";
+          try {
+            localStorage.setItem(this.key, t);
+          } catch (e) {
+            /* storage blocked */
+          }
+          this.apply(t);
+        },
+      };
+      theme.apply(theme.resolve());
+    </script>
+    <style>
+      /* Styled like the OpenRun console app: its daisyui theme colors
+   (openrun-light / openrun-dark) and its fonts, Space Grotesk for headings,
+   Schibsted Grotesk for body and JetBrains Mono for code. Every slide uses
+   the tokens and components below; nothing is styled per slide. */
+      :root {
+        --bg: #f9fcf9;
+        --surface: #f3f8f3;
+        --panel: #ffffff;
+        --line: #dce8dc;
+        --line-strong: #c3d6c4;
+        --text: #142319;
+        --muted: #4a5a4e;
+        --faint: #7d8f82;
+        --primary: #00c200;
+        --primary-content: #012d01;
+        --secondary: #007700;
+        --accent: #007700;
+        --accent-soft: #e4f6e4;
+        --warn: #946000;
+        --warn-soft: #fbf3e0;
+        --code-str: #0f7d0f;
+        --code-com: #7d8f82;
+        --code-fn: #0b6bcb;
+        --code-key: #7a4a00;
+        /* terminals stay dark in both themes */
+        --term-bg: #101a13;
+        --term-head: #17221a;
+        --term-line: #273b2c;
+        --term-text: #d9e7db;
+        --term-dim: #93a897;
+        --term-ok: #37d24c;
+        --shadow: 0 1px 2px rgba(20, 35, 25, 0.06),
+          0 8px 24px -12px rgba(20, 35, 25, 0.18);
+        --radius-box: 12px;
+        --radius-field: 8px;
+        --ease: cubic-bezier(0.22, 1, 0.36, 1);
+        --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
+          Consolas, monospace;
+        --sans: "Schibsted Grotesk", ui-sans-serif, system-ui, sans-serif;
+        --display: "Space Grotesk", var(--sans);
+        color-scheme: light;
+      }
+      :root[data-theme="dark"] {
+        --bg: #101a13;
+        --surface: #131e16;
+        --panel: #17221a;
+        --line: #273b2c;
+        --line-strong: #36503c;
+        --text: #d9e7db;
+        --muted: #93a897;
+        --faint: #6b806f;
+        --accent: #00c200;
+        --accent-soft: #12331a;
+        --warn: #ffbe3d;
+        --warn-soft: #33290f;
+        --code-str: #37d24c;
+        --code-com: #6b806f;
+        --code-fn: #55a9ff;
+        --code-key: #ffbe3d;
+        --term-bg: #0b130d;
+        --shadow: 0 1px 2px rgba(0, 0, 0, 0.3),
+          0 8px 24px -12px rgba(0, 0, 0, 0.6);
+        color-scheme: dark;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: var(--bg);
+      }
+      body {
+        color: var(--text);
+        font: 16px/1.5 var(--sans);
+        -webkit-font-smoothing: antialiased;
+      }
+      h1,
+      h2,
+      h3,
+      p,
+      ul,
+      ol,
+      pre {
+        margin: 0;
+      }
+      ul,
+      ol {
+        padding: 0;
+        list-style: none;
+      }
+      button {
+        font: inherit;
+        color: inherit;
+        background: none;
+        border: 0;
+        padding: 0;
+        cursor: pointer;
+      }
+      a {
+        color: var(--accent);
+        text-underline-offset: 3px;
+      }
+      code,
+      pre,
+      kbd {
+        font-family: var(--mono);
+      }
+      :focus-visible {
+        outline: 2px solid var(--primary);
+        outline-offset: 2px;
+      }
+      b {
+        font-weight: 600;
+        color: var(--text);
+      }
+
+      /* ---- deck: a fixed 1280x720 window, scaled to fit by the script ---- */
+      .deck {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 1280px;
+        height: 720px;
+        transform-origin: 0 0;
+        display: grid;
+        grid-template-rows: 46px 1fr 38px;
+        background: var(--bg);
+      }
+
+      /* title bar */
+      .bar {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 0 18px;
+        background: var(--panel);
+        border-bottom: 1px solid var(--line);
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        text-decoration: none;
+        font: italic 700 19px var(--display);
+        letter-spacing: -0.02em;
+        color: var(--accent);
+      }
+      .brand img {
+        width: 30px;
+        height: 30px;
+      }
+      .prompt {
+        flex: 1;
+        min-width: 0;
+        font: 13px var(--mono);
+        color: var(--muted);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .prompt .ps {
+        color: var(--accent);
+      }
+      .prompt .arg {
+        color: var(--text);
+        font-weight: 500;
+      }
+      .tool {
+        display: grid;
+        place-items: center;
+        width: 30px;
+        height: 30px;
+        border-radius: var(--radius-field);
+        color: var(--muted);
+        transition: background-color 0.15s, color 0.15s;
+      }
+      .tool:hover {
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+      .tool svg {
+        width: 17px;
+        height: 17px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      :root[data-theme="dark"] .i-moon,
+      :root:not([data-theme="dark"]) .i-sun {
+        display: none;
+      }
+
+      /* status line */
+      .status {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding-right: 14px;
+        background: var(--panel);
+        border-top: 1px solid var(--line);
+        font: 12px var(--mono);
+        color: var(--muted);
+      }
+      .mode {
+        align-self: stretch;
+        display: grid;
+        place-items: center;
+        padding: 0 14px;
+        background: var(--primary);
+        color: var(--primary-content);
+        font-weight: 500;
+        letter-spacing: 0.08em;
+      }
+      .where {
+        color: var(--text);
+        min-width: 150px;
+      }
+      .progress {
+        flex: 1;
+        display: flex;
+        gap: 4px;
+      }
+      .progress button {
+        flex: 1;
+        height: 18px;
+        position: relative;
+      }
+      .progress button::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 7px;
+        height: 4px;
+        border-radius: 2px;
+        background: var(--line);
+        transition: background-color 0.2s;
+      }
+      .progress button.done::before {
+        background: color-mix(in oklab, var(--primary) 45%, var(--line));
+      }
+      .progress button[aria-current="true"]::before {
+        background: var(--primary);
+      }
+      .progress button:hover::before {
+        background: var(--secondary);
+      }
+      .keys kbd {
+        padding: 1px 5px;
+        border: 1px solid var(--line-strong);
+        border-radius: 4px;
+        font-size: 11px;
+        color: var(--text);
+      }
+      .step {
+        padding: 3px 10px;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius-field);
+        color: var(--text);
+        transition: border-color 0.15s, background-color 0.15s;
+      }
+      .step:hover:not(:disabled) {
+        border-color: var(--primary);
+        background: var(--accent-soft);
+      }
+      .step:disabled {
+        opacity: 0.35;
+        cursor: default;
+      }
+
+      /* ---- slides ---- */
+      .stage {
+        position: relative;
+        overflow: hidden;
+      }
+      .slide {
+        position: absolute;
+        inset: 0;
+        padding: 28px 60px 24px;
+        display: flex;
+        flex-direction: column;
+        opacity: 0;
+        visibility: hidden;
+        transform: translateY(8px);
+        transition: opacity 0.3s var(--ease), transform 0.3s var(--ease),
+          visibility 0s 0.3s;
+      }
+      .slide.on {
+        opacity: 1;
+        visibility: visible;
+        transform: none;
+        transition-delay: 0s;
+      }
+      .slide > .body {
+        flex: 1;
+        min-height: 0;
+        margin-top: 22px;
+      }
+
+      /* slide heading: a shell comment above the console page title */
+      .kicker {
+        font: 500 13px var(--mono);
+        color: var(--accent);
+      }
+      .kicker::before {
+        content: "# ";
+        color: var(--faint);
+      }
+      .slide h2 {
+        width: fit-content;
+        margin-top: 2px;
+        font: italic 700 36px/1.15 var(--display);
+        letter-spacing: -0.025em;
+      }
+      .slide h2::after {
+        content: "";
+        display: block;
+        height: 3px;
+        margin-top: 6px;
+        border-radius: 2px;
+        background: linear-gradient(
+          90deg,
+          color-mix(in oklch, var(--secondary) 5%, transparent),
+          var(--secondary)
+        );
+      }
+      .lede {
+        font-size: 20px;
+        line-height: 1.5;
+        color: var(--muted);
+      }
+      .note {
+        font-size: 15.5px;
+        line-height: 1.5;
+        color: var(--muted);
+      }
+
+      /* layout helpers */
+      .cols {
+        display: grid;
+        grid-template-columns: repeat(var(--n, 2), minmax(0, 1fr));
+        gap: 16px;
+      }
+      .split {
+        display: grid;
+        grid-template-columns: var(--left, 1fr) var(--right, 1fr);
+        grid-template-rows: minmax(0, 1fr);
+        gap: 28px;
+      }
+      .stack {
+        display: flex;
+        flex-direction: column;
+        gap: var(--gap, 14px);
+        min-width: 0;
+      }
+      .center {
+        align-content: center;
+      }
+      .split.center {
+        align-items: center;
+      }
+      .mid {
+        justify-content: center;
+      }
+      .fill {
+        height: 100%;
+      }
+      .push {
+        margin-top: auto;
+      }
+
+      /* card: the console tile, with its brand hairline on the top edge */
+      .card {
+        position: relative;
+        padding: 18px 20px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-box);
+        background: var(--panel);
+        box-shadow: var(--shadow);
+        min-width: 0;
+      }
+      .card::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: 14px;
+        width: 45%;
+        height: 2px;
+        border-radius: 2px;
+        background: linear-gradient(
+          90deg,
+          var(--secondary),
+          color-mix(in oklch, var(--secondary) 5%, transparent)
+        );
+        opacity: 0.6;
+      }
+      .card h3 {
+        font: 700 20px/1.3 var(--display);
+        letter-spacing: -0.01em;
+      }
+      .card p {
+        margin-top: 6px;
+        font-size: 15.5px;
+        line-height: 1.5;
+        color: var(--muted);
+      }
+      .label {
+        font: 500 11px var(--mono);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--accent);
+      }
+      .card .label {
+        display: block;
+        margin-bottom: 6px;
+      }
+      .card.warn::before {
+        background: linear-gradient(90deg, var(--warn), transparent);
+      }
+      .card.warn .label {
+        color: var(--warn);
+      }
+
+      /* chips */
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px;
+      }
+      .chips .label {
+        margin-right: 6px;
+      }
+      .chip {
+        padding: 2px 9px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: var(--surface);
+        font: 500 12px var(--mono);
+        color: var(--muted);
+        white-space: nowrap;
+      }
+      .chip.on {
+        border-color: color-mix(in oklab, var(--primary) 50%, var(--line));
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+      .card .chips {
+        margin-top: 12px;
+      }
+
+      /* diff style lists: + for strengths, ! for trade-offs */
+      .marks {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+      .card .marks {
+        margin-top: 12px;
+      }
+      .marks li {
+        display: grid;
+        grid-template-columns: 24px 1fr;
+        column-gap: 10px;
+      }
+      .marks li::before {
+        content: "+";
+        grid-row: span 2;
+        width: 24px;
+        height: 24px;
+        display: grid;
+        place-items: center;
+        border-radius: 6px;
+        background: var(--accent-soft);
+        color: var(--accent);
+        font: 500 15px var(--mono);
+        margin-top: 1px;
+      }
+      .marks.warn li::before {
+        content: "!";
+        background: var(--warn-soft);
+        color: var(--warn);
+      }
+      .marks strong {
+        font: 700 18.5px/1.4 var(--display);
+      }
+      .marks span {
+        font-size: 15.5px;
+        line-height: 1.45;
+        color: var(--muted);
+      }
+
+      /* terminal */
+      .term {
+        border: 1px solid var(--term-line);
+        border-radius: var(--radius-box);
+        background: var(--term-bg);
+        color: var(--term-text);
+        box-shadow: var(--shadow);
+        overflow: hidden;
+        min-width: 0;
+      }
+      .term > header,
+      .file > header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 32px;
+        padding: 0 12px;
+        font: 12px var(--mono);
+      }
+      .term > header {
+        background: var(--term-head);
+        border-bottom: 1px solid var(--term-line);
+        color: var(--term-dim);
+      }
+      .term > header::before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--term-ok);
+        box-shadow: 0 0 0 3px
+          color-mix(in oklab, var(--term-ok) 22%, transparent);
+        margin-right: 2px;
+      }
+      .term pre,
+      .file pre {
+        padding: 13px 16px;
+        font-size: 14px;
+        line-height: 1.7;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .term .cmd {
+        color: #fff;
+        font-weight: 500;
+      }
+      .term .cmd::before {
+        content: "$ ";
+        color: var(--term-ok);
+      }
+      .term .dim {
+        color: var(--term-dim);
+      }
+      .term .ok {
+        color: var(--term-ok);
+      }
+      .cursor {
+        display: inline-block;
+        width: 8px;
+        height: 15px;
+        vertical-align: -2px;
+        background: var(--term-ok);
+        animation: blink 1.1s steps(2) infinite;
+      }
+      @keyframes blink {
+        50% {
+          opacity: 0;
+        }
+      }
+
+      /* source file */
+      .file {
+        display: flex;
+        flex-direction: column;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-box);
+        background: var(--panel);
+        box-shadow: var(--shadow);
+        overflow: hidden;
+        min-width: 0;
+      }
+      .file > header {
+        background: var(--surface);
+        border-bottom: 1px solid var(--line);
+        color: var(--text);
+        font-weight: 500;
+        justify-content: space-between;
+      }
+      .file {
+        min-height: 0;
+      }
+      .file pre {
+        flex: 1;
+        min-height: 0;
+        font-size: 13.5px;
+        line-height: 1.62;
+      }
+      /* a long file at a very small size, scrolled inside its card */
+      .file.tiny pre {
+        font-size: 9px;
+        line-height: 1.5;
+        overflow-y: scroll;
+      }
+      .file.tiny pre::-webkit-scrollbar {
+        width: 10px;
+      }
+      .file.tiny pre::-webkit-scrollbar-track {
+        background: var(--surface);
+        border-left: 1px solid var(--line);
+      }
+      .file.tiny pre::-webkit-scrollbar-thumb {
+        background: var(--line-strong);
+        border-radius: 5px;
+        border: 2px solid var(--surface);
+      }
+      .file.tiny pre::-webkit-scrollbar-thumb:hover {
+        background: var(--faint);
+      }
+      .file > footer {
+        padding: 9px 14px;
+        border-top: 1px solid var(--line);
+        background: var(--surface);
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .tc {
+        color: var(--code-com);
+      }
+      .ts {
+        color: var(--code-str);
+      }
+      .tf {
+        color: var(--code-fn);
+        font-weight: 500;
+      }
+      .tk {
+        color: var(--code-key);
+      }
+
+      /* flow diagrams */
+      .flow {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .node {
+        flex: none;
+        min-width: 112px;
+        padding: 9px 14px;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius-field);
+        background: var(--panel);
+        text-align: center;
+      }
+      .node strong {
+        display: block;
+        font: 700 16px/1.3 var(--display);
+      }
+      .node span {
+        display: block;
+        font: 11.5px/1.4 var(--mono);
+        color: var(--muted);
+        white-space: nowrap;
+      }
+      .node.main {
+        border-color: var(--primary);
+        background: var(--accent-soft);
+        box-shadow: 0 0 0 3px
+          color-mix(in oklab, var(--primary) 14%, transparent);
+      }
+      .node.ghost {
+        border-style: dashed;
+        background: none;
+      }
+      .arrow {
+        flex: 1;
+        min-width: 44px;
+        height: 2px;
+        position: relative;
+        background: var(--line-strong);
+      }
+      .arrow::after {
+        content: "";
+        position: absolute;
+        right: -1px;
+        top: -4px;
+        border: 5px solid transparent;
+        border-right: 0;
+        border-left-color: var(--line-strong);
+      }
+      .arrow::before {
+        content: attr(data-l);
+        position: absolute;
+        left: 0;
+        right: 4px;
+        bottom: 7px;
+        text-align: center;
+        font: 500 11px var(--mono);
+        color: var(--accent);
+        white-space: nowrap;
+      }
+      .lane {
+        padding: 14px 16px 16px;
+        border: 1px dashed var(--line-strong);
+        border-radius: var(--radius-box);
+        background: var(--surface);
+      }
+      .lane > .label {
+        display: block;
+        margin-bottom: 12px;
+      }
+
+      /* numbered pipeline */
+      .pipe {
+        counter-reset: n;
+      }
+      .pipe .card {
+        counter-increment: n;
+      }
+      .pipe .card .label::before {
+        content: counter(n, decimal-leading-zero) " ";
+        color: var(--faint);
+      }
+
+      /* cover */
+      .cover h1 {
+        font: 700 50px/1.08 var(--display);
+        letter-spacing: -0.035em;
+      }
+      .cover h1 em {
+        font-style: italic;
+        color: var(--accent);
+      }
+      .wordmark {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font: italic 700 34px var(--display);
+        letter-spacing: -0.02em;
+        color: var(--accent);
+      }
+      .wordmark img {
+        width: 64px;
+        height: 64px;
+      }
+      .links {
+        display: flex;
+        gap: 22px;
+        font: 13px var(--mono);
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 9px 16px;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius-field);
+        background: var(--panel);
+        font: 600 14px var(--sans);
+        color: var(--text);
+        text-decoration: none;
+        transition: border-color 0.15s, background-color 0.15s;
+      }
+      .btn:hover {
+        border-color: var(--primary);
+      }
+      .btn.primary {
+        background: var(--primary);
+        border-color: var(--primary);
+        color: var(--primary-content);
+      }
+      .btn.primary:hover {
+        background: color-mix(in oklab, var(--primary) 88%, #000);
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .slide {
+          transition: none;
+        }
+        .cursor {
+          animation: none;
+        }
+      }
+
+      /* phones: no scaling. The deck fills the screen, each slide is a single
+         column which scrolls, and the flow diagrams run top to bottom. */
+      @media (max-width: 700px) {
+        .deck {
+          position: fixed;
+          inset: 0;
+          width: auto;
+          height: auto;
+          transform: none !important;
+          grid-template-rows: 44px 1fr 40px;
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .bar {
+          gap: 8px;
+          padding: 0 10px;
+        }
+        .prompt {
+          font-size: 11px;
+        }
+        .prompt .ps,
+        .mode,
+        .keys {
+          display: none;
+        }
+        .status {
+          gap: 10px;
+          padding: 0 10px;
+        }
+        .where {
+          min-width: 0;
+          white-space: nowrap;
+        }
+        .slide {
+          padding: 20px 18px 28px;
+          overflow-y: auto;
+        }
+        .slide > .body {
+          flex: none;
+          margin-top: 16px;
+        }
+        .slide h2 {
+          font-size: 27px;
+        }
+        .lede {
+          font-size: 17px;
+        }
+        .cover h1 {
+          font-size: 34px;
+        }
+        .wordmark {
+          font-size: 26px;
+        }
+        .wordmark img {
+          width: 46px;
+          height: 46px;
+        }
+        .links {
+          flex-direction: column;
+          gap: 6px;
+        }
+        .cols,
+        .split {
+          grid-template-columns: minmax(0, 1fr);
+          grid-template-rows: auto;
+          gap: 12px;
+        }
+        .fill {
+          height: auto;
+        }
+        .card {
+          padding: 14px 16px;
+        }
+        .card h3 {
+          font-size: 18px;
+        }
+        .card p,
+        .note,
+        .marks span {
+          font-size: 15px;
+        }
+        .marks strong {
+          font-size: 17px;
+        }
+        .term pre {
+          padding: 11px 12px;
+          font-size: 12px;
+        }
+        .file pre {
+          font-size: 11.5px;
+          overflow-x: auto;
+          white-space: pre;
+        }
+        .file.tiny pre {
+          max-height: 320px;
+        }
+        .flow {
+          flex-direction: column;
+          align-items: stretch;
+          gap: 6px;
+        }
+        .node {
+          min-width: 0;
+        }
+        .arrow {
+          flex: none;
+          align-self: center;
+          width: 2px;
+          min-width: 0;
+          height: 22px;
+        }
+        .arrow::after {
+          left: -4px;
+          right: auto;
+          top: auto;
+          bottom: -1px;
+          border: 5px solid transparent;
+          border-bottom: 0;
+          border-top-color: var(--line-strong);
+        }
+        .arrow::before {
+          left: 10px;
+          right: auto;
+          bottom: 3px;
+        }
+      }
+
+      /* print: one slide per page, without the window chrome */
+      @page {
+        size: 1280px 636px;
+        margin: 0;
+      }
+      @media print {
+        /* beats the dark theme's own --shadow */
+        :root:root {
+          --shadow: none;
+        }
+        html,
+        body {
+          height: auto;
+          overflow: visible;
+        }
+        body {
+          -webkit-print-color-adjust: exact;
+          print-color-adjust: exact;
+        }
+        .deck {
+          position: static;
+          display: block;
+          height: auto;
+          transform: none !important;
+        }
+        .bar,
+        .status {
+          display: none;
+        }
+        .slide {
+          position: relative;
+          height: 636px;
+          opacity: 1;
+          visibility: visible;
+          transform: none;
+          break-after: page;
+        }
+        .cursor {
+          animation: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="deck" id="deck">
+      <header class="bar">
+        <a
+          class="brand"
+          href="https://openrun.dev/"
+          target="_blank"
+          rel="noopener"
+          ><img src="/favicon.svg" alt="" />OpenRun</a
+        >
+        <div class="prompt" aria-hidden="true">
+          <span class="ps">~/openrun $</span> openrun intro --slide
+          <span class="arg" id="arg"></span>
+        </div>
+        <button
+          class="tool"
+          id="themeBtn"
+          title="Switch theme (t)"
+          aria-label="Switch between light and dark theme">
+          <svg class="i-moon" viewBox="0 0 24 24">
+            <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
+          </svg>
+          <svg class="i-sun" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="4.5" />
+            <path
+              d="M12 2v2.5M12 19.5V22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M2 12h2.5M19.5 12H22M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8" />
+          </svg>
+        </button>
+        <button
+          class="tool"
+          id="fullBtn"
+          title="Full screen (f)"
+          aria-label="Toggle full screen">
+          <svg viewBox="0 0 24 24">
+            <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />
+          </svg>
+        </button>
+      </header>
+
+      <main class="stage" id="stage">
+        <section class="slide cover" data-name="cover">
+          <div class="split center fill" style="--left: 1.05fr; --right: 1fr">
+            <div class="stack" style="--gap: 22px">
+              <div class="wordmark">
+                <img src="/favicon.svg" alt="" />OpenRun
+              </div>
+              <h1>
+                Self-hosted GitOps for <em>web apps</em> and
+                <em>internal tools</em>
+              </h1>
+              <p class="lede">
+                Deploy to Docker, Podman or Kubernetes from one declarative
+                config in Git. Single sign-on, access control, audit logs, TLS
+                and scale-to-zero are built in.
+              </p>
+              <div class="chips">
+                <span class="chip on">open source</span
+                ><span class="chip on">Apache-2.0</span
+                ><span class="chip">single binary</span
+                ><span class="chip">docker</span><span class="chip">podman</span
+                ><span class="chip">kubernetes</span>
+              </div>
+            </div>
+            <div class="stack" style="--gap: 18px">
+              <div class="term">
+                <header>bash</header>
+                <pre><span class="dim"># install and start the server</span>
+<span class="cmd">curl -sSL https://openrun.dev/install.sh | sh</span>
+<span class="cmd">openrun server start &amp;</span>
+
+<span class="dim"># deploy every app declared in a Git repo</span>
+<span class="cmd">openrun sync schedule --approve --promote \
+    github.com/openrundev/openrun/examples/utils.star</span>
+<span class="ok">$</span> <span class="cursor"></span></pre>
+              </div>
+              <div class="links">
+                <a href="https://openrun.dev/" target="_blank" rel="noopener"
+                  >openrun.dev</a
+                >
+                <a
+                  href="https://github.com/openrundev/openrun"
+                  target="_blank"
+                  rel="noopener"
+                  >github.com/openrundev/openrun</a
+                >
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="slide" data-name="what">
+          <p class="kicker">introduction</p>
+          <h2>What is OpenRun?</h2>
+          <div class="body split center" style="--left: .8fr; --right: 1.2fr">
+            <div class="stack" style="--gap: 20px">
+              <p class="lede">
+                A platform for deploying web apps on your own infrastructure.
+                Teams use it to run internal tools with
+                <b>login, access control and auditing</b> on every app.
+              </p>
+              <div class="stack" style="--gap: 8px">
+                <span class="label">runs on</span>
+                <div class="chips">
+                  <span class="chip on">docker</span
+                  ><span class="chip on">podman</span
+                  ><span class="chip on">kubernetes</span>
+                </div>
+                <span class="label" style="margin-top: 8px"
+                  >managed through</span
+                >
+                <div class="chips">
+                  <span class="chip on">git</span><span class="chip">cli</span
+                  ><span class="chip">web console</span
+                  ><span class="chip">rest api</span
+                  ><span class="chip">mcp</span>
+                </div>
+              </div>
+            </div>
+            <div class="cols">
+              <div class="card">
+                <span class="label">open source</span>
+                <h3>Self-hosted</h3>
+                <p>
+                  An alternative to Google Cloud Run and Heroku that runs on
+                  your own servers, inside your network.
+                </p>
+              </div>
+              <div class="card">
+                <span class="label">gitops</span>
+                <h3>Declarative</h3>
+                <p>
+                  Apps are created, configured and promoted by editing a config
+                  file in Git. OpenRun reconciles the rest.
+                </p>
+              </div>
+              <div class="card">
+                <span class="label">operations</span>
+                <h3>One binary</h3>
+                <p>
+                  Web server, TLS, routing, auth and deployment in a single Go
+                  binary. No separate proxy or CI/CD system.
+                </p>
+              </div>
+              <div class="card">
+                <span class="label">scope</span>
+                <h3>Focused</h3>
+                <p>
+                  Built for web apps and internal tools. A small surface keeps
+                  the platform simple to run and to learn.
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="slide" data-name="features">
+          <p class="kicker">platform overview</p>
+          <h2>Key features</h2>
+          <div class="body cols center" style="--n: 4">
+            <div class="card">
+              <span class="label">gitops</span>
+              <h3>Declarative deploys</h3>
+              <p>
+                Create, configure and promote apps by editing one file in Git.
+                No UI clicks, no deploy scripts.
+              </p>
+            </div>
+            <div class="card">
+              <span class="label">auth</span>
+              <h3>SSO and RBAC</h3>
+              <p>
+                OAuth, OIDC, SAML or client certificates in front of any app,
+                with role-based access. No app code changes.
+              </p>
+            </div>
+            <div class="card">
+              <span class="label">bindings</span>
+              <h3>Service bindings</h3>
+              <p>
+                Each app gets its own database account. PostgreSQL, MySQL,
+                SQLite and Redis are built in, more through providers.
+              </p>
+            </div>
+            <div class="card">
+              <span class="label">scale</span>
+              <h3>Scale to zero</h3>
+              <p>
+                Idle app containers stop and start again on the next request.
+                Run many apps on small hardware.
+              </p>
+            </div>
+            <div class="card">
+              <span class="label">releases</span>
+              <h3>Staged releases</h3>
+              <p>
+                Changes land in a staging environment first, then promote to
+                production with a blue-green switch.
+              </p>
+            </div>
+            <div class="card">
+              <span class="label">storage</span>
+              <h3>Durable SQLite</h3>
+              <p>
+                SQLite volumes replicate continuously with Litestream to
+                S3-compatible storage and restore after node loss.
+              </p>
+            </div>
+            <div class="card">
+              <span class="label">actions</span>
+              <h3>Actions and MCP</h3>
+              <p>
+                Generated forms for backend operations. Actions also run from
+                the CLI and are served as MCP tools.
+              </p>
+            </div>
+            <div class="card">
+              <span class="label">audit</span>
+              <h3>Audit and telemetry</h3>
+              <p>
+                Every operation and API call is recorded as an audit event.
+                Traces and metrics export over OpenTelemetry.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section class="slide" data-name="architecture">
+          <p class="kicker">system design</p>
+          <h2>How it works</h2>
+          <div class="body stack mid" style="--gap: 18px">
+            <div class="lane">
+              <span class="label">deploy: from git to a running app</span>
+              <div class="flow">
+                <div class="node">
+                  <strong>Developer</strong><span>code + config</span>
+                </div>
+                <i class="arrow" data-l="push"></i>
+                <div class="node">
+                  <strong>Git repo</strong><span>source of truth</span>
+                </div>
+                <i class="arrow" data-l="sync"></i>
+                <div class="node main">
+                  <strong>OpenRun server</strong><span>reconcile + build</span>
+                </div>
+                <i class="arrow" data-l="deploy"></i>
+                <div class="node">
+                  <strong>Container runtime</strong
+                  ><span>docker / podman / k8s</span>
+                </div>
+                <i class="arrow" data-l="start"></i>
+                <div class="node">
+                  <strong>App</strong><span>container</span>
+                </div>
+              </div>
+            </div>
+            <div class="lane">
+              <span class="label"
+                >serve: every request passes through the server</span
+              >
+              <div class="flow">
+                <div class="node">
+                  <strong>App user</strong><span>browser / api / mcp</span>
+                </div>
+                <i class="arrow" data-l="https"></i>
+                <div class="node main">
+                  <strong>TLS + routing</strong><span>domain or path</span>
+                </div>
+                <i class="arrow"></i>
+                <div class="node main">
+                  <strong>Auth + RBAC</strong><span>oauth / oidc / saml</span>
+                </div>
+                <i class="arrow" data-l="audit"></i>
+                <div class="node main">
+                  <strong>Proxy</strong><span>starts idle apps</span>
+                </div>
+                <i class="arrow"></i>
+                <div class="node">
+                  <strong>App</strong><span>container</span>
+                </div>
+              </div>
+            </div>
+            <div class="cols" style="--n: 3">
+              <div class="card">
+                <h3>One Go binary</h3>
+                <p>
+                  The same process reconciles state from Git and routes incoming
+                  requests.
+                </p>
+              </div>
+              <div class="card">
+                <h3>Small footprint</h3>
+                <p>
+                  A single node uses an embedded SQLite database for metadata.
+                  Kubernetes uses Postgres.
+                </p>
+              </div>
+              <div class="card">
+                <h3>Security at the platform</h3>
+                <p>
+                  Login, access rules and audit events are handled before a
+                  request reaches the app.
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="slide" data-name="kubernetes">
+          <p class="kicker">kubernetes deployment</p>
+          <h2>OpenRun on Kubernetes</h2>
+          <div class="body split center" style="--left: 1.2fr; --right: 1fr">
+            <div class="stack">
+              <div class="lane">
+                <span class="label">kubernetes cluster</span>
+                <div class="flow">
+                  <div class="node ghost">
+                    <strong>Requests</strong><span>ingress / lb</span>
+                  </div>
+                  <i class="arrow"></i>
+                  <div class="node main">
+                    <strong>OpenRun server</strong
+                    ><span>deployment + service</span>
+                  </div>
+                  <i class="arrow" data-l="route"></i>
+                  <div class="stack" style="--gap: 10px">
+                    <div class="node">
+                      <strong>App 1</strong><span>deployment + service</span>
+                    </div>
+                    <div class="node">
+                      <strong>App 2</strong><span>deployment + service</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="cols">
+                <div class="node ghost">
+                  <strong>Postgres</strong><span>metadata, external</span>
+                </div>
+                <div class="node ghost">
+                  <strong>Container registry</strong
+                  ><span>app images, external</span>
+                </div>
+              </div>
+            </div>
+            <div class="stack">
+              <div class="card">
+                <span class="label">components</span>
+                <h3>A standard Helm install</h3>
+                <p>
+                  OpenRun runs as a Deployment with a Service. It uses Postgres
+                  for metadata and a registry for the images it builds.
+                </p>
+              </div>
+              <div class="card">
+                <span class="label">routing</span>
+                <h3>No per-app Ingress</h3>
+                <p>
+                  Requests reach the OpenRun server, which routes to each app
+                  through its ClusterIP Service.
+                </p>
+              </div>
+              <div class="card">
+                <span class="label">reconcile</span>
+                <h3>Lazy creation, server-side apply</h3>
+                <p>
+                  App resources are created on the first request and updated
+                  with Kubernetes server-side apply.
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="slide" data-name="install">
+          <p class="kicker">getting started</p>
+          <h2>Three ways to install</h2>
+          <div class="body stack mid" style="--gap: 16px">
+            <div class="split center" style="--left: 330px; --right: 1fr">
+              <div>
+                <span class="label">a / single node</span>
+                <p class="note">
+                  Linux, macOS or Windows with Docker or Podman. The quickest
+                  way to start.
+                </p>
+              </div>
+              <div class="term">
+                <pre><span class="cmd">curl -sSL https://openrun.dev/install.sh | sh</span>   <span class="dim"># or: brew install openrun</span>
+<span class="cmd">openrun server start &amp;</span></pre>
+              </div>
+            </div>
+            <div class="split center" style="--left: 330px; --right: 1fr">
+              <div>
+                <span class="label">b / kubernetes</span>
+                <p class="note">
+                  A Helm chart for an existing cluster. Apps scale across nodes
+                  with the same config.
+                </p>
+              </div>
+              <div class="term">
+                <pre><span class="cmd">helm repo add openrun https://openrundev.github.io/openrun-helm-charts/</span>
+<span class="cmd">helm install openrun1 openrun/openrun \
+    --namespace openrun --create-namespace --set registry.enabled=true</span></pre>
+              </div>
+            </div>
+            <div class="split center" style="--left: 330px; --right: 1fr">
+              <div>
+                <span class="label">c / terraform on aws</span>
+                <p class="note">
+                  Creates an EKS cluster, an RDS database and an ECR registry,
+                  then installs OpenRun.
+                </p>
+              </div>
+              <div class="term">
+                <pre><span class="cmd">cd openrun/deploy/terraform</span>
+<span class="cmd">terraform init &amp;&amp; terraform apply --var-file terraform.tfvars</span></pre>
+              </div>
+            </div>
+            <p class="note">
+              <span class="label">note</span>&nbsp; For production on
+              Kubernetes, use an external Postgres database and container
+              registry.
+            </p>
+          </div>
+        </section>
+
+        <section class="slide" data-name="gitops">
+          <p class="kicker">deployment workflow</p>
+          <h2>GitOps in one command</h2>
+          <div class="body stack mid" style="--gap: 18px">
+            <div class="split center" style="--left: 1.35fr; --right: 1fr">
+              <div class="term">
+                <header>bash</header>
+                <pre><span class="cmd">openrun sync schedule --approve --promote \
+    github.com/openrundev/openrun/examples/utils.star</span></pre>
+              </div>
+              <ul class="stack note" style="--gap: 8px">
+                <li>
+                  <span class="chip on">--approve</span>&nbsp; accept the
+                  permissions each app asks for
+                </li>
+                <li>
+                  <span class="chip on">--promote</span>&nbsp; move staged
+                  changes to production
+                </li>
+                <li>
+                  After this, a commit to the repo is the only deploy step.
+                </li>
+              </ul>
+            </div>
+            <span class="label">what the scheduled sync does</span>
+            <div class="cols pipe" style="--n: 5; gap: 12px">
+              <div class="card">
+                <span class="label">watch</span>
+                <h3>Poll the repo</h3>
+                <p>Checks the Git URL for new commits to config or source.</p>
+              </div>
+              <div class="card">
+                <span class="label">read</span>
+                <h3>Load config</h3>
+                <p>Reads the app declarations and fetches each app's source.</p>
+              </div>
+              <div class="card">
+                <span class="label">build</span>
+                <h3>Build images</h3>
+                <p>Builds from an AppSpec or the app's own Dockerfile.</p>
+              </div>
+              <div class="card">
+                <span class="label">deploy</span>
+                <h3>Apply changes</h3>
+                <p>
+                  Creates new apps and updates existing ones, staging first.
+                </p>
+              </div>
+              <div class="card">
+                <span class="label">secure</span>
+                <h3>Enforce policy</h3>
+                <p>
+                  Applies the configured login, access rules and audit logging.
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="slide" data-name="config">
+          <p class="kicker">simplicity first</p>
+          <h2>The whole config, side by side</h2>
+          <div
+            class="body split"
+            style="--left: 1.25fr; --right: 1fr; gap: 18px">
+            <div class="file">
+              <header>
+                apps.star <span class="chip on">openrun / starlark</span>
+              </header>
+              <pre><span class="tc"># Resource limits (optional)</span>
+limits = {<span class="ts">"cpus"</span>: <span class="ts">"1"</span>, <span class="ts">"memory"</span>: <span class="ts">"512m"</span>}
+
+<span class="tc"># A Streamlit app, served at /misc/streamlit_example</span>
+<span class="tf">app</span>(path=<span class="ts">"/misc/streamlit_example"</span>,
+    source=<span class="ts">"github.com/streamlit/streamlit-example"</span>,
+    git_branch=<span class="ts">"master"</span>, spec=<span class="ts">"python-streamlit"</span>,
+    container_opts=limits)
+
+<span class="tc"># A FastHTML app, served at the fasthtml subdomain</span>
+<span class="tf">app</span>(path=<span class="ts">"fasthtml.:"</span>,
+    source=<span class="ts">"github.com/AnswerDotAI/fasthtml/examples"</span>,
+    spec=<span class="ts">"python-fasthtml"</span>,
+    params={<span class="ts">"APP_MODULE"</span>: <span class="ts">"basic_ws:app"</span>},
+    container_opts=limits)</pre>
+              <footer>
+                <b>Complete</b> for two apps: where the source is, how to build
+                it, how to route to it and what limits to set.
+              </footer>
+            </div>
+            <div class="file tiny">
+              <header>
+                app.yaml
+                <span class="chip">kubernetes / yaml, 94 lines, scroll</span>
+              </header>
+              <pre
+                tabindex="0"><span class="tc"># Deployment: runs the app container</span>
+<span class="tk">apiVersion</span>: apps/v1
+<span class="tk">kind</span>: Deployment
+<span class="tk">metadata</span>:
+  <span class="tk">name</span>: streamlit-app
+  <span class="tk">namespace</span>: apps
+  <span class="tk">labels</span>:
+    <span class="tk">app</span>: streamlit
+<span class="tk">spec</span>:
+  <span class="tk">replicas</span>: 1
+  <span class="tk">selector</span>:
+    <span class="tk">matchLabels</span>:
+      <span class="tk">app</span>: streamlit
+  <span class="tk">template</span>:
+    <span class="tk">metadata</span>:
+      <span class="tk">labels</span>:
+        <span class="tk">app</span>: streamlit
+    <span class="tk">spec</span>:
+      <span class="tk">containers</span>:
+        - <span class="tk">name</span>: streamlit
+          <span class="tk">image</span>: registry.example.com/apps/streamlit-example:1.0.0
+          <span class="tk">ports</span>:
+            - <span class="tk">containerPort</span>: 8501
+          <span class="tk">resources</span>:
+            <span class="tk">limits</span>:
+              <span class="tk">cpu</span>: <span class="ts">"1"</span>
+              <span class="tk">memory</span>: 512Mi
+          <span class="tk">readinessProbe</span>:
+            <span class="tk">httpGet</span>:
+              <span class="tk">path</span>: /_stcore/health
+              <span class="tk">port</span>: 8501
+          <span class="tk">livenessProbe</span>:
+            <span class="tk">httpGet</span>:
+              <span class="tk">path</span>: /_stcore/health
+              <span class="tk">port</span>: 8501
+<span class="tc">---</span>
+<span class="tc"># Service: stable address for the pods</span>
+<span class="tk">apiVersion</span>: v1
+<span class="tk">kind</span>: Service
+<span class="tk">metadata</span>:
+  <span class="tk">name</span>: streamlit-app
+  <span class="tk">namespace</span>: apps
+<span class="tk">spec</span>:
+  <span class="tk">selector</span>:
+    <span class="tk">app</span>: streamlit
+  <span class="tk">ports</span>:
+    - <span class="tk">port</span>: 80
+      <span class="tk">targetPort</span>: 8501
+<span class="tc">---</span>
+<span class="tc"># Ingress: domain routing and TLS (needs cert-manager)</span>
+<span class="tk">apiVersion</span>: networking.k8s.io/v1
+<span class="tk">kind</span>: Ingress
+<span class="tk">metadata</span>:
+  <span class="tk">name</span>: streamlit-app
+  <span class="tk">namespace</span>: apps
+  <span class="tk">annotations</span>:
+    <span class="tk">cert-manager.io/cluster-issuer</span>: letsencrypt
+<span class="tk">spec</span>:
+  <span class="tk">ingressClassName</span>: nginx
+  <span class="tk">tls</span>:
+    - <span class="tk">hosts</span>:
+        - streamlit.example.com
+      <span class="tk">secretName</span>: streamlit-app-tls
+  <span class="tk">rules</span>:
+    - <span class="tk">host</span>: streamlit.example.com
+      <span class="tk">http</span>:
+        <span class="tk">paths</span>:
+          - <span class="tk">path</span>: /
+            <span class="tk">pathType</span>: Prefix
+            <span class="tk">backend</span>:
+              <span class="tk">service</span>:
+                <span class="tk">name</span>: streamlit-app
+                <span class="tk">port</span>:
+                  <span class="tk">number</span>: 80
+<span class="tc">---</span>
+<span class="tc"># Argo CD Application: sync the manifests from Git</span>
+<span class="tk">apiVersion</span>: argoproj.io/v1alpha1
+<span class="tk">kind</span>: Application
+<span class="tk">metadata</span>:
+  <span class="tk">name</span>: streamlit-app
+  <span class="tk">namespace</span>: argocd
+<span class="tk">spec</span>:
+  <span class="tk">project</span>: default
+  <span class="tk">source</span>:
+    <span class="tk">repoURL</span>: https://github.com/example/deploy-config
+    <span class="tk">targetRevision</span>: main
+    <span class="tk">path</span>: apps/streamlit
+  <span class="tk">destination</span>:
+    <span class="tk">server</span>: https://kubernetes.default.svc
+    <span class="tk">namespace</span>: apps
+  <span class="tk">syncPolicy</span>:
+    <span class="tk">automated</span>:
+      <span class="tk">prune</span>: true
+      <span class="tk">selfHeal</span>: true</pre>
+              <footer>
+                <b>One app</b>, without RBAC or auditing. Argo CD, an IDP, SSO,
+                cert-manager and a CI image build also need to be configured.
+              </footer>
+            </div>
+          </div>
+        </section>
+
+        <section class="slide" data-name="vs-cloud">
+          <p class="kicker">comparison</p>
+          <h2>OpenRun and managed cloud services</h2>
+          <div class="body stack">
+            <div class="chips">
+              <span class="label">compared with</span
+              ><span class="chip">Google Cloud Run</span
+              ><span class="chip">AWS App Runner</span>
+            </div>
+            <div
+              class="split"
+              style="--left: 1.1fr; --right: 1fr; gap: 16px; flex: 1">
+              <div class="card">
+                <span class="label">where openrun is stronger</span>
+                <ul class="marks">
+                  <li>
+                    <strong>Your network, your data</strong
+                    ><span
+                      >Runs on your own hardware or VPC, so network policy and
+                      data location stay under your control.</span
+                    >
+                  </li>
+                  <li>
+                    <strong>Predictable cost</strong
+                    ><span
+                      >No per-request billing. Busy apps and custom hardware run
+                      on capacity you already pay for.</span
+                    >
+                  </li>
+                  <li>
+                    <strong>Login without IAM plumbing</strong
+                    ><span
+                      >Add SSO and role-based access to any app through config,
+                      with no sidecars or app changes.</span
+                    >
+                  </li>
+                  <li>
+                    <strong>Everything in Git</strong
+                    ><span
+                      >The deployment setup is versioned and reviewable, not
+                      spread across cloud console settings.</span
+                    >
+                  </li>
+                </ul>
+              </div>
+              <div class="card warn">
+                <span class="label">trade-offs</span>
+                <ul class="marks warn">
+                  <li>
+                    <strong>You run the infrastructure</strong
+                    ><span
+                      >Hardware, OS updates and uptime are yours. There is no
+                      provider SLA underneath.</span
+                    >
+                  </li>
+                  <li>
+                    <strong>No global edge</strong
+                    ><span
+                      >Multi-region failover and a worldwide CDN need to be set
+                      up separately.</span
+                    >
+                  </li>
+                  <li>
+                    <strong>Fewer managed services</strong
+                    ><span
+                      >Service bindings cover databases. Queues and other cloud
+                      services are integrated by you.</span
+                    >
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="slide" data-name="vs-kubernetes">
+          <p class="kicker">comparison</p>
+          <h2>OpenRun and a DIY Kubernetes stack</h2>
+          <div class="body stack">
+            <div class="chips">
+              <span class="label">compared with</span
+              ><span class="chip">Argo CD / Flux</span
+              ><span class="chip">cert-manager</span
+              ><span class="chip">identity proxy</span
+              ><span class="chip">CI pipelines</span
+              ><span class="chip">Helm charts</span>
+            </div>
+            <div
+              class="split"
+              style="--left: 1.1fr; --right: 1fr; gap: 16px; flex: 1">
+              <div class="card">
+                <span class="label">where openrun is stronger</span>
+                <ul class="marks">
+                  <li>
+                    <strong>One platform layer</strong
+                    ><span
+                      >GitOps, image builds, TLS and SSO come in one tool, in
+                      place of several you integrate yourself.</span
+                    >
+                  </li>
+                  <li>
+                    <strong>Simple config for developers</strong
+                    ><span
+                      >A few lines of declarative config per app, with no
+                      Kubernetes YAML or Helm charts to write.</span
+                    >
+                  </li>
+                  <li>
+                    <strong>Start small, grow later</strong
+                    ><span
+                      >Run on one node with Docker or Podman, then move to
+                      Kubernetes with the same config.</span
+                    >
+                  </li>
+                  <li>
+                    <strong>Ready on day one</strong
+                    ><span
+                      >Auth, scale-to-zero and staged releases work without
+                      building an internal developer platform.</span
+                    >
+                  </li>
+                </ul>
+              </div>
+              <div class="card warn">
+                <span class="label">trade-offs</span>
+                <ul class="marks warn">
+                  <li>
+                    <strong>Advanced networking</strong
+                    ><span
+                      >A service mesh or multi-cluster networking calls for a
+                      custom Kubernetes setup.</span
+                    >
+                  </li>
+                  <li>
+                    <strong>Custom operators</strong
+                    ><span
+                      >Apps that depend on operators and CRDs for their logic
+                      are a better fit for raw Kubernetes.</span
+                    >
+                  </li>
+                  <li>
+                    <strong>Fine-grained scheduling</strong
+                    ><span
+                      >Node affinity, taints and anti-affinity rules are not
+                      exposed in the simplified config.</span
+                    >
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="slide" data-name="teams">
+          <p class="kicker">use cases</p>
+          <h2>For teams</h2>
+          <div class="body cols center">
+            <div class="card">
+              <span class="label">apps</span>
+              <h3>Internal web apps</h3>
+              <p>
+                Data science and tools teams deploy framework apps with little
+                or no config. No infrastructure setup per app.
+              </p>
+              <div class="chips">
+                <span class="chip">Streamlit</span
+                ><span class="chip">Gradio</span
+                ><span class="chip">FastHTML</span
+                ><span class="chip">NiceGUI</span
+                ><span class="chip">FastAPI</span>
+              </div>
+            </div>
+            <div class="card">
+              <span class="label">ops</span>
+              <h3>Operations automation</h3>
+              <p>
+                Replace Jenkins or Rundeck jobs with OpenRun Actions: scripts,
+                maintenance tasks and runbooks behind a generated form.
+              </p>
+              <div class="chips">
+                <span class="chip">runbooks</span
+                ><span class="chip">maintenance</span
+                ><span class="chip">provisioning</span>
+              </div>
+            </div>
+            <div class="card">
+              <span class="label">apis</span>
+              <h3>Secure internal APIs</h3>
+              <p>
+                Put login and audit logging in front of internal REST APIs and
+                MCP servers without changing their code.
+              </p>
+              <div class="chips">
+                <span class="chip">OAuth</span
+                ><span class="chip">OIDC / SAML</span
+                ><span class="chip">audit events</span>
+              </div>
+            </div>
+            <div class="card">
+              <span class="label">process</span>
+              <h3>One way to deploy</h3>
+              <p>
+                Every team deploys through the same Git repo, so each change has
+                history and goes through review.
+              </p>
+              <div class="chips">
+                <span class="chip">pull requests</span
+                ><span class="chip">version history</span
+                ><span class="chip">staging</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="slide" data-name="individuals">
+          <p class="kicker">use cases</p>
+          <h2>For individual developers</h2>
+          <div class="body cols center">
+            <div class="card">
+              <span class="label">dev</span>
+              <h3>Local development</h3>
+              <p>
+                Run the same config on a laptop that runs in production. No
+                Docker Compose files or manual networking.
+              </p>
+              <div class="chips">
+                <span class="chip">localhost</span
+                ><span class="chip">dev/prod parity</span>
+              </div>
+            </div>
+            <div class="card">
+              <span class="label">share</span>
+              <h3>Share apps safely</h3>
+              <p>
+                Host apps for friends and family. Add a login to a hobby or
+                AI-generated app without writing auth code.
+              </p>
+              <div class="chips">
+                <span class="chip">OAuth login</span
+                ><span class="chip">side projects</span>
+              </div>
+            </div>
+            <div class="card">
+              <span class="label">homelab</span>
+              <h3>Efficient homelab</h3>
+              <p>
+                Idle apps stop until the next request, which suits a Raspberry
+                Pi or older hardware running many services.
+              </p>
+              <div class="chips">
+                <span class="chip">scale to zero</span
+                ><span class="chip">Raspberry Pi</span>
+              </div>
+            </div>
+            <div class="card">
+              <span class="label">learn</span>
+              <h3>Learn GitOps</h3>
+              <p>
+                Work with declarative deploys and reconciliation hands-on,
+                without learning Kubernetes first.
+              </p>
+              <div class="chips">
+                <span class="chip">declarative</span
+                ><span class="chip">reconciliation</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="slide" data-name="start">
+          <p class="kicker">summary</p>
+          <h2>Get started</h2>
+          <div class="body split center" style="--left: 1fr; --right: 1.1fr">
+            <div class="card">
+              <span class="label">openrun is a good fit when</span>
+              <ul class="marks">
+                <li>
+                  <strong>You want cloud simplicity on your own hardware</strong
+                  ><span
+                    >Containers that build, route and scale to zero, on a server
+                    or VPS you control.</span
+                  >
+                </li>
+                <li>
+                  <strong>You prefer config in Git</strong
+                  ><span
+                    >Apps and their settings are declared in a repo and changed
+                    through commits.</span
+                  >
+                </li>
+                <li>
+                  <strong>Your apps need login and access control</strong
+                  ><span
+                    >SSO, RBAC and audit logs for every internal tool, without
+                    per-app work.</span
+                  >
+                </li>
+              </ul>
+            </div>
+            <div class="stack" style="--gap: 16px">
+              <div class="term">
+                <header>bash</header>
+                <pre><span class="dim"># 1. install and start</span>
+<span class="cmd">curl -sSL https://openrun.dev/install.sh | sh</span>
+<span class="cmd">openrun server start &amp;</span>
+<span class="dim"># 2. sync apps from a Git repo</span>
+<span class="cmd">openrun sync schedule --approve --promote \
+    github.com/openrundev/openrun/examples/utils.star</span>
+<span class="dim"># 3. see what is running</span>
+<span class="cmd">openrun app list</span></pre>
+              </div>
+              <div class="chips" style="gap: 10px">
+                <a
+                  class="btn primary"
+                  href="https://openrun.dev/docs/quickstart/"
+                  target="_blank"
+                  rel="noopener"
+                  >Quick start</a
+                >
+                <a
+                  class="btn"
+                  href="https://github.com/openrundev/openrun"
+                  target="_blank"
+                  rel="noopener"
+                  >Star on GitHub</a
+                >
+                <a
+                  class="btn"
+                  href="https://openrun.dev/console-tour/"
+                  target="_blank"
+                  rel="noopener"
+                  >Console tour</a
+                >
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="status">
+        <span class="mode">INTRO</span>
+        <span class="where" id="where"></span>
+        <nav class="progress" id="progress" aria-label="Slides"></nav>
+        <span class="keys" aria-hidden="true"
+          ><kbd>&larr;</kbd> <kbd>&rarr;</kbd> move &nbsp;<kbd>t</kbd>
+          theme</span
+        >
+        <button class="step" id="prevBtn" aria-label="Previous slide">
+          &larr; prev
+        </button>
+        <button class="step" id="nextBtn" aria-label="Next slide">
+          next &rarr;
+        </button>
+      </footer>
+    </div>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const deck = $("deck");
+      const slides = [...document.querySelectorAll(".slide")];
+      const names = slides.map((s) => s.dataset.name);
+      const pad = (n) => String(n).padStart(2, "0");
+      let index = 0;
+
+      /* progress segments, one per slide */
+      const dots = slides.map((s, i) => {
+        const b = document.createElement("button");
+        b.title = `${pad(i + 1)} ${names[i]}`;
+        b.setAttribute("aria-label", `Slide ${i + 1}: ${names[i]}`);
+        b.addEventListener("click", () => show(i));
+        $("progress").appendChild(b);
+        return b;
+      });
+
+      function show(i, replace = true) {
+        index = Math.max(0, Math.min(slides.length - 1, i));
+        slides.forEach((s, n) => {
+          s.classList.toggle("on", n === index);
+          s.setAttribute("aria-hidden", n !== index);
+        });
+        dots.forEach((d, n) => {
+          d.classList.toggle("done", n < index);
+          d.setAttribute("aria-current", n === index);
+        });
+        $("arg").textContent = names[index];
+        $("where").textContent = `${pad(index + 1)}/${pad(slides.length)} ${
+          names[index]
+        }`;
+        $("prevBtn").disabled = index === 0;
+        $("nextBtn").disabled = index === slides.length - 1;
+        slides[index].scrollTop = 0;
+        if (replace) history.replaceState(null, "", "#" + names[index]);
+      }
+
+      /* #name or #number selects a slide */
+      function fromHash() {
+        const h = decodeURIComponent(location.hash.slice(1));
+        const i = names.indexOf(h);
+        return i >= 0 ? i : Math.max(0, (parseInt(h, 10) || 1) - 1);
+      }
+
+      function fit() {
+        const s = Math.min(innerWidth / 1280, innerHeight / 720);
+        deck.style.transform = `translate(${(innerWidth - 1280 * s) / 2}px, ${
+          (innerHeight - 720 * s) / 2
+        }px) scale(${s})`;
+      }
+
+      function fullscreen() {
+        if (document.fullscreenElement) document.exitFullscreen();
+        else document.documentElement.requestFullscreen?.().catch(() => {});
+      }
+
+      $("prevBtn").addEventListener("click", () => show(index - 1));
+      $("nextBtn").addEventListener("click", () => show(index + 1));
+      $("themeBtn").addEventListener("click", () => theme.toggle());
+      $("fullBtn").addEventListener("click", fullscreen);
+      if (!document.fullscreenEnabled) $("fullBtn").hidden = true;
+
+      const keys = {
+        ArrowRight: () => show(index + 1),
+        ArrowDown: () => show(index + 1),
+        PageDown: () => show(index + 1),
+        " ": () => show(index + 1),
+        ArrowLeft: () => show(index - 1),
+        ArrowUp: () => show(index - 1),
+        PageUp: () => show(index - 1),
+        Home: () => show(0),
+        End: () => show(slides.length - 1),
+        t: () => theme.toggle(),
+        f: fullscreen,
+      };
+      document.addEventListener("keydown", (e) => {
+        if (e.metaKey || e.ctrlKey || e.altKey || !keys[e.key]) return;
+        if (e.key === " " && e.target.closest("button, a")) return;
+        e.preventDefault();
+        keys[e.key]();
+      });
+
+      /* swipe sideways on touch screens; a mostly vertical drag is a scroll */
+      let touch = null;
+      deck.addEventListener(
+        "touchstart",
+        (e) => {
+          touch = e.changedTouches[0];
+        },
+        { passive: true }
+      );
+      deck.addEventListener(
+        "touchend",
+        (e) => {
+          const dx = e.changedTouches[0].clientX - touch.clientX;
+          const dy = e.changedTouches[0].clientY - touch.clientY;
+          if (Math.abs(dx) > 50 && Math.abs(dx) > 2 * Math.abs(dy))
+            show(index + (dx < 0 ? 1 : -1));
+        },
+        { passive: true }
+      );
+
+      /* follow the docs site theme when embedded, else the system until a choice is made here */
+      if (theme.embedded) {
+        try {
+          new MutationObserver(() => {
+            const t = theme.fromParent();
+            if (t) theme.apply(t);
+          }).observe(parent.document.documentElement, {
+            attributes: true,
+            attributeFilter: ["class"],
+          });
+        } catch (e) {
+          /* cross origin embed */
+        }
+      }
+      matchMedia("(prefers-color-scheme: dark)").addEventListener(
+        "change",
+        () => theme.apply(theme.resolve())
+      );
+
+      addEventListener("hashchange", () => show(fromHash(), false));
+      addEventListener("resize", fit);
+      show(fromHash(), false);
+      fit();
+    </script>
+  </body>
+</html>

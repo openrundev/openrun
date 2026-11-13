@@ -175,15 +175,15 @@ identifier = "more"
 weight = 6
 
 [[menu.main]]
-name = "Features"
-pageRef = "/features/"
-identifier = "features"
+name = "About"
+pageRef = "/about/"
 parent = "more"
 weight = 1
 
 [[menu.main]]
-name = "About"
-pageRef = "/about/"
+name = "Features"
+pageRef = "/features/"
+identifier = "features"
 parent = "more"
 weight = 2
 
@@ -195,13 +195,13 @@ parent = "more"
 weight = 3
 
 [[menu.main]]
-name = "Console Tour"
+name = "Console UI Tour"
 pageRef = "/console-tour/"
 parent = "more"
 weight = 4
 
 [[menu.main]]
-name = "Walkthrough"
+name = "Product Walkthrough"
 pageRef = "/walkthrough/"
 parent = "more"
 weight = 5

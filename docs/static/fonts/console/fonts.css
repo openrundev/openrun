@@ -1,0 +1,9 @@
+/* The OpenRun console fonts (SIL OFL, see LICENSE.txt), for standalone static
+   pages which do not load the docs site css. Urls are relative to this file. */
+@font-face { font-family: "Schibsted Grotesk"; font-weight: 400; font-display: swap; src: url("schibsted-grotesk-400.woff2") format("woff2"); }
+@font-face { font-family: "Schibsted Grotesk"; font-weight: 500; font-display: swap; src: url("schibsted-grotesk-500.woff2") format("woff2"); }
+@font-face { font-family: "Schibsted Grotesk"; font-weight: 600; font-display: swap; src: url("schibsted-grotesk-600.woff2") format("woff2"); }
+@font-face { font-family: "Space Grotesk"; font-weight: 500; font-display: swap; src: url("space-grotesk-500.woff2") format("woff2"); }
+@font-face { font-family: "Space Grotesk"; font-weight: 700; font-display: swap; src: url("space-grotesk-700.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-weight: 400; font-display: swap; src: url("jetbrains-mono-400.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-weight: 500; font-display: swap; src: url("jetbrains-mono-500.woff2") format("woff2"); }

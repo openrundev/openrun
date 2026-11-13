@@ -915,18 +915,40 @@ html.ct-lock {
   .ct-bar {
     flex-wrap: wrap;
   }
+  /* Two equal flow tabs, the labels wrap instead of being cut off */
   .ct-flows {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
     width: 100%;
   }
-  .ct-flow:last-child {
-    flex: 1;
+  .ct-flow {
+    justify-content: space-between;
+    padding: 0.4rem 0.6rem;
+    font-size: 0.8125rem;
+    line-height: 1.25;
+    text-align: left;
+    white-space: normal;
   }
   .ct-tools {
     margin-left: auto;
   }
-  .ct-flow {
-    padding: 0.4rem 0.6rem;
-    font-size: 0.875rem;
+  /* A 1280px screenshot is unreadable at phone width. Show it at about twice
+     that size in a taller stage, with the console's sidebar (the left 18.75%)
+     cropped off; drag to pan to the rest. The compare slider needs the whole
+     width, so it is not offered here. */
+  .ct-tool[data-act="compare"] {
+    display: none;
+  }
+  .ct-stage:not(.compare) {
+    aspect-ratio: 5 / 6;
+    touch-action: pan-x pan-y;
+  }
+  .ct-stage:not(.compare) .ct-scroll {
+    overflow-x: auto;
+  }
+  .ct-stage:not(.compare) .ct-shot {
+    width: 220%;
+    margin-left: -41.25%;
   }
   .ct-chrome {
     grid-template-columns: auto minmax(0, 1fr) auto;
