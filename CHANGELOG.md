@@ -3,9 +3,13 @@
 Changes to OpenRun will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+This project uses a date based versioning system for tip releases.
 
 ## [Unreleased]
+
+## [v1.2611.120] - 2026-11-12
+
+First 1.0 release!!
 
 ### Security
 
