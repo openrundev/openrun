@@ -387,3 +387,96 @@ html.dark .console-skin {
   line-height: 1.4;
   opacity: 0.75;
 }
+
+/* demo-button shortcode (layouts/shortcodes/demo-button.html): the home page
+   split button. The main part is the live demo link, the arrow opens a menu
+   with the walkthrough and the console tour. */
+.demo-button {
+  position: relative;
+  display: inline-flex;
+}
+.demo-button-main {
+  padding: 12px 20px 12px 28px;
+  border-radius: 8px 0 0 8px;
+}
+.demo-button-more {
+  display: flex;
+}
+.demo-button-more summary {
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  border-radius: 0 8px 8px 0;
+  border-left: 1px solid rgb(255 255 255 / 0.35);
+  list-style: none;
+}
+.demo-button-more summary::-webkit-details-marker {
+  display: none;
+}
+.demo-button-more[open] summary svg {
+  transform: rotate(180deg);
+}
+.demo-button-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  width: 19rem;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  text-align: left;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.08);
+}
+.demo-button-menu a {
+  display: block;
+  padding: 8px 10px;
+  border-radius: 5px;
+  color: #111827;
+  text-decoration: none;
+}
+.demo-button-menu a:hover,
+.demo-button-menu a:focus-visible {
+  background: #f3f4f6;
+  outline: none;
+}
+.demo-button-menu span {
+  display: block;
+  font-weight: 500;
+}
+.demo-button-menu small {
+  display: block;
+  font-size: 0.8125rem;
+  color: #6b7280;
+}
+/* On a phone the button sits to the right of Quick Start, so the menu is
+   anchored to the row of buttons instead, which starts at the page gutter. */
+.hero-buttons {
+  position: relative;
+}
+@media (max-width: 520px) {
+  .demo-button {
+    position: static;
+  }
+  .demo-button-menu {
+    width: min(19rem, 100%);
+  }
+}
+html.dark .demo-button-menu {
+  background: var(--hx-color-neutral-900);
+  border-color: var(--hx-color-neutral-700);
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.4);
+}
+html.dark .demo-button-menu a {
+  color: #f3f4f6;
+}
+html.dark .demo-button-menu a:hover,
+html.dark .demo-button-menu a:focus-visible {
+  background: var(--hx-color-neutral-800);
+}
+html.dark .demo-button-menu small {
+  color: #9ca3af;
+}

@@ -1,0 +1,73 @@
+{{- /* Home page demo button: a split button. The main part opens the live
+  demo server, the arrow opens a menu with the other two ways to look at
+  OpenRun without installing it. The menu is a <details> element, so it
+  works without script; the script only closes it on Escape or a click
+  outside. Styles are in assets/css/custom.css (.demo-button).
+
+  Usage: {{< demo-button
+>}}
+*/ -}}
+{{- $btn := "not-prose hx:font-medium hx:cursor-pointer hx:text-center hx:text-white hx:inline-block hx:bg-primary-600 hx:hover:bg-primary-700 hx:focus:outline-hidden hx:focus:ring-4 hx:focus:ring-primary-300 hx:dark:bg-primary-600 hx:dark:hover:bg-primary-700 hx:dark:focus:ring-primary-800 hx:transition-all hx:ease-in hx:duration-200" -}}
+<div class="demo-button not-prose">
+  <a
+    class="demo-button-main {{ $btn }}"
+    href="https://utils.demo.clace.io/console"
+    target="_blank"
+    rel="noreferrer"
+    >Live Demo</a
+  >
+  <details class="demo-button-more">
+    <summary class="{{ $btn }}" aria-label="More ways to see OpenRun">
+      <svg
+        width="12"
+        height="12"
+        viewBox="0 0 12 12"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.75"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true">
+        <path d="M2.5 4.5 6 8l3.5-3.5" />
+      </svg>
+    </summary>
+    <ul class="demo-button-menu">
+      <li>
+        <a
+          href="https://utils.demo.clace.io/console"
+          target="_blank"
+          rel="noreferrer"
+          ><span>Live Demo</span
+          ><small>Live Console in read-only mode</small></a
+        >
+      </li>
+      <li>
+        <a href="{{ relref .Page "walkthrough" }}"
+          ><span>Product Walkthrough</span
+          ><small>Product overview, replayed step by step</small></a
+        >
+      </li>
+      <li>
+        <a href="{{ relref .Page "console-tour" }}"
+          ><span>Console Tour</span
+          ><small>Console gallery with screenshots</small></a
+        >
+      </li>
+    </ul>
+  </details>
+</div>
+<script>
+  (function () {
+    var d = document.querySelector(".demo-button-more");
+    if (!d) return;
+    document.addEventListener("click", function (e) {
+      if (d.open && !d.contains(e.target)) d.open = false;
+    });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && d.open) {
+        d.open = false;
+        d.querySelector("summary").focus();
+      }
+    });
+  })();
+</script>

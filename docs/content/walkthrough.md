@@ -6,8 +6,8 @@ summary: "A recorded OpenRun run, replayed step by step in the browser"
 layout: hextra-home
 ---
 
-{{< console-title title="OpenRun Walkthrough" >}}
-Walkthrough of a real OpenRun demo workload. Every output and timing comes from the real run.
+{{< console-title title="Product Walkthrough" >}}
+Walkthrough of an OpenRun demo workload.
 {{< /console-title >}}
 
 {{< walkthrough >}}
