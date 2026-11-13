@@ -623,6 +623,8 @@ type ReplicationStatusEntry struct {
 type ServerInfo struct {
 	Version             string                   `json:"version"`
 	Commit              string                   `json:"commit"`
+	Channel             string                   `json:"channel"` // release channel, like tip or stable
+	License             string                   `json:"license"` // SPDX license identifier of the server build
 	StartTime           time.Time                `json:"start_time"`
 	UptimeSecs          int64                    `json:"uptime_secs"`
 	MetadataDBType      string                   `json:"metadata_db_type"` // sqlite | postgres

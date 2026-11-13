@@ -104,9 +104,10 @@ def server_info_handler(req):
     if ret.error:
         return "ERROR: " + ret.error
     info = ret.value
-    return "SERVERINFO: db=%s leader=%s uptime_ok=%s repl=%d" % (
+    return "SERVERINFO: db=%s leader=%s uptime_ok=%s repl=%d channel=%s license=%s" % (
         info["metadata_db_type"], info["is_leader"],
-        int(info["uptime_secs"]) >= 0, len(info["metadata_replication"]))
+        int(info["uptime_secs"]) >= 0, len(info["metadata_replication"]),
+        info["channel"], info["license"])
 
 
 def replication_handler(req):

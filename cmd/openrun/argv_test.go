@@ -109,7 +109,7 @@ func globalFlagTestApp() *cli.App {
 			&cli.StringFlag{Name: "config-file", Aliases: []string{"c"}},
 			&cli.StringFlag{Name: "server-uri"},
 			&cli.StringFlag{Name: "as"},
-			&cli.BoolFlag{Name: "version", Aliases: []string{"v"}},
+			&cli.BoolFlag{Name: "client-version", Aliases: []string{"version", "v"}},
 		},
 		Commands: []*cli.Command{
 			{
@@ -166,9 +166,9 @@ func TestNormalizeInterspersedFlagsHoistsGlobalFlagsAfterCommand(t *testing.T) {
 			want: []string{"openrun", "service", "create", "-c", "cfg.toml", "mysvc"},
 		},
 		{
-			name: "version flag is not hoisted",
+			name: "version flag is hoisted",
 			argv: []string{"openrun", "action", "list", "--version"},
-			want: []string{"openrun", "action", "list", "--version"},
+			want: []string{"openrun", "--version", "action", "list"},
 		},
 		{
 			name: "global flag after double dash stays positional",
@@ -189,5 +189,17 @@ func TestNormalizeInterspersedFlagsHoistsGlobalFlagsAfterCommand(t *testing.T) {
 				t.Fatalf("normalized args mismatch\ngot:  %#v\nwant: %#v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestFormatVersion(t *testing.T) {
+	got := formatVersion("openrun_server", "1.2611.120", "5acea6d9", "tip", "Apache-2.0")
+	if want := "openrun_server 1.2611.120 (5acea6d9, tip, Apache-2.0)"; got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	// server older than the release channel split
+	got = formatVersion("openrun_server", "0.15.0", "abcd1234", "", "")
+	if want := "openrun_server 0.15.0 (abcd1234)"; got != want {
+		t.Fatalf("got %q, want %q", got, want)
 	}
 }

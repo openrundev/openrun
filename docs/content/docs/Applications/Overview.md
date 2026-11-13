@@ -45,7 +45,7 @@ GLOBAL OPTIONS:
    --config-file value, -c value  TOML configuration file [$CL_CONFIG_FILE]
    --server-uri value             The server uri to connect to (unix socket path or https://host[:port]). Takes precedence over server_uri in the config file [$OPENRUN_SERVER_URI]
    --as value                     Run the command as this user id (like builtin:user1) with RBAC enforcement. Requires RBAC to be enabled; supported over the unix domain socket only [$OPENRUN_AS_USER]
-   --version, -v                  Print version info (default: false)
+   --client-version, --version, -v  Print the client version, then run the command if one is given (default: false)
    --help, -h                     show help
 
 $ openrun app

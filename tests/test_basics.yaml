@@ -53,7 +53,7 @@ tests:
   basic054: # server version reports the server build version
     command: ../openrun server version
     stdout:
-      exactly: "dev (commit dev_build, tip, Apache-2.0)" # test binary is built without version ldflags
+      exactly: "openrun_server dev (dev_build, tip, Apache-2.0)" # test binary is built without version ldflags
     exit-code: 0
 
   basic060: ## create test1 app with default of authentication enabled
@@ -246,7 +246,18 @@ tests:
 
   basic400: # check version command output
     command: ../openrun --version
-    stdout: "OpenRun version"
+    stdout:
+      exactly: "openrun_client dev (dev_build, tip, Apache-2.0)"
+    stderr:
+      line-count: 0
+    exit-code: 0
+
+  basic401: # client version flag prints the client version and then runs the command
+    command: ../openrun --client-version server version
+    stdout:
+      exactly: |-
+        openrun_client dev (dev_build, tip, Apache-2.0)
+        openrun_server dev (dev_build, tip, Apache-2.0)
     stderr:
       line-count: 0
     exit-code: 0

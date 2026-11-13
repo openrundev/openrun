@@ -159,15 +159,12 @@ func buildFlagSpecs(flags []cli.Flag) map[string]cliFlagSpec {
 }
 
 // buildGlobalFlagSpecs records the app level flags which can be hoisted from
-// a command position to the root. The version flag is left out: it is only
-// acted on when no command is given, so hoisting it would make
-// "openrun app list --version" silently run the command instead of failing.
+// a command position to the root. This includes the client version flag, which
+// prints the client version and then runs the command. A command level flag
+// with the same name (like "provider install --version") takes precedence.
 func buildGlobalFlagSpecs(flags []cli.Flag) map[string]cliFlagSpec {
 	specs := map[string]cliFlagSpec{}
 	for _, flag := range flags {
-		if flag != nil && flag.Names()[0] == "version" {
-			continue
-		}
 		addFlagSpec(specs, flag)
 	}
 	return specs

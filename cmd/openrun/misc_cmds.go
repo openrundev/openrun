@@ -130,7 +130,18 @@ func readPassword() (string, error) {
 	return strings.TrimSpace(password), nil
 }
 
-func printVersion(cCtx *cli.Context) {
-	printStdout(cCtx, "OpenRun version %s build %s (%s, %s)\n", types.GetVersion(), types.GetCommit(),
-		types.GetChannel(), types.GetLicense())
+// formatVersion returns the version line shared by the client and server
+// version output, like "openrun_client 1.2611.120 (5acea6d9, tip, Apache-2.0)".
+// The channel and license are left out when the channel is not known (server
+// older than the release channel split).
+func formatVersion(component, version, commit, channel, license string) string {
+	if channel == "" {
+		return fmt.Sprintf("%s %s (%s)", component, version, commit)
+	}
+	return fmt.Sprintf("%s %s (%s, %s, %s)", component, version, commit, channel, license)
+}
+
+func printClientVersion(cCtx *cli.Context) {
+	printStdout(cCtx, "%s\n", formatVersion("openrun_client", types.GetVersion(), types.GetCommit(),
+		types.GetChannel(), types.GetLicense()))
 }

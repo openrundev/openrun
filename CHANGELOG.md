@@ -7,6 +7,14 @@ This project uses a date based versioning system for tip releases.
 
 ## [Unreleased]
 
+## [v1.2611.130] - 2026-11-13
+
+### Changed
+
+- The client and server versions now print in one format: `openrun_client 1.2611.120 (5acea6d9, tip, Apache-2.0)` and `openrun_server 1.2611.120 (5acea6d9, tip, Apache-2.0)`. Scripts that parse the output of `openrun --version` or `openrun server version` need to be updated.
+- Added the `--client-version` global flag, with `--version` and `-v` as aliases. It prints the client version and then runs the command if one is given, so `openrun --client-version server version` prints both versions.
+- The `openrun.in` plugin `server_info` API now returns the `channel` and `license` of the server build, along with the version and commit.
+
 ## [v1.2611.120] - 2026-11-12
 
 First 1.0 release!!

@@ -1553,6 +1553,8 @@ func (c *openrunPlugin) ServerInfo(ctx context.Context, call *sdk.Call) (any, er
 	info := types.ServerInfo{
 		Version:             types.GetVersion(),
 		Commit:              types.GetCommit(),
+		Channel:             types.GetChannel(),
+		License:             types.GetLicense(),
 		StartTime:           s.startTime,
 		UptimeSecs:          int64(time.Since(s.startTime).Seconds()),
 		MetadataDBType:      string(s.db.DBType()),

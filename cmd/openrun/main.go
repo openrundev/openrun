@@ -21,6 +21,7 @@ import (
 
 const configFileFlagName = "config-file"
 const serverUriFlagName = "server-uri"
+const clientVersionFlagName = "client-version"
 
 func getAllCommands(clientConfig *types.ClientConfig, serverConfig *types.ServerConfig) ([]*cli.Command, error) {
 	var allCommands []*cli.Command
@@ -70,9 +71,9 @@ func globalFlags(globalConfig *types.GlobalConfig, clientConfig *types.ClientCon
 			EnvVars:     []string{"OPENRUN_AS_USER"},
 		},
 		&cli.BoolFlag{
-			Name:    "version",
-			Aliases: []string{"v"},
-			Usage:   "Print version info",
+			Name:    clientVersionFlagName,
+			Aliases: []string{"version", "v"},
+			Usage:   "Print the client version, then run the command if one is given",
 		},
 	}, nil
 }
@@ -317,6 +318,11 @@ func main() {
 		DisableSliceFlagSeparator: true,
 		Flags:                     globalFlags,
 		Before: func(ctx *cli.Context) error {
+			if ctx.Bool(clientVersionFlagName) {
+				// Printed before the config is parsed, so the version is
+				// reported even when the config is broken
+				printClientVersion(ctx)
+			}
 			err := parseConfig(ctx, globalConfig, clientConfig, serverConfig)
 			applyGlobalOverrides(ctx, globalConfig, clientConfig, serverConfig)
 			if ctx.Command != nil && ctx.Args().Len() > 0 && ctx.Args().Get(0) == "password" {
@@ -336,11 +342,6 @@ func main() {
 		Commands: allCommands,
 		Action: func(ctx *cli.Context) error {
 			// Default action when no subcommand is specified
-			if ctx.Bool("version") {
-				printVersion(ctx)
-				os.Exit(0)
-				return nil
-			}
 			if ctx.Args().Present() {
 				// An unknown command should fail instead of showing the help and exiting 0
 				arg := ctx.Args().First()
@@ -350,6 +351,10 @@ func main() {
 					}
 				}
 				return fmt.Errorf("unknown command %q\nrun 'openrun --help' for usage", arg)
+			}
+			if ctx.Bool(clientVersionFlagName) {
+				// The version was printed in Before, there is no command to run
+				return nil
 			}
 			return cli.ShowAppHelp(ctx)
 		},
