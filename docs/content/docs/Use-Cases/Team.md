@@ -254,3 +254,34 @@ will set up a [sync]({{< ref "docs/applications/overview/#automated-sync" >}}) w
 No further manual updates are required on the machine. All updates can be done by just checking in changes into the declarative config - **Full GitOps CI/CD, in one command.**
 
 The operational tasks around these apps, restarts, re-runs and lookups, can be deployed the same way as [actions]({{< ref "docs/use-cases/jenkins-rundeck-alternative/" >}}), usable from a form, the CLI and by AI agents, in place of Jenkins or Rundeck jobs.
+
+## Frequently Asked Questions
+
+### What is a self-hosted internal tools platform?
+
+A self-hosted internal tools platform runs a team's internal web apps, dashboards and automation scripts on infrastructure the organization controls, instead of on a vendor's cloud. The platform handles deployment, login, access control and auditing, so each app does not have to implement them. OpenRun is an open-source platform of this kind. It deploys apps from Git and adds SSO, RBAC and audit logs to every app.
+
+### How do you plan a self-hosted deployment of an internal tools platform?
+
+Plan these items before installing:
+
+1. **Where it runs:** a single Linux server is enough for most teams. Use a Kubernetes cluster when apps need to scale out across nodes.
+2. **Network access:** decide whether the server is reachable only over the VPN or private network. On a private network, plan for a DNS entry and manually managed TLS certificates.
+3. **Identity:** pick the identity provider (OIDC or SAML, such as Okta or Microsoft Entra) and create an app registration for the platform.
+4. **Access control:** map identity provider groups to the app paths each team is allowed to use.
+5. **Source control:** keep the app declarations in a Git repo and create a read-only token for the platform.
+6. **Operations:** plan backups for the platform metadata and for app data, and decide how long to retain audit events.
+
+The steps on this page implement this plan with OpenRun on one machine behind a VPN.
+
+### Does a self-hosted internal tools platform need Kubernetes?
+
+No. OpenRun runs as a single binary on one Linux server and uses Docker or Podman to run app containers. Idle apps are stopped, so one server can host many internal tools. The same app declarations work on [Kubernetes]({{< ref "docs/container/kubernetes/" >}}) when horizontal scaling is needed.
+
+### How do internal apps get SSO, RBAC and audit logs without code changes?
+
+OpenRun authenticates each request before it reaches the app. [OIDC or SAML login]({{< ref "docs/configuration/authentication/" >}}) is configured once at the server level and applies to every app. [RBAC grants]({{< ref "docs/configuration/rbac/" >}}) map identity provider groups to app paths. Every request and operation is recorded as an [audit event]({{< ref "docs/applications/audit/" >}}).
+
+### Can the platform run in a private network or VPC with no inbound Internet access?
+
+Yes. This page describes that setup. The server needs outbound access to fetch source code and container images, and to reach the identity provider. Inbound access from the public Internet is not required.

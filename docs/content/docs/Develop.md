@@ -1,6 +1,7 @@
 ---
 title: "Developing Apps"
 weight: 330
+description: "How an OpenRun app is put together: folder structure, the ace.app definition, the dev to prod lifecycle, params, permissions and resource limits, with text, spec based, action and containerized app examples."
 summary: "Overview of developing OpenRun Apps"
 ---
 

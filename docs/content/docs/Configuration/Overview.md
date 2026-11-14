@@ -1,6 +1,8 @@
 ---
-title: "Config Overview"
+title: "Configuration Overview"
+linkTitle: "Config Overview"
 weight: 100
+description: "Where OpenRun reads its configuration: the openrun.toml file for the server and the client CLI, the OPENRUN_HOME directory layout, server-wide app config and dynamic config that needs no restart."
 summary: "Overview of OpenRun configuration, at the server level and client level and the $OPENRUN_HOME location for files"
 ---
 

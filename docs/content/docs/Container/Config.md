@@ -1,6 +1,8 @@
 ---
-title: "Container Config"
+title: "Container Config: Health Checks, Idle Shutdown and Deploy Strategy"
+linkTitle: "Container Config"
 weight: 200
+description: "Container settings for OpenRun apps: health, status and idle checks, scale to zero for idle apps, the deploy strategy on Docker and Podman, image cleanup and selecting the container manager."
 summary: "Overview of containerized app config and state management"
 ---
 

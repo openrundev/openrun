@@ -1,6 +1,7 @@
 ---
 title: "Hypermedia Apps"
 weight: 400
+description: "Build hypermedia-driven web apps in OpenRun with Starlark handlers, Go HTML templates and HTMX: routing, requests, responses, templates, styling and JavaScript."
 summary: "Developing Hypermedia-driven applications, managing API routes and HTML templates"
 ---
 

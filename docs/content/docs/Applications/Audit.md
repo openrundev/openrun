@@ -1,6 +1,7 @@
 ---
 title: "Audit Events"
 weight: 400
+description: "OpenRun records an audit event for every app operation and API call. Configure the audit database and retention, add custom events and view events in the audit viewer app."
 summary: "Auditing and viewing events"
 ---
 

@@ -1,6 +1,8 @@
 ---
-title: "Kubernetes"
+title: "Deploying OpenRun on Kubernetes"
+linkTitle: "Kubernetes"
 weight: 300
+description: "Install OpenRun on Kubernetes with the Helm chart or with Terraform on AWS EKS. Each app runs as its own Deployment and Service, with in-cluster Kaniko builds, autoscaling and scale to zero."
 summary: "Overview of OpenRun deployment on Kubernetes"
 ---
 

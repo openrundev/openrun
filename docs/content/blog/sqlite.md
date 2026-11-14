@@ -1,5 +1,6 @@
 ---
 title: "Using SQLite as Storage for Web Server Static Content"
+description: "Why OpenRun stores the static files it serves in a SQLite database instead of the file system: atomic app updates, content-hash deduplication, versioning and simpler deployment."
 summary: "Why OpenRun uses a SQLite database instead of the local file system for static files."
 date: 2024-10-25
 ---

@@ -1,6 +1,7 @@
 ---
 title: "Application Security"
 weight: 300
+description: "The OpenRun application security model: Starlark app code runs in a sandbox, all system access goes through plugins, and an admin approves the permissions an app requests."
 summary: "Application Security and sandboxing model for OpenRun"
 ---
 

@@ -1,6 +1,8 @@
 ---
-title: "Secrets Management"
+title: "Secrets Management: Vault, AWS and Kubernetes Secrets"
+linkTitle: "Secrets Management"
 weight: 600
+description: "Pass secrets to containerized apps, plugins and server config in OpenRun from HashiCorp Vault, AWS Secrets Manager, AWS SSM, Kubernetes secrets, an embedded store, environment variables or a properties file."
 summary: "Details about working with secret managers"
 ---
 

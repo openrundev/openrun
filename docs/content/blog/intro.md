@@ -1,5 +1,6 @@
 ---
 title: "Introducing OpenRun"
+description: "Introducing OpenRun, an open-source platform for developing and deploying web apps for internal tools on your own servers, with GitOps, authentication and sandboxing built in."
 summary: "OpenRun: Platform for managing internal tools"
 date: 2023-11-01
 ---

@@ -1,6 +1,8 @@
 ---
-title: "Ports and Certificates"
+title: "Ports, TLS Certificates and Domains"
+linkTitle: "Ports and Certificates"
 weight: 200
+description: "Configure the OpenRun HTTP and HTTPS listeners, automatic TLS certificates through ACME, mkcert certificates for local development, the default and staging domains and privileged ports."
 summary: "OpenRun uses unix domain sockets for client CLI requests. HTTP and HTTPS are used for application requests. Automatic signed certificate creation is supported for HTTPS."
 ---
 

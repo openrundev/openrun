@@ -1,6 +1,8 @@
 ---
-title: "Security"
+title: "Security Configuration"
+linkTitle: "Security"
 weight: 300
+description: "OpenRun security configuration: the admin account and admin API, plugin permission defaults, CSRF protection, security headers, CORS, trusted proxies and git access to private repositories."
 summary: "OpenRun Security related configuration"
 ---
 

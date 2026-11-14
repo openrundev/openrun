@@ -1,6 +1,7 @@
 ---
 title: "App Management Overview"
 weight: 50
+description: "Manage OpenRun apps from the CLI or declaratively from Git: create, update, reload and promote apps, with scheduled GitOps sync and staged deployments."
 summary: "Overview of managing OpenRun applications"
 ---
 

@@ -1,5 +1,6 @@
 ---
 title: "App-Level Isolation in Web Server Config"
+description: "How OpenRun isolates routing rules per app, so that creating or updating one app cannot break routing for other apps, unlike a shared web server config."
 summary: "Many web servers provide an update interface that does not isolate applications from one another. As a result, updating a routing rule for one app can accidentally break other apps."
 date: 2025-01-17
 ---

@@ -1,10 +1,12 @@
 ---
-title: "Overview"
+title: "Containerized Apps Overview"
+linkTitle: "Overview"
 weight: 100
+description: "How OpenRun runs containerized applications: it fetches the source, builds the image from a Dockerfile or Containerfile, starts the container, health checks it and stops it when the app is idle."
 summary: "Overview of OpenRun containerized apps"
 ---
 
-OpenRun builds the image and manages the container lifecycle for containerized apps. Appspecs allow existing source code to be used with OpenRun with no code changes required. OpenRun supports both `Dockerfile` and `Containerfile` as the file name for the container specification file.
+A containerized application is packaged with its runtime and dependencies into a container image, so it runs the same way on a laptop, a server or a Kubernetes cluster. OpenRun builds the image and manages the container lifecycle for containerized apps. Appspecs allow existing source code to be used with OpenRun with no code changes required. OpenRun supports both `Dockerfile` and `Containerfile` as the file name for the container specification file.
 
 The container lifecycle managed by OpenRun:
 

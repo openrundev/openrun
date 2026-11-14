@@ -1,6 +1,8 @@
 ---
-title: "Overview"
+title: "Hypermedia Apps Overview"
+linkTitle: "Overview"
 weight: 100
+description: "The OpenRun app development model: backend routes and handlers in Starlark, HTML fragments from Go templates and HTMX for interactions, with an optional containerized backend."
 summary: "Overview of the OpenRun application development model"
 ---
 

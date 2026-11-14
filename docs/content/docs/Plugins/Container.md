@@ -1,6 +1,7 @@
 ---
 title: "Container Plugin"
 weight: 400
+description: "The OpenRun container.in plugin: configure the container backend for an app, declare sidecar containers and run commands in a container created from the app image."
 summary: "Container plugin supports configuring container backend"
 ---
 

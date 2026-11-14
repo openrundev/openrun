@@ -1,6 +1,7 @@
 ---
 title: "App Specs"
 weight: 500
+description: "App specs let OpenRun deploy Streamlit, Gradio, FastAPI, Flask and Go apps from source with no Dockerfile and no code changes. Each spec predefines the container and routing config for a framework."
 summary: "App specifications which predefine container and routing config for common frameworks"
 ---
 

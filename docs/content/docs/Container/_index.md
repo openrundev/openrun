@@ -1,6 +1,7 @@
 ---
 title: "Containerized Apps"
 weight: 350
+description: "Deploy containerized applications with OpenRun on Docker, Podman or Kubernetes: image builds from source, container config, app specs for common frameworks and fast dev reload."
 summary: "Developing containerized applications with OpenRun"
 ---
 

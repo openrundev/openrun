@@ -1,6 +1,8 @@
 ---
-title: "App Authentication"
+title: "App Authentication: OAuth, OIDC, SAML SSO and Client Certificates"
+linkTitle: "App Authentication"
 weight: 400
+description: "Configure login for self-hosted web apps in OpenRun: OAuth with GitHub or Google, OpenID Connect and SAML single sign-on with Okta or Microsoft Entra, builtin users, forward auth and client certificates."
 summary: "Details about authentication mechanisms for app access, including OAuth based auth"
 ---
 

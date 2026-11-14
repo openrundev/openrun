@@ -1,6 +1,7 @@
 ---
 title: "Proxy Plugin"
 weight: 500
+description: "The OpenRun proxy.in plugin: proxy app routes to a container backend or to an external HTTP endpoint, with per-route proxy configuration."
 summary: "Proxy plugin supports proxying of API calls"
 ---
 

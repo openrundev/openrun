@@ -1,6 +1,7 @@
 ---
 title: "Configuration"
 weight: 200
+description: "Configure the OpenRun server and client: authentication, RBAC, secrets, ports and TLS certificates, security, remote API access and telemetry."
 summary: "Configuration options for the OpenRun server and client."
 ---
 

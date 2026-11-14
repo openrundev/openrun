@@ -1,6 +1,7 @@
 ---
 title: "Jobs and Deploy Hooks"
 weight: 450
+description: "Run scheduled jobs, manual jobs and before-deploy hooks such as database migrations for OpenRun apps, as a command in the app image or as a Starlark function, with every run recorded."
 summary: "Scheduled, manual and before-deploy jobs: finite work run from the app's image or as a Starlark function"
 ---
 

@@ -1,6 +1,8 @@
 ---
-title: "Role Based Access Control"
+title: "Role Based Access Control (RBAC) for Apps"
+linkTitle: "Role Based Access Control"
 weight: 500
+description: "Set up role based access control for self-hosted web apps: groups, roles and grants in OpenRun, mapped to OAuth users and to OIDC or SAML groups from Okta and Microsoft Entra."
 summary: "Controlling access to applications using RBAC"
 ---
 

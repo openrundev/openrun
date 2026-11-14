@@ -1,6 +1,8 @@
 ---
-title: "MCP Apps"
+title: "MCP Apps: Deploy MCP Servers with OAuth Login"
+linkTitle: "MCP Apps"
 weight: 360
+description: "Deploy a self-hosted MCP server as an OpenRun app. OpenRun acts as the OAuth 2.1 authorization server, so MCP clients log in through the app's SSO and are checked against its RBAC grants."
 summary: "Deploy an MCP server as an app and let MCP clients connect with OAuth, using the app's login and RBAC"
 ---
 

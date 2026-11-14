@@ -1,6 +1,7 @@
 ---
 title: "Container Builds"
 weight: 400
+description: "How OpenRun builds app container images from source: local builds with Docker or Podman on a single node, and in-cluster Kaniko builds pushed to a registry on Kubernetes."
 summary: "Container builds on single node install and on Kubernetes"
 ---
 
