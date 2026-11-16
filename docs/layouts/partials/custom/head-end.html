@@ -1,6 +1,16 @@
 {{- /* Site fonts used above the fold, see the top of assets/css/custom.css */ -}}
 <link rel="preload" href="/fonts/console/schibsted-grotesk-400.woff2" as="font" type="font/woff2" crossorigin />
 <link rel="preload" href="/fonts/console/space-grotesk-700.woff2" as="font" type="font/woff2" crossorigin />
+{{- /* toc: false in the front matter: the theme only drops the heading list
+  and keeps the right column (edit link, scroll to top). Drop the column, and
+  keep the text at a readable width when sidebar.hide gives the page the
+  full content width. */ -}}
+{{- if eq .Params.toc false }}
+  <style>
+    .hextra-toc { display: none !important; }
+    #content { max-width: 64rem; }
+  </style>
+{{- end }}
 {{- with .Keywords }}
   <meta name="keywords" content="{{ delimit . ", " }}" />
 {{- end }}

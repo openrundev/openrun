@@ -7,17 +7,23 @@
   The data it replays (static/walkthrough/replay/data.js and shots/) is generated from
   a real run of the demo repo (github.com/openrundev/demo), see its README.
 
+  On a narrower page (a blog post) pass fullscreen="true": the replay then
+  shows a "Full screen" button (?full=1, the iframe gets allowfullscreen).
+
   Usage:
   {{< walkthrough
 >}}
 {{< walkthrough caption="A recorded run of the demo repo" >}}
+{{< walkthrough fullscreen="true" >}}
 */ -}}
 <figure class="walkthrough">
   <iframe
-    src="/walkthrough/replay/?v=20261110e"
+    src="/walkthrough/replay/?v=20261115a{{ if eq (.Get "fullscreen") "true" }}&full=1{{ end }}"
     title="OpenRun: demo workload, replayed step by step"
     loading="lazy"
-    scrolling="no"></iframe>
+    {{- if eq (.Get "fullscreen") "true" }}
+    allowfullscreen
+    {{- end }}></iframe>
   {{- with .Get "caption" }}
     <figcaption>{{ . }}</figcaption>
   {{- end }}

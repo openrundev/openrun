@@ -176,6 +176,17 @@
       body.embedded .wrap {
         padding: 2px;
       }
+      /* embedded: the iframe is as tall as the page, so it never scrolls on
+         its own. Full screen (allowed by the embedding page) scrolls. */
+      html.embedded {
+        overflow: hidden;
+      }
+      html.embedded:fullscreen {
+        overflow: auto;
+      }
+      html:fullscreen body.embedded .wrap {
+        padding: 16px;
+      }
 
       /* buttons */
       .btn {
@@ -894,6 +905,13 @@
           margin-right: auto;
           padding-left: 2px;
         }
+        .nav #full:not([hidden]) + #play {
+          margin-right: 0;
+        }
+        .nav #full {
+          margin-right: auto;
+          padding-left: 2px;
+        }
         .term pre {
           height: 140px;
         }
@@ -958,6 +976,7 @@
           <p id="blurb"></p>
         </div>
         <div class="nav">
+          <button class="btn quiet" id="full" type="button" hidden></button>
           <button class="btn quiet" id="play" type="button"></button>
           <button class="btn" id="back" type="button">Back</button>
           <button class="btn primary" id="next" type="button"></button>
@@ -1023,7 +1042,10 @@
         const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
         const params = new URLSearchParams(location.search);
         const embedded = window.parent !== window;
-        if (embedded) document.body.classList.add("embedded");
+        if (embedded) {
+          document.body.classList.add("embedded");
+          document.documentElement.classList.add("embedded");
+        }
 
         /* ---- theme: follow the embedding page (same origin), else the system ---- */
         function syncTheme() {
@@ -1054,6 +1076,7 @@
             /* cross origin embed */
           }
           const post = () =>
+            document.fullscreenElement ||
             parent.postMessage(
               {
                 type: "openrun-walkthrough-height",
@@ -1065,6 +1088,27 @@
             );
           new ResizeObserver(post).observe(document.body);
           addEventListener("load", post);
+          document.addEventListener("fullscreenchange", post);
+
+          /* full screen, when the embedding page asks for it with ?full=1 */
+          const fullBtn = $("#full");
+          if (
+            new URLSearchParams(location.search).get("full") === "1" &&
+            document.fullscreenEnabled
+          ) {
+            const paintFull = () =>
+              (fullBtn.textContent = document.fullscreenElement
+                ? "Exit full screen"
+                : "Full screen");
+            fullBtn.hidden = false;
+            paintFull();
+            fullBtn.addEventListener("click", () => {
+              if (document.fullscreenElement) document.exitFullscreen();
+              else
+                document.documentElement.requestFullscreen().catch(() => {});
+            });
+            document.addEventListener("fullscreenchange", paintFull);
+          }
         }
 
         /* ---- the file ---- */
