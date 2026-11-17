@@ -186,6 +186,7 @@ Out-of-process [binding providers](https://github.com/openrundev/bindings) (sqls
 - **Source of truth:** installed providers are registered in the metadata database (Postgres, required for Kubernetes installs).
 - **Per replica:** each server replica materializes the provider executables into a node-local cache directory at startup, before serving traffic, and re-downloads them (with checksum verification) whenever a pod starts on a fresh node.
 - **Propagation:** installs and uninstalls propagate to all replicas through Postgres notifications, so `openrun provider install` works on multi-replica deployments exactly as on a single server.
+- **License:** the providers are not Apache 2.0 licensed. They are under the PolyForm Free Trial License, see [binding providers]({{< ref "/docs/applications/servicebindings/#binding-providers-sql-server-oracle-mongodb-snowflake-clickhouse" >}}) for the license terms.
 
 ### Declarative install
 

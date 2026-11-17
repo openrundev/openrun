@@ -42,7 +42,7 @@ The script:
 - adds `$OPENRUN_HOME/bin` to the PATH in the shell profile
 - creates `openrun.toml` with a generated `admin` password, if no `openrun.toml` is present
 
-To install a specific release, pass the version: `curl -sSL https://openrun.dev/install.sh | sh -s v0.20.3`.
+To install a specific release, pass the version: `curl -sSL https://openrun.dev/install.sh | sh -s v1.2611.130`.
 
 Open a new terminal to get the updated environment values, then run:
 
@@ -149,7 +149,7 @@ The script:
 - sets the `OPENRUN_HOME` user environment variable to the install directory and adds the `bin` directory to the user PATH
 - creates `openrun.toml` with a generated `admin` password, if no `openrun.toml` is present. Note down the password printed.
 
-To install a specific release, set `$v="v0.20.3"` before running the script. To install to a custom location, set `$env:OPENRUN_HOME` to the desired directory before running the script.
+To install a specific release, set `$v="v1.2611.130"` before running the script. To install to a custom location, set `$env:OPENRUN_HOME` to the desired directory before running the script.
 
 Open a new terminal to get the updated environment values, then run:
 

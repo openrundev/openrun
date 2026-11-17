@@ -126,7 +126,7 @@ For web app deployment, OpenRun covers the pipeline end to end: it builds app co
 
 ### Is OpenRun free and open source?
 
-Yes. OpenRun is Apache-2.0 licensed, developed at [github.com/openrundev/openrun](https://github.com/openrundev/openrun). There is no per-seat or per-app pricing; the only cost is the infrastructure it runs on.
+Yes. OpenRun is Apache-2.0 licensed, developed at [github.com/openrundev/openrun](https://github.com/openrundev/openrun). There is no per-seat or per-app pricing; the only cost is the infrastructure it runs on. The optional [binding providers]({{< ref "/docs/applications/servicebindings/#binding-providers-sql-server-oracle-mongodb-snowflake-clickhouse" >}}) for databases like SQL Server, Oracle and Snowflake are separately licensed, and paid support is available. See [licensing and support]({{< ref "/blog/openrun-1.0/#licensing-and-support" >}}).
 
 ## How is OpenRun implemented?
 
@@ -144,7 +144,7 @@ Yes. OpenRun is Apache-2.0 licensed, developed at [github.com/openrundev/openrun
 
 ## Current Status
 
-OpenRun is currently used by multiple customers in production. A 1.x release is planned for Nov 2026 - no breaking changes are expected for the 1.x release.
+OpenRun is currently used by multiple customers in production. The stable 1.0 release was done in Nov 2026, see the [1.0 release post]({{< ref "/blog/openrun-1.0" >}}). The core config format, CLI commands and API will maintain backward compatibility across the 1.x releases.
 
 ## Who is behind this project?
 

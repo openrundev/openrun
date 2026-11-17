@@ -54,7 +54,7 @@ Additional service types come from out-of-process [binding providers]({{< ref "/
 | `clickhouse` | `clickhouse`       | Create ClickHouse users, self-hosted or ClickHouse Cloud   |
 | `databricks` | `databricks`       | Databricks SQL warehouses, Unity Catalog schema isolation  |
 
-All service types share the same workflow: services, base and derived bindings, staging/prod accounts, grants and promotes work identically whether the binding is built in or provider-installed.
+All service types share the same workflow: services, base and derived bindings, staging/prod accounts, grants and promotes work identically whether the binding is built in or provider-installed. The built-in types are Apache 2.0 licensed, the providers have a [separate license]({{< ref "/docs/applications/servicebindings/#binding-providers-sql-server-oracle-mongodb-snowflake-clickhouse" >}}).
 
 ## Managed PostgreSQL, MySQL and Redis Access
 
@@ -639,6 +639,10 @@ Beyond the built-in service types, OpenRun supports out-of-process binding provi
 - **ClickHouse:** self-hosted and ClickHouse Cloud.
 - **Databricks:** SQL warehouses with Unity Catalog schema isolation. Databricks Lakebase needs no provider: it speaks the Postgres protocol and works with the built-in `postgres` binding.
 
+{{< callout type="info" >}}
+**License:** The OpenRun server and the built-in service types (Postgres, MySQL, SQLite, Redis and Valkey) are [Apache 2.0](https://github.com/openrundev/openrun/blob/main/LICENSE) licensed. The binding providers listed above are separate downloads and are not Apache 2.0 licensed. They are under the [PolyForm Free Trial License 1.0.0](https://polyformproject.org/licenses/free-trial/1.0.0), which permits evaluation use for less than 32 consecutive days. Use beyond the evaluation period requires a commercial license, email [contact@openrun.dev](mailto:contact@openrun.dev).
+{{< /callout >}}
+
 Install a provider by name and version; the binary is downloaded from the provider releases (or a configured mirror), checksum-verified and registered:
 
 ```shell
@@ -701,7 +705,7 @@ Each base binding gets a dedicated Redis ACL user restricted to a unique key pre
 
 ### Can OpenRun provision SQL Server, Oracle, MongoDB, Snowflake or ClickHouse access?
 
-Yes. Install the matching binding provider with `openrun provider install <name>` and the provider's service types (`sqlserver`, `oracle`, `mongodb`/`atlas`, `snowflake`, `clickhouse`, `databricks`) become available for `service create`, with the same binding, grant and staging workflow as the built-in types.
+Yes. Install the matching binding provider with `openrun provider install <name>` and the provider's service types (`sqlserver`, `oracle`, `mongodb`/`atlas`, `snowflake`, `clickhouse`, `databricks`) become available for `service create`, with the same binding, grant and staging workflow as the built-in types. The providers are under the PolyForm Free Trial License, see [binding providers](#binding-providers-sql-server-oracle-mongodb-snowflake-clickhouse) for the license terms.
 
 ### Are database administrator credentials exposed to applications?
 

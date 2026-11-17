@@ -51,7 +51,7 @@ For OpenRun, the SQLite database approach provides great performance. There is n
 
 ## Multi-Node Support
 
-OpenRun currently runs on a single node. When multi-node support is added later, the plan is to use a shared Postgres database instead of using local SQLite for metadata and file data storage. This will come with latency issues. The plan is to use a local SQLite database as a file cache to avoid latency while accessing Postgres.
+**Update (Nov 2026):** OpenRun now supports multi-node deployments on [Kubernetes]({{< ref "/docs/container/kubernetes/" >}}). For Kubernetes deployments, a shared Postgres database is used instead of local SQLite for metadata and file data storage. To avoid the latency of accessing Postgres, each OpenRun instance uses a local SQLite database as a file cache. Files are looked up in the cache by their content SHA, read from Postgres on a cache miss and then added to the cache. Single node deployments continue to use SQLite directly.
 
 ## Why this approach is not more common?
 

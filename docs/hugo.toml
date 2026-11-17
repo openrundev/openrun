@@ -51,8 +51,8 @@ default = "system"
 displayToggle = true
 
 [params.banner]
-key = "announcement-litestream"
-message = "📌 Enable SQLite data replication to S3 with [Litestream sync](https://openrun.dev/blog/litestream)"
+key = "announcement-openrun-1-0"
+message = "📌 OpenRun 1.0 is released, read the [announcement](https://openrun.dev/blog/openrun-1.0/)"
 
 [params.page.contextMenu]
 enable = true
