@@ -202,3 +202,15 @@ func (h *RBACManager) AdminGroupsIn(groups []string) []string {
 	sort.Strings(matched)
 	return matched
 }
+
+// HoldsAdminAccess reports whether the principal, signing in with the given
+// groups, holds the admin permission or admin:manage under the live config,
+// through any route: a direct grant, a sign-in or config group, or a regex:
+// entry. Unlike AdminGroupsIn this evaluates the grants for the principal
+// itself, so it covers a builtin user whose name alone matches an admin grant
+func (h *RBACManager) HoldsAdminAccess(user string, groups []string) (bool, error) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	// admin passes every check, so this is true for admin and admin:manage holders
+	return h.authorizeAPIIntLocked(user, groups, types.PermissionAdminManage, types.AppPathDomain{}, "", "")
+}

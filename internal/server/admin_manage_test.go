@@ -241,16 +241,101 @@ func TestBuiltinUserAdminGroupRequiresAdminManage(t *testing.T) {
 	if _, err := server.CreateUpdateUser(managerCtx, "dev1", types.UserUpdateRequest{Groups: []string{"qa", "sre"}}, true); err != nil {
 		t.Fatalf("admin:manage holder must be allowed: %v", err)
 	}
-	if _, err := server.CreateUpdateUser(editorCtx, "dev1", types.UserUpdateRequest{Password: "yet-another-long-password"}, true); err != nil {
-		t.Fatalf("password change of an admin user keeps the groups and needs no admin:manage: %v", err)
+	// dev1 is now an admin (sre is nested in platform-admins): every change to
+	// the account needs admin:manage, with the groups kept too. A password
+	// set, unlock or enable would let the editor sign in as the admin
+	enable, disable := false, true
+	adminUpdates := map[string]types.UserUpdateRequest{
+		"password":     {Password: "yet-another-long-password"},
+		"unlock":       {Unlock: true},
+		"enable":       {Disabled: &enable},
+		"disable":      {Disabled: &disable},
+		"leave group":  {Groups: []string{"qa"}},
+		"other groups": {Groups: []string{"qa", "sre", "dev"}},
 	}
-	if _, err := server.CreateUpdateUser(editorCtx, "dev1", types.UserUpdateRequest{Groups: []string{"qa"}}, true); err == nil || !strings.Contains(err.Error(), "admin:manage") {
-		t.Fatalf("removal from an admin group by the editor must be denied: %v", err)
+	for name, req := range adminUpdates {
+		if _, err := server.CreateUpdateUser(editorCtx, "dev1", req, true); err == nil || !strings.Contains(err.Error(), "admin:manage") {
+			t.Fatalf("%s of an admin user by the editor must be denied: %v", name, err)
+		}
 	}
-	if _, err := server.CreateUpdateUser(editorCtx, "dev1", types.UserUpdateRequest{Groups: []string{"qa", "sre", "dev"}}, true); err != nil {
-		t.Fatalf("changing other groups while keeping the admin group must be allowed: %v", err)
+	if err := server.DeleteUser(editorCtx, "dev1"); err == nil || !strings.Contains(err.Error(), "admin:manage") {
+		t.Fatalf("delete of an admin user by the editor must be denied: %v", err)
+	}
+	if _, err := server.CreateUpdateUser(managerCtx, "dev1", types.UserUpdateRequest{Password: "yet-another-long-password"}, true); err != nil {
+		t.Fatalf("admin:manage holder must be allowed to set an admin's password: %v", err)
 	}
 	if _, err := server.CreateUpdateUser(trusted, "dev1", types.UserUpdateRequest{Groups: []string{}}, true); err != nil {
 		t.Fatalf("trusted UDS call must be allowed: %v", err)
+	}
+}
+
+// Admin held without a builtin user group: a direct grant, a config group
+// member entry or a regex: pattern naming the builtin principal. user:manage
+// must not be able to create, take over or delete such a user
+func TestBuiltinAdminPrincipalRequiresAdminManage(t *testing.T) {
+	server, db, trusted := newAdminManageTestServer(t)
+	defer db.Close()
+	live := server.GetDynamicConfig()
+	config, err := copyDynamicConfig(&live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.RBAC.Grants = append(config.RBAC.Grants,
+		types.RBACGrant{Description: "direct", Users: []string{"builtin:alice"}, Roles: []string{"openrun-admin"}, Targets: []string{"all"}},
+		types.RBACGrant{Description: "regex", Users: []string{"regex:builtin:ops-.*"}, Roles: []string{"adminmgr"}, Targets: []string{"all"}})
+	if _, err := server.UpdateDynamicConfig(trusted, config, false); err != nil {
+		t.Fatal(err)
+	}
+	editorCtx := rbacEnforcedCtx(trusted, "builtin:editor")
+	managerCtx := rbacEnforcedCtx(trusted, "builtin:manager")
+
+	// root: config group member, alice: direct grant, ops-1: regex, manager: admin:manage grant
+	admins := []string{"root", "alice", "ops-1", "manager"}
+	for _, name := range admins {
+		req := types.UserUpdateRequest{Password: "a-long-password"}
+		if _, err := server.CreateUpdateUser(editorCtx, name, req, false); err == nil || !strings.Contains(err.Error(), "admin:manage") {
+			t.Fatalf("create of %s by the editor must be denied: %v", name, err)
+		}
+		if _, err := server.GetUser(trusted, name); err == nil {
+			t.Fatalf("denied create must not store %s", name)
+		}
+		if _, err := server.CreateUpdateUser(managerCtx, name, req, false); err != nil {
+			t.Fatalf("create of %s by the admin:manage holder must be allowed: %v", name, err)
+		}
+		if _, err := server.CreateUpdateUser(editorCtx, name, types.UserUpdateRequest{Password: "another-long-password"}, true); err == nil || !strings.Contains(err.Error(), "admin:manage") {
+			t.Fatalf("password set of %s by the editor must be denied: %v", name, err)
+		}
+		if _, err := server.CreateUpdateUser(editorCtx, name, types.UserUpdateRequest{Unlock: true}, true); err == nil || !strings.Contains(err.Error(), "admin:manage") {
+			t.Fatalf("unlock of %s by the editor must be denied: %v", name, err)
+		}
+		if err := server.DeleteUser(editorCtx, name); err == nil || !strings.Contains(err.Error(), "admin:manage") {
+			t.Fatalf("delete of %s by the editor must be denied: %v", name, err)
+		}
+		if _, err := server.GetUser(trusted, name); err != nil {
+			t.Fatalf("denied delete must keep %s: %v", name, err)
+		}
+	}
+
+	// Non-admin users stay fully manageable with user:manage
+	if _, err := server.CreateUpdateUser(editorCtx, "dev2", types.UserUpdateRequest{Password: "a-long-password"}, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.CreateUpdateUser(editorCtx, "dev2", types.UserUpdateRequest{Password: "another-long-password", Unlock: true}, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.DeleteUser(editorCtx, "dev2"); err != nil {
+		t.Fatal(err)
+	}
+
+	// A token scoped without admin:manage does not pass, as with config updates
+	scoped := server.apiTokenRequestContext(trusted, "builtin:manager", nil, []string{"user:delete", "admin"}, InvokerRest, nil)
+	if err := server.DeleteUser(scoped, "alice"); err == nil || !strings.Contains(err.Error(), "admin:manage") {
+		t.Fatalf("delete with a token scoped without admin:manage must be denied: %v", err)
+	}
+	if err := server.DeleteUser(managerCtx, "alice"); err != nil {
+		t.Fatalf("delete by the admin:manage holder must be allowed: %v", err)
+	}
+	if err := server.DeleteUser(trusted, "root"); err != nil {
+		t.Fatalf("trusted UDS delete must be allowed: %v", err)
 	}
 }

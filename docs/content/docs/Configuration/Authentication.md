@@ -110,7 +110,7 @@ openrun user delete alice                 # also revokes the user's API keys
 
 - **Using it:** apps use this auth type with `--auth builtin`. Browsers get a login page; other clients authenticate with HTTP Basic auth, so `curl -u alice:mypassword https://example.com:25223/myapp` works.
 - **RBAC:** for [RBAC]({{< ref "RBAC" >}}), the user id is `builtin:alice` and the user's groups are matched by `group:` references in grants, the same way SSO provider groups are.
-- **Permissions:** managing users requires the `user:manage` permission (or the individual `user:read`, `user:create`, `user:update` and `user:delete` permissions); the `openrun-operator` role includes it. Creating or changing a user is a route to every permission its groups carry, so the write permissions must be named literally in API key scopes. Placing a user in a group that confers the `admin` permission (or removing one from it) additionally requires `admin:manage`, see [Managing admins]({{< ref "RBAC#managing-admins" >}}).
+- **Permissions:** managing users requires the `user:manage` permission (or the individual `user:read`, `user:create`, `user:update` and `user:delete` permissions); the `openrun-operator` role includes it. Creating or changing a user is a route to every permission its groups carry, so the write permissions must be named literally in API key scopes. Placing a user in a group that confers the `admin` permission (or removing one from it), and any change to a user who holds `admin` (password set, unlock, enable, disable, delete), additionally requires `admin:manage`, see [Managing admins]({{< ref "RBAC#managing-admins" >}}).
 
 | Rule | Detail |
 | :--- | :--- |

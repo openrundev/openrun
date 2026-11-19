@@ -7,6 +7,11 @@ This project uses a date based versioning system for tip releases.
 
 ## [Unreleased]
 
+### Security
+
+- Any change to a builtin user who holds the `admin` or `admin:manage` permission now requires `admin:manage`, in addition to the `user:*` permission. This covers setting the password, unlock, enable, disable and delete, and creating a user whose name an admin grant already matches. The check applies whichever way the user holds the permission: a group, a grant naming `builtin:<name>`, a config group entry or a `regex:` pattern. Previously only a change to the user's admin groups was checked, so a `user:manage` holder could set the password of an admin user and sign in as that user.
+  - The built-in `openrun-operator` role has `user:manage` but not `admin:manage`, so operators can no longer change or delete admin users. Calls over the unix domain socket are not affected.
+
 ## [v1.2611.130] - 2026-11-13
 
 ### Changed

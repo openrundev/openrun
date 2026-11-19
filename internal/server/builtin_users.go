@@ -379,6 +379,9 @@ func (s *Server) CreateUpdateUser(ctx context.Context, username string, req type
 		if err := s.enforceAdminGroupChange(ctx, nil, req.Groups); err != nil {
 			return false, err
 		}
+		if err := s.enforceAdminUserChange(ctx, username, req.Groups); err != nil {
+			return false, err
+		}
 		if req.Password == "" {
 			return false, fmt.Errorf("password is required to create a user")
 		}
@@ -430,10 +433,18 @@ func (s *Server) CreateUpdateUser(ctx context.Context, username string, req type
 			}
 			return false, err
 		}
+		newGroups := user.Groups
 		if req.Groups != nil {
+			newGroups = req.Groups
 			if err := s.enforceAdminGroupChange(ctx, user.Groups, req.Groups); err != nil {
 				return false, err
 			}
+		}
+		// Any change to an admin's account needs admin:manage, not only a
+		// group change: a password set, unlock or enable lets the caller sign
+		// in as that admin, a disable locks the admin out
+		if err := s.enforceAdminUserChange(ctx, username, user.Groups, newGroups); err != nil {
+			return false, err
 		}
 		changed, err := applyUserUpdate(user, req)
 		if err != nil {
@@ -479,6 +490,39 @@ func (s *Server) enforceAdminGroupChange(ctx context.Context, oldGroups, newGrou
 	return nil
 }
 
+// enforceAdminUserChange rejects a create, update or delete of a builtin user
+// who holds the admin permission or admin:manage under the live RBAC config,
+// or would hold it after the change, unless the caller holds admin:manage (or
+// admin). The principal builtin:<username> is evaluated against the grants
+// with its groups, so every route to admin is covered: a group, a direct
+// grant, a config group member entry or a regex: pattern matching the name.
+// Without this a user:* holder could set the password of an admin user (or
+// create the user an admin grant names) and sign in as that admin, or delete
+// an admin. groupSets are the user's groups before and/or after the change,
+// one entry per side on which the user exists (a nil set is a user without
+// groups). Trusted UDS calls are exempt like every other check
+func (s *Server) enforceAdminUserChange(ctx context.Context, username string, groupSets ...[]string) error {
+	if !s.rbacManager.APIEnforced(ctx) {
+		return nil
+	}
+	principal := string(types.AppAuthnBuiltin) + ":" + username
+	for _, groups := range groupSets {
+		holds, err := s.rbacManager.HoldsAdminAccess(principal, groups)
+		if err != nil {
+			return err
+		}
+		if !holds {
+			continue
+		}
+		if err := s.enforceGlobalPerm(ctx, types.PermissionAdminManage, ""); err != nil {
+			return fmt.Errorf("user %s holds the admin or admin:manage permission: creating, changing or deleting the user requires the admin:manage permission: %w",
+				username, err)
+		}
+		return nil
+	}
+	return nil
+}
+
 // applyUserUpdate applies the request to the row, reporting whether any
 // account field changed. A password set, disable or enable bumps the
 // credential version, which revokes the user's form-login sessions
@@ -517,6 +561,20 @@ func applyUserUpdate(user *types.BuiltinUser, req types.UserUpdateRequest) (bool
 func (s *Server) DeleteUser(ctx context.Context, username string) error {
 	if err := s.enforceGlobalPerm(ctx, types.PermissionUserDelete, ""); err != nil {
 		return err
+	}
+	if s.rbacManager.APIEnforced(ctx) {
+		// Deleting an admin locks them out, and frees the name for a user
+		// re-created with a known password when the admin grant names the user
+		user, err := s.db.GetBuiltinUser(ctx, username)
+		if err != nil {
+			if errors.Is(err, types.ErrUserNotFound) {
+				return fmt.Errorf("user %s does not exist", username)
+			}
+			return err
+		}
+		if err := s.enforceAdminUserChange(ctx, username, user.Groups); err != nil {
+			return err
+		}
 	}
 	if err := s.db.DeleteBuiltinUser(ctx, username); err != nil {
 		if errors.Is(err, types.ErrUserNotFound) {
