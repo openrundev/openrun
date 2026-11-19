@@ -164,6 +164,12 @@ parent = "compare"
 weight = 8
 
 [[menu.main]]
+name = "vs Octopus Deploy"
+pageRef = "/compare/octopus-deploy/"
+parent = "compare"
+weight = 9
+
+[[menu.main]]
 name = "Blog"
 pageRef = "/blog/"
 identifier = "blog"
