@@ -613,6 +613,28 @@ func (h *RBACManager) validateGrants(rbacConfig *types.RBACConfig, regexCache ma
 		// A malformed target glob would otherwise error every authorization
 		// check that evaluates the grant, denying unrelated valid grants
 		for _, target := range grant.Targets {
+			if target == "" {
+				// Matches nothing (see parseTarget). Tolerated here because
+				// this also runs when an already stored config is loaded,
+				// where an error would block the whole config; config updates
+				// reject it through ValidateGrantTargets
+				continue
+			}
+			if err := ValidateGlob(target); err != nil {
+				return fmt.Errorf("grant %d ('%s'): invalid target %q: %w", i, grant.Description, target, err)
+			}
+		}
+	}
+	return nil
+}
+
+// ValidateGrantTargets is the strict grant target validation for config
+// updates: on top of the glob checks done when a config is loaded, it rejects
+// empty target entries, which a stored config is allowed to carry (as entries
+// that match nothing)
+func ValidateGrantTargets(rbacConfig *types.RBACConfig) error {
+	for i, grant := range rbacConfig.Grants {
+		for _, target := range grant.Targets {
 			if err := ValidateGlob(target); err != nil {
 				return fmt.Errorf("grant %d ('%s'): invalid target %q: %w", i, grant.Description, target, err)
 			}

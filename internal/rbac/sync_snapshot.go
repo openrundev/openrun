@@ -175,6 +175,31 @@ func (a *SyncAuthorizer) Authorize(perm types.RBACPermission, target types.AppPa
 	return false, nil
 }
 
+// AuthorizeAllTargets mirrors RBACManager.AuthorizeAllTargetsAPI against the
+// snapshot: admin, or a grant conferring perm with an all target entry
+func (a *SyncAuthorizer) AuthorizeAllTargets(perm types.RBACPermission) (bool, error) {
+	if a.userId == "" {
+		return false, nil
+	}
+	if a.scopes != nil && !ScopesAllow(a.scopes, perm) {
+		return false, nil
+	}
+	if a.admin {
+		return true, nil
+	}
+	for _, grant := range a.grants {
+		if !grant.role.matches(perm) {
+			continue
+		}
+		for _, target := range grant.targets {
+			if target.err == nil && target.all {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
 // syncRBACKey is the context key pre-boxed as an any value, see the
 // note on the key list in system/thread_local.go
 var syncRBACKey any = types.SYNC_RBAC

@@ -139,6 +139,7 @@ In addition to any roles you define, OpenRun ships a set of built-in roles that 
 - `service:bind` provisions binding accounts on the service. It is needed to create base/auto bindings from it and to link it as the staging service of another service.
 - `binding:use` attaches the binding to an app, or derives a new binding from it. `binding:reveal` reads back the binding account credentials.
 - Like `app:approve`, `binding:reveal` is never implied by `binding:manage`: it needs an explicit grant, and binding owners do not hold it by default (add it to `owner_permissions.binding` to opt owners in).
+- An empty target entry (`""`) is rejected when the config is updated; it is not a synonym for `all`.
 - A grant whose targets only name app paths confers no service or binding permissions; use `service:**` / `binding:/**` entries (or `all`) to grant them broadly.
 - Attaching a binding to an app requires `binding:use` on the binding (or `service:bind` on the service for auto bindings created from a service source), in addition to the app permission for the app update itself.
 - Service and binding list operations return only the entries the user can read.
@@ -159,7 +160,7 @@ In addition to any roles you define, OpenRun ships a set of built-in roles that 
 
 - It is never implied by `app:manage`, never matched by a permission glob and never granted through ownership. It has to be granted by its literal name (or held via the `admin` super-user permission, e.g. the `openrun-admin` role).
 - Setting the `--approve` flag on a create/reload/apply, or calling approve directly, requires this permission on every matched app.
-- Creating a sync entry with `approve` set requires `app:approve` granted with target `all`, since the entry's glob can match apps created later.
+- Creating a sync entry with `approve` set requires `app:approve` granted with target `all` (or `*:**`), since the entry's glob can match apps created later. Other globs do not qualify, even broad ones like `/**` (which covers the default domain only).
 
 ## Managing admins
 

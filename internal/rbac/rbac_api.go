@@ -104,7 +104,7 @@ func (h *RBACManager) APIEnforced(ctx context.Context) bool {
 // Returns true without any evaluation when enforcement is not active (see APIEnforced)
 func (h *RBACManager) AuthorizeAPI(ctx context.Context, perm types.RBACPermission,
 	target types.AppPathDomain, owner string) (bool, error) {
-	return h.authorizeAPICtx(ctx, perm, target, "", owner)
+	return h.authorizeAPICtx(ctx, perm, target, "", owner, false)
 }
 
 // AuthorizeResourceAPI checks a service or binding scoped permission against the
@@ -113,7 +113,7 @@ func (h *RBACManager) AuthorizeAPI(ctx context.Context, perm types.RBACPermissio
 // not known); the owner holds the configured owner permissions on their entries
 func (h *RBACManager) AuthorizeResourceAPI(ctx context.Context, perm types.RBACPermission,
 	resourceId string, owner string) (bool, error) {
-	return h.authorizeAPICtx(ctx, perm, types.AppPathDomain{}, resourceId, owner)
+	return h.authorizeAPICtx(ctx, perm, types.AppPathDomain{}, resourceId, owner, false)
 }
 
 // AuthorizeGlobalAPI checks a global (untargeted) permission like sync:create
@@ -121,13 +121,24 @@ func (h *RBACManager) AuthorizeResourceAPI(ctx context.Context, perm types.RBACP
 // ("" when not applicable); the owner holds the configured owner permissions on
 // their entries
 func (h *RBACManager) AuthorizeGlobalAPI(ctx context.Context, perm types.RBACPermission, owner string) (bool, error) {
-	return h.authorizeAPICtx(ctx, perm, types.AppPathDomain{}, "", owner)
+	return h.authorizeAPICtx(ctx, perm, types.AppPathDomain{}, "", owner, false)
+}
+
+// AuthorizeAllTargetsAPI checks that the scoped permission perm is held on
+// every target: through the admin permission or a grant conferring perm with
+// an "all" (or *:**) target entry. Used where the operation covers apps that
+// do not exist yet (an approving sync entry), so no glob of existing targets
+// is sufficient. Deliberately not a probe with an empty app target: globs
+// like ** or /** match the empty path without covering every domain
+func (h *RBACManager) AuthorizeAllTargetsAPI(ctx context.Context, perm types.RBACPermission) (bool, error) {
+	return h.authorizeAPICtx(ctx, perm, types.AppPathDomain{}, "", "", true)
 }
 
 // authorizeAPICtx is the shared context gating for the management API checks,
-// see AuthorizeAPI
+// see AuthorizeAPI. allTargets requires the permission on every target (see
+// AuthorizeAllTargetsAPI); target, resourceId and owner are not used then
 func (h *RBACManager) authorizeAPICtx(ctx context.Context, perm types.RBACPermission,
-	target types.AppPathDomain, resourceId string, owner string) (bool, error) {
+	target types.AppPathDomain, resourceId string, owner string, allTargets bool) (bool, error) {
 	if system.IsAppRBACEnabled(ctx) {
 		// Credential scope ceiling: a scoped bearer credential (remote CLI
 		// PAT, MCP token) must cover the permission before the user's grants
@@ -145,6 +156,9 @@ func (h *RBACManager) authorizeAPICtx(ctx context.Context, perm types.RBACPermis
 		}
 		// live config enforcement; test URL directives and sync snapshots are
 		// only ever attached to contexts where this is not set
+		if allTargets {
+			return h.authorizeAllTargets(system.GetContextUserId(ctx), system.GetContextGroups(ctx), perm)
+		}
 		return h.authorizeAPIInt(system.GetContextUserId(ctx), system.GetContextGroups(ctx), perm, target, resourceId, owner)
 	}
 	if dirs := GetUrlDirectives(ctx); dirs.HasPerms() {
@@ -156,6 +170,9 @@ func (h *RBACManager) authorizeAPICtx(ctx context.Context, perm types.RBACPermis
 	if sa := GetSyncAuthorizer(ctx); sa != nil {
 		// background sync run: evaluate against the creator authorization
 		// frozen on the sync entry, not the live config
+		if allTargets {
+			return sa.AuthorizeAllTargets(perm)
+		}
 		return sa.Authorize(perm, target, resourceId, owner)
 	}
 	if system.IsTrustedOperation(ctx) || system.AppRBACMarkerPresent(ctx) || !h.ConfigEnabled() {
@@ -172,6 +189,22 @@ func (h *RBACManager) authorizeAPICtx(ctx context.Context, perm types.RBACPermis
 	// admin authority
 	h.Warn().Msgf("Denying management API call with unattributed context: perm %s target %s%s", perm, target, resourceId)
 	return false, nil
+}
+
+// authorizeAllTargets is the live config evaluation of AuthorizeAllTargetsAPI.
+// The owner virtual grant never applies: it is per asset
+func (h *RBACManager) authorizeAllTargets(user string, groups []string, perm types.RBACPermission) (bool, error) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if user == "" {
+		return false, nil // fail closed, consistent with authorizeAPIIntLocked
+	}
+	if isAdmin, err := h.hasAdminPermLocked(user, groups); err != nil || isAdmin {
+		return isAdmin, err
+	}
+	return h.holdsPermOnTargetLocked(user, groups, perm, func(target parsedTarget) bool {
+		return target.all
+	})
 }
 
 func (h *RBACManager) authorizeAPIInt(user string, groups []string, perm types.RBACPermission,
@@ -313,6 +346,16 @@ func (h *RBACManager) holdsPermSomewhereLocked(user string, groups []string, per
 	if user == "" {
 		return false, nil // fail closed, consistent with authorizeAPIIntLocked
 	}
+	return h.holdsPermOnTargetLocked(user, groups, perm, func(target parsedTarget) bool {
+		return target.all || target.kind == kind
+	})
+}
+
+// holdsPermOnTargetLocked reports whether a grant matching the user confers
+// perm and has a well formed target entry accepted by accept. Callers must
+// hold h.mu
+func (h *RBACManager) holdsPermOnTargetLocked(user string, groups []string, perm types.RBACPermission,
+	accept func(target parsedTarget) bool) (bool, error) {
 	for i, grant := range h.rbacConfig.Grants {
 		roleMatched := false
 		for _, role := range grant.Roles {
@@ -332,7 +375,7 @@ func (h *RBACManager) holdsPermSomewhereLocked(user string, groups []string, per
 			continue
 		}
 		for _, target := range h.resolvedGrants[i].targets {
-			if target.err == nil && (target.all || target.kind == kind) {
+			if target.err == nil && accept(target) {
 				return true, nil
 			}
 		}

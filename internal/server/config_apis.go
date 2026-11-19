@@ -499,11 +499,15 @@ func (s *Server) DeleteConfigValue(ctx context.Context, section, key string, ver
 // with no grants every principal except admin loses every app and
 // management API, which is never an intended dynamic update (the default
 // config ships one grant; dev/test setups without enforcement use
-// security.unsafe_disable_rbac). Applies to dynamic updates only - a stored
-// config is never rewritten by this check
+// security.unsafe_disable_rbac). Also rejects empty grant target entries,
+// which a stored config may carry (as entries matching nothing). Applies to
+// dynamic updates only - a stored config is never rewritten by this check
 func (s *Server) validateRBACGrants(candidate *types.RBACConfig) error {
 	if s.rbacManager.ConfigEnabled() && len(candidate.Grants) == 0 {
 		return fmt.Errorf("rbac.grants: at least one grant is required while RBAC is enforced - an empty grant list would lock every user except admin out of every app and management API")
+	}
+	if err := rbac.ValidateGrantTargets(candidate); err != nil {
+		return fmt.Errorf("rbac.grants: %w", err)
 	}
 	return nil
 }

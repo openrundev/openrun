@@ -253,13 +253,23 @@ func (s *Server) enforceResourcePerm(ctx context.Context, perm types.RBACPermiss
 	return nil
 }
 
-// enforceApproveAllApps requires app:approve granted on all apps: the check
-// runs with an empty app target, which only a grant targeting "all" (or the
-// equivalent *:** glob) matches. Used by the sync entry paths, where the
-// entry's glob can match apps created in the future, so a path-scoped grant
-// is not sufficient
+// enforceApproveAllApps requires app:approve granted on all apps: admin, or a
+// grant conferring it with an "all" (or the equivalent *:**) target entry.
+// Used by the sync entry paths, where the entry's glob can match apps created
+// in the future, so a path-scoped grant is not sufficient - including globs
+// like ** or /**, which cover the default domain only
 func (s *Server) enforceApproveAllApps(ctx context.Context) error {
-	return s.enforceGlobalPerm(ctx, types.PermissionApprove, "")
+	if !s.rbacManager.APIEnforced(ctx) {
+		return nil
+	}
+	authorized, err := s.rbacManager.AuthorizeAllTargetsAPI(ctx, types.PermissionApprove)
+	if err != nil {
+		return err
+	}
+	if !authorized {
+		return s.rbacDenied(ctx, types.PermissionApprove, `all apps (needs a grant with target "all")`)
+	}
+	return nil
 }
 
 // stagedUpdatePerms maps the StagedUpdate op name to the required permission

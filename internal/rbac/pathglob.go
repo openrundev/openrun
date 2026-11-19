@@ -84,6 +84,12 @@ func splitGlob(appPathGlob string) (domain, app string, err error) {
 // a service:<id glob> entry (matched against <type>/<name> service ids) or a
 // binding:<path glob> entry (matched against binding paths)
 func ValidateGlob(targetGlob string) error {
+	if targetGlob == "" {
+		// An empty app glob means all apps for the CLI/API glob arguments
+		// (see ParseGlob); as a grant target that would silently widen the
+		// grant to every app, service and binding
+		return fmt.Errorf("target cannot be empty, use \"all\" to target every app, service and binding")
+	}
 	if pattern, ok := strings.CutPrefix(targetGlob, TargetServicePrefix); ok {
 		if pattern == "" {
 			return fmt.Errorf("service target glob cannot be empty")
@@ -126,6 +132,8 @@ const (
 	targetKindApp targetKind = iota
 	targetKindService
 	targetKindBinding
+	// targetKindNone is an entry that matches nothing: the empty target string
+	targetKindNone
 )
 
 // Grant target entry prefixes for the non-app target kinds. A target entry
@@ -144,7 +152,7 @@ const (
 // match identically to ParseGlob with a single entry
 type parsedTarget struct {
 	kind          targetKind
-	all           bool   // entry matches every target of every kind ("", "all", *:**)
+	all           bool   // entry matches every target of every kind ("all", *:**)
 	domainPattern string // app kind: "/" + domain pattern, "" when the glob has no domain part
 	pattern       string // app kind: the app path pattern; service/binding kind: the id/path pattern
 	err           error  // parse error, returned on every match attempt (fail closed)
@@ -154,7 +162,13 @@ type parsedTarget struct {
 // in the returned target's err and fails every match (config validation
 // rejects these upfront for grants; this is the backstop for stored values)
 func parseTarget(targetGlob string) parsedTarget {
-	if targetGlob == "*:**" || targetGlob == "" || strings.ToLower(targetGlob) == "all" {
+	if targetGlob == "" {
+		// Unlike the CLI/API app glob arguments, an empty grant target is not
+		// "all": it matches nothing. Config updates reject it; a value stored
+		// before that validation existed must not act as a full wildcard
+		return parsedTarget{kind: targetKindNone}
+	}
+	if targetGlob == "*:**" || strings.ToLower(targetGlob) == "all" {
 		return parsedTarget{all: true}
 	}
 	if pattern, ok := strings.CutPrefix(targetGlob, TargetServicePrefix); ok {

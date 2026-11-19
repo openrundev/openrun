@@ -11,6 +11,8 @@ This project uses a date based versioning system for tip releases.
 
 - Any change to a builtin user who holds the `admin` or `admin:manage` permission now requires `admin:manage`, in addition to the `user:*` permission. This covers setting the password, unlock, enable, disable and delete, and creating a user whose name an admin grant already matches. The check applies whichever way the user holds the permission: a group, a grant naming `builtin:<name>`, a config group entry or a `regex:` pattern. Previously only a change to the user's admin groups was checked, so a `user:manage` holder could set the password of an admin user and sign in as that user.
   - The built-in `openrun-operator` role has `user:manage` but not `admin:manage`, so operators can no longer change or delete admin users. Calls over the unix domain socket are not affected.
+- An empty string in a grant's `targets` no longer means `all`. It now matches nothing, and config updates reject it. A stored config with such an entry still loads, but the entry has to be removed (or changed to `all`) before the config can be updated again.
+- Creating a sync entry with `approve` set now requires `app:approve` through a grant with target `all` or `*:**` (or the `admin` permission). Globs like `**` and `/**`, which cover the default domain only, were previously accepted. Existing sync entries are not affected.
 
 ## [v1.2611.130] - 2026-11-13
 
