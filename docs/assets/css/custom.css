@@ -480,3 +480,10 @@ html.dark .demo-button-menu a:focus-visible {
 html.dark .demo-button-menu small {
   color: #9ca3af;
 }
+
+/* Navbar dropdowns: the theme caps the menu at 16rem (max-h-64) and scrolls,
+   which hides entries past the eighth (the Compare menu). Show the whole list,
+   scrolling only when the viewport is too short. */
+ul.hextra-nav-menu-items {
+  max-height: calc(100vh - var(--navbar-height, 4rem) - 1rem);
+}
