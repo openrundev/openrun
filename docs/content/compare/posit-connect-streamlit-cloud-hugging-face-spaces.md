@@ -13,12 +13,13 @@ keywords:
   - Streamlit authentication
   - deploy Gradio app
   - deploy Shiny for Python
+  - deploy R Shiny app
   - open source data app hosting
 ---
 
 Posit Connect, Streamlit Community Cloud and Hugging Face Spaces are the common ways to share data apps built with Streamlit, Gradio, Shiny and similar frameworks. Streamlit Community Cloud and Hugging Face Spaces are hosted services aimed at public apps and demos. Posit Connect is a commercial product for sharing data science work inside a company. OpenRun is an open-source platform which hosts the same apps on your own server or Kubernetes cluster, with single sign-on and access control for every app.
 
-**Summary**: Choose OpenRun to host internal data apps on your own infrastructure, close to your data, with SSO, RBAC, audit logs and deployment from Git, without per-user licensing. Choose Streamlit Community Cloud to share a public Streamlit app for free. Choose Hugging Face Spaces for public machine learning demos and apps which need GPUs. Choose Posit Connect if your team works mainly in R, publishes scheduled reports and wants a commercially supported product.
+**Summary**: Choose OpenRun to host internal data apps on your own infrastructure, close to your data, with SSO, RBAC, audit logs and deployment from Git, without per-user licensing. Choose Streamlit Community Cloud to share a public Streamlit app for free. Choose Hugging Face Spaces for public machine learning demos and apps which need GPUs. Choose Posit Connect if your team publishes R Markdown and Quarto reports on a schedule, uses Plumber and pins and wants a commercially supported product.
 
 ## Hosting Data Apps for a Team
 
@@ -35,6 +36,7 @@ OpenRun is built for this case. Apps are declared in a config file in Git:
 app(path="/sales", source="github.com/myorg/sales-dashboard", spec="python-streamlit", auth="oidc_okta")
 app(path="/forecast", source="github.com/myorg/forecast-demo", spec="python-gradio", auth="oidc_okta")
 app(path="/survey", source="github.com/myorg/survey-explorer", spec="python-shiny", auth="oidc_okta")
+app(path="/trials", source="github.com/myorg/trials-explorer", spec="r-shiny", auth="oidc_okta")
 ```
 
 One command sets up the pipeline:
@@ -53,7 +55,7 @@ The `auth` property selects the login required for the app, here an OIDC provide
 | ---------------------------------- | ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | Hosting                            | Self-hosted, on a server with Docker or Podman, or on Kubernetes                                 | Self-hosted on Linux; Posit Connect Cloud is the hosted version                              | Hosted service, in the United States                                | Hosted service                                                         |
 | License and price                  | Open source, Apache-2.0, free                                                                    | Commercial license, priced through sales, based on named users                               | Free                                                                | Static Spaces are free; Gradio and Docker Spaces need a paid plan (PRO from $9 a month); paid hardware by the hour |
-| Supported apps                     | Any app which runs in a container; specs for Streamlit, Gradio, Shiny for Python, NiceGUI, Reflex, FastHTML, Flask and WSGI/ASGI apps such as Dash and FastAPI | Shiny for R and Python, Streamlit, Dash, Gradio, Bokeh, Panel, Quarto, R Markdown, Jupyter, APIs | Streamlit only                                                      | Gradio, Docker and static HTML                                         |
+| Supported apps                     | Any app which runs in a container; specs for Streamlit, Gradio, Shiny for R and Python, NiceGUI, Reflex, FastHTML, Flask and WSGI/ASGI apps such as Dash and FastAPI | Shiny for R and Python, Streamlit, Dash, Gradio, Bokeh, Panel, Quarto, R Markdown, Jupyter, APIs | Streamlit only                                                      | Gradio, Docker and static HTML                                         |
 | Deploy from Git                    | Yes, any Git host                                                                                | Yes, Git-backed content polled about every 15 minutes; also publishing from the IDE or CLI    | Yes, GitHub only                                                    | Push to the Space repository; sync from GitHub with an Actions workflow |
 | App creation and config through Git | Yes, a declarative config file covers all apps                                                  | No, content is set up through the UI, CLI or API                                             | No, apps are created in the web UI                                  | Per-app settings in the README; apps are created on the Hub            |
 | SSO for viewers (OAuth/OIDC/SAML)  | Yes, for every app                                                                               | Yes, SAML, OIDC, LDAP, PAM or proxied authentication                                         | No, Google sign-in or emailed link for invited viewers              | Hugging Face accounts; SAML and OIDC SSO on Team and Enterprise plans  |
@@ -101,7 +103,7 @@ All four platforms stop idle apps. On the hosted free tiers this happens after 1
 - **No infrastructure to run.** Streamlit Community Cloud and Hugging Face Spaces need no server. OpenRun needs a server or a Kubernetes cluster which you operate.
 - **Public sharing and discovery.** Both hosted services have a community gallery, and a public demo which should be found by other people belongs there. Streamlit Community Cloud is free. On Hugging Face, static Spaces are free, and creating a Gradio or Docker Space needs a paid plan, with a limited exception for ZeroGPU Spaces on personal accounts.
 - **GPUs on demand.** Hugging Face Spaces rents GPU hardware by the hour and offers shared ZeroGPU capacity. With OpenRun, apps can use only the hardware of the servers you provide.
-- **R and report publishing.** Posit Connect has first-class support for Shiny for R, R Markdown, Quarto, Plumber and pins, renders reports on a schedule and sends them by email, and publishes from RStudio, Positron and VS Code. OpenRun has no bundled spec for R; an R Shiny app needs a Dockerfile in its repo. OpenRun does not render notebooks or reports.
+- **R and report publishing.** Posit Connect has first-class support for Shiny for R, R Markdown, Quarto, Plumber and pins, renders reports on a schedule and sends them by email, and publishes from RStudio, Positron and VS Code. OpenRun's R support is the [`r-shiny` spec]({{< ref "docs/container/appspecs/#the-r-shiny-spec" >}}) for Shiny apps, which runs one R process per app; Connect can run several R processes for an app and tune them per content item. Other R content, such as a Plumber API, needs a Dockerfile in its repo. OpenRun does not render notebooks or reports.
 - **Package and runtime management.** Posit Connect rebuilds the R or Python environment of each content item on the server. OpenRun relies on the container image built from the app's dependency file.
 - **Commercial support.** Posit sells support with Connect. OpenRun is a community supported open-source project.
 
@@ -123,7 +125,7 @@ Hugging Face Spaces hosts machine learning demos next to the models and datasets
 
 ### Is OpenRun an open-source alternative to Posit Connect?
 
-Yes, for hosting Python data apps and other web apps for a team. OpenRun is Apache-2.0 licensed and provides SSO, RBAC and audit logs for apps built with Streamlit, Gradio, Shiny for Python, Dash, FastAPI and other frameworks, each running in its own container. It is not a replacement for Posit Connect's R publishing features: scheduled R Markdown and Quarto reports, Plumber APIs without a Dockerfile, pins and publishing from the RStudio IDE.
+Yes, for hosting Python data apps and other web apps for a team. OpenRun is Apache-2.0 licensed and provides SSO, RBAC and audit logs for apps built with Streamlit, Gradio, Shiny for R and Python, Dash, FastAPI and other frameworks, each running in its own container. It is not a replacement for Posit Connect's R publishing features: scheduled R Markdown and Quarto reports, Plumber APIs without a Dockerfile, pins and publishing from the RStudio IDE.
 
 ### How do I self-host a Streamlit app with authentication?
 
@@ -141,7 +143,7 @@ Yes. The `python-gradio` spec deploys a Gradio app from its source repo with no 
 
 ### Does OpenRun support Shiny apps?
 
-Shiny for Python apps are supported with the `python-shiny` spec. Shiny for R apps can be deployed with the `container` spec, which needs a Dockerfile in the app repo.
+Yes. Shiny for Python apps use the `python-shiny` spec and Shiny for R apps use the [`r-shiny` spec]({{< ref "docs/container/appspecs/#the-r-shiny-spec" >}}). Neither needs a Dockerfile: OpenRun builds the image from the app source. For R, packages are restored from an `renv.lock` if the repo has one, otherwise they are detected from the source. Each app runs as a single process shared by its users.
 
 ### Do apps go to sleep on OpenRun?
 

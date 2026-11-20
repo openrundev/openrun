@@ -170,6 +170,12 @@ parent = "compare"
 weight = 9
 
 [[menu.main]]
+name = "vs ShinyProxy"
+pageRef = "/compare/shinyproxy/"
+parent = "compare"
+weight = 10
+
+[[menu.main]]
 name = "Blog"
 pageRef = "/blog/"
 identifier = "blog"

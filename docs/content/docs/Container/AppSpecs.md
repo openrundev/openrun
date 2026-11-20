@@ -33,6 +33,22 @@ will create an app at `https://localhost:25223/streamlit_app`. On the first API 
 
 The `container` spec is a generic spec which can be used when there is a `Dockerfile` defined in the app source code.
 
+### The r-shiny spec
+
+The `r-shiny` spec runs [Shiny for R](https://shiny.posit.co/) apps. The source needs only the app code, an `app.R` file or `ui.R` and `server.R`:
+
+```shell
+openrun app create --spec r-shiny --approve \
+  github.com/rstudio/shiny-examples/001-hello /hello
+```
+
+The app works on a path, as above, or on a domain such as `hello.example.com:/`. The image is based on [r2u](https://eddelbuettel.github.io/r2u/), which provides CRAN packages as Ubuntu binaries for amd64 and arm64, so packages install in seconds with their system libraries and are not compiled.
+
+- **Detected packages:** without a lockfile, the build scans the source for `library()`, `require()` and `pkg::fn` references (and a `DESCRIPTION` file) and installs the current CRAN version of each package.
+- **Pinned packages:** if the source has an `renv.lock`, the build restores it instead. Pinned versions are installed from the repositories named in the lockfile, which can mean compiling from source. Use a lockfile for packages which are not on CRAN.
+- **App location:** set the `app_file` param when the app is not at the source root, for example `--param app_file=dashboard` or `--param app_file=dashboard/main.R`.
+- **Users share the process:** the app runs as one R process, in a container shared by all the users of the app. R is single-threaded, so a long synchronous computation in one session delays the others. Use [`ExtendedTask`](https://shiny.posit.co/r/articles/improve/nonblocking/) or promises for slow operations.
+
 ### Static specs
 
 The `static` specs serve files from the app source.
@@ -91,6 +107,7 @@ The specs defined currently are:
 | python-streamlit-poetry |  | <ul><li><b>app_file</b> : The file name of the streamlit app to run. Default streamlit_app.py</li></ul> | Yes | Installs packages using poetry |
 | python-fasthtml |  | <ul><li><b>APP_MODULE</b>: The module:app for the ASGI app. Defaults to app:app, meaning app in app.py</li> </ul> | Depends on app | Runs app using uvicorn | `openrun app create --approve --spec python-fasthtml --param APP_MODULE=basic_ws:app  https://github.com/AnswerDotAI/fasthtml/examples fasthtmlapp.localhost:/` |
 | python-gradio |  | <ul><li><b>app_file</b> : The file name of the gradio app to run. Default run.py</li></ul> | Yes |  | `openrun app create --spec python-gradio --approve github.com/gradio-app/gradio/demo/blocks_flag /gradio_app` |
+| r-shiny |  | <ul><li><b>app_file</b> : The Shiny app to run, a directory with app.R (or ui.R and server.R) or an .R file. Default is the source root</li></ul> | Yes | Shiny for R. Packages come from `renv.lock` if present, else they are detected from the source | `openrun app create --spec r-shiny --approve github.com/rstudio/shiny-examples/001-hello /hello` |
 | go | <ul><li><b>port</b> : The port number within container</li></ul> | <ul><li><b>MAIN_PACKAGE</b> : The go module to build, default ".". Pass as a `--carg` instead of `--param`.</li><li><b>APP_ARGS</b> : Args to pass to the app</li></ul> | Depends on app | CGO is disabled; go.mod has to be present; app should bind to 0.0.0.0 | `openrun app create --approve --spec go --param port=8080 --param APP_ARGS="-addr 0.0.0.0:8080" --branch master github.com/golang/example/helloserver /goapp` |
 
 A spec app can add [actions]({{< ref "docs/actions/#actions-for-spec-apps" >}}) with an `actions.star` file (and `action_params.star` for the params the actions present) next to its code, without copying the spec's `app.star`.
