@@ -9,6 +9,7 @@ Homepage: https://openrun.dev/
 Package: openrun
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}, adduser
+Conflicts: openrun-pro
 Description: Declarative web app deployment platform
  OpenRun is an open source alternative to Google Cloud Run and AWS App
  Runner. It provides declarative, GitOps based deployment of web apps

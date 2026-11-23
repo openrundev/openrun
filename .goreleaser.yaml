@@ -1,11 +1,27 @@
 version: 2
 project_name: openrun
 
+# This one config builds both release channels. The channel comes from
+# internal/types/CHANNEL, which is tip on main and pro on a pro-X.Y branch,
+# so main and the Pro branches share this file unchanged. The binary embeds
+# the same file and reports the channel and license itself.
+#   tip: openrun packages and image, Apache-2.0, GitHub latest release
+#   pro: openrun-pro packages and image, PolyForm Free Trial
+env:
+  - CHANNEL={{ trim (readFile "internal/types/CHANNEL") }}
+  # false for a patch release of an older line, see the brews section
+  - LATEST={{ envOrDefault "OPENRUN_LATEST" "true" }}
+  - PKG={{ if eq (trim (readFile "internal/types/CHANNEL")) "pro" }}openrun-pro{{ else }}openrun{{ end }}
+  - LICENSE_ID={{ if eq (trim (readFile "internal/types/CHANNEL")) "pro" }}LicenseRef-PolyForm-Free-Trial-1.0.0{{ else }}Apache-2.0{{ end }}
+
 release:
   github:
     owner: openrundev
     name: openrun
-  name_template: "Release {{.Tag}}"
+  name_template: '{{ if eq .Env.CHANNEL "pro" }}OpenRun Pro {{ .Version }}{{ else }}Release {{ .Tag }}{{ end }}'
+  # A Pro release never becomes the GitHub latest release, the installers
+  # resolve the latest Tip release through it
+  make_latest: '{{ eq .Env.CHANNEL "tip" }}'
   draft: false
   prerelease: "auto"
 
@@ -38,9 +54,6 @@ builds:
       - -w
       - -X github.com/openrundev/openrun/internal/types.gitCommit={{.ShortCommit}}
       - -X github.com/openrundev/openrun/internal/types.gitVersion={{.Version}}
-      # Release channel and license of this build. This config builds the Tip channel
-      - -X github.com/openrundev/openrun/internal/types.gitChannel=tip
-      - -X github.com/openrundev/openrun/internal/types.gitLicense=Apache-2.0
     env:
       - GO111MODULE=on
       - CGO_ENABLED=0
@@ -67,11 +80,21 @@ builds:
           output: true
 
 nfpms:
-  - file_name_template: "{{.ProjectName}}-{{.Tag}}-{{.Arch}}{{if .Arm}}{{.Arm}}{{end}}"
+  - package_name: "{{ .Env.PKG }}"
+    # openrun and openrun-pro install the same binary, so only one can be
+    # installed. conflicts and license are not templated by goreleaser. The
+    # two lines marked channel-conflicts and channel-license hold the Tip
+    # values, deploy/release_channel.sh goreleaser-config rewrites them for
+    # a Pro release and the release workflow runs goreleaser with the config
+    # it writes. A package must not list itself here, older rpm versions
+    # then refuse to reinstall it
+    conflicts:
+      - openrun-pro # channel-conflicts
+    file_name_template: "{{ .Env.PKG }}-{{.Tag}}-{{.Arch}}{{if .Arm}}{{.Arm}}{{end}}"
     homepage: https://openrun.dev/
     description: Open source alternative to Google Cloud Run and AWS App Runner.
     maintainer: Ajay Kidave <contact@openrun.dev>
-    license: Apache 2.0
+    license: Apache-2.0 # channel-license
     vendor: ClaceIO LLC.
     formats:
       - deb
@@ -86,14 +109,14 @@ checksum:
   algorithm: sha256
 
 archives:
-  - name_template: "{{.ProjectName}}-{{.Tag}}-{{.Os}}-{{.Arch}}{{if .Arm}}{{.Arm}}{{end}}"
+  - name_template: "{{ .Env.PKG }}-{{.Tag}}-{{.Os}}-{{.Arch}}{{if .Arm}}{{.Arm}}{{end}}"
     id: zip-archives
     wrap_in_directory: true
     format: zip
     files:
       - README.md
       - LICENSE
-  - name_template: "{{.ProjectName}}-{{.Tag}}-{{.Os}}-{{.Arch}}{{if .Arm}}{{.Arm}}{{end}}"
+  - name_template: "{{ .Env.PKG }}-{{.Tag}}-{{.Os}}-{{.Arch}}{{if .Arm}}{{.Arm}}{{end}}"
     id: targz-archives
     wrap_in_directory: true
     format: tar.gz
@@ -118,8 +141,13 @@ changelog:
     - title: Other
       order: 999
 
+# Both channels are published, as separate packages that conflict with each
+# other: openrun for Tip, openrun-pro for Pro
 brews:
-  - name: openrun
+  - name: "{{ .Env.PKG }}"
+    license: "{{ .Env.LICENSE_ID }}"
+    conflicts:
+      - '{{ if eq .Env.CHANNEL "pro" }}openrun{{ else }}openrun-pro{{ end }}'
     homepage: https://openrun.dev
     ids: [targz-archives]
     repository:
@@ -133,7 +161,10 @@ brews:
       working_dir HOMEBREW_PREFIX
       log_path var/"log/openrun.log"
       error_log_path var/"log/openrun.log"
-    skip_upload: auto
+    # The tap holds one version per formula. A patch release of an older Pro
+    # line must not replace the formula of a newer line, OPENRUN_LATEST is set
+    # by deploy/release_channel.sh ci-env in the release workflow
+    skip_upload: '{{ if eq .Env.LATEST "false" }}true{{ else }}auto{{ end }}'
     install: |-
       bin.install "openrun"
     post_install: |-
@@ -153,16 +184,19 @@ brews:
       end
 
 winget:
-  - name: OpenRun
+  - name: '{{ if eq .Env.CHANNEL "pro" }}OpenRun Pro{{ else }}OpenRun{{ end }}'
     publisher: OpenRunDev
-    package_identifier: OpenRunDev.OpenRun
+    # Not templated by goreleaser, deploy/release_channel.sh goreleaser-config
+    # sets OpenRunDev.OpenRunPro on this line for a Pro release
+    package_identifier: OpenRunDev.OpenRun # channel-winget-id
     publisher_url: https://openrun.dev
     publisher_support_url: https://github.com/openrundev/openrun/issues
     short_description: Declarative web app deployment platform
-    description: Open source alternative to Google Cloud Run and AWS App Runner.
+    description: '{{ if eq .Env.CHANNEL "pro" }}Pro release of OpenRun, internal tools deployment platform.{{ else }}Internal tools deployment platform.{{ end }}'
     homepage: https://openrun.dev
-    license: Apache-2.0
-    license_url: https://github.com/openrundev/openrun/blob/main/LICENSE
+    license: "{{ .Env.LICENSE_ID }}"
+    # The Pro license is the LICENSE file of the released commit
+    license_url: 'https://github.com/openrundev/openrun/blob/{{ if eq .Env.CHANNEL "pro" }}{{ .Tag }}{{ else }}main{{ end }}/LICENSE'
     release_notes_url: "https://github.com/openrundev/openrun/releases/tag/{{.Tag}}"
     copyright: ClaceIO LLC.
     ids: [zip-archives]
@@ -178,7 +212,7 @@ winget:
     repository:
       owner: openrundev
       name: winget-pkgs
-      branch: "openrun-{{.Version}}"
+      branch: "{{ .Env.PKG }}-{{.Version}}"
       token: "{{ .Env.WINGET_GITHUB_TOKEN }}"
       pull_request:
         enabled: true
@@ -196,13 +230,14 @@ dockers_v2:
     # Build both platforms and publish a single multi-arch manifest
     platforms: [linux/amd64, linux/arm64]
     images:
-      - ghcr.io/openrundev/openrun
+      - "ghcr.io/openrundev/{{ .Env.PKG }}"
     tags:
       - "{{ .Version }}" # e.g. 1.2.3
       - "sha-{{ .ShortCommit }}"
-      - latest
+      # latest is only moved by Tip releases, an empty tag is skipped
+      - '{{ if eq .Env.CHANNEL "tip" }}latest{{ end }}'
     labels:
-      "org.opencontainers.image.title": "openrun"
+      "org.opencontainers.image.title": "{{ .Env.PKG }}"
       "org.opencontainers.image.description": "OpenRun: Declarative Web App Deployment"
       "org.opencontainers.image.source": "{{ .GitURL }}"
       "org.opencontainers.image.revision": "{{ .FullCommit }}"

@@ -235,7 +235,9 @@ tests:
       contains:
         - "SERVERINFO: db=sqlite"
         - "leader=True"
-        - "channel=tip license=Apache-2.0" # test binary is built without version ldflags
+        # the values depend on the channel of the branch, internal/types/CHANNEL
+        - "channel="
+        - "license="
     exit-code: 0
   rbac0186: # replication_status with config:basic_read only: metadata rows
     # would be visible (none configured here), app rows need app:read per app - no error

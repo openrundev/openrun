@@ -2,7 +2,10 @@ name: goreleaser
 
 on:
   push:
-    # Pattern matched against refs/tags
+    # Pattern matched against refs/tags. Tip (vMAJOR.YYMM.PATCH, from main)
+    # and Pro (vMAJOR.MINOR.PATCH, from a pro-X.Y branch) releases share
+    # this trigger. The workflow and .goreleaser.yaml of the tagged commit
+    # are used, the channel comes from internal/types/CHANNEL in that commit
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
 
@@ -30,6 +33,20 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      # Checks the tag against internal/types/CHANNEL and the branch it is on
+      # (Tip from main, Pro from a pro-X.Y branch that is not on main), then
+      # sets GORELEASER_CURRENT_TAG and GORELEASER_PREVIOUS_TAG for the
+      # goreleaser steps below
+      - name: Validate release tag and channel
+        id: channel
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          deploy/release_channel.sh ci-env "$TAG" > "$RUNNER_TEMP/release.env"
+          cat "$RUNNER_TEMP/release.env"
+          cat "$RUNNER_TEMP/release.env" >> "$GITHUB_ENV"
+          cat "$RUNNER_TEMP/release.env" >> "$GITHUB_OUTPUT"
       - name: Set up Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
@@ -38,7 +55,7 @@ jobs:
         uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
         with:
           distribution: goreleaser
-          version: "v2.12.7"
+          version: "v2.13.3"
           install-only: true
       - name: Build unsigned Windows binary
         env:
@@ -85,12 +102,30 @@ jobs:
       contents: write
       packages: write # required to push to GHCR
       actions: read # required to download the signed Windows artifact
+    outputs:
+      channel: ${{ steps.channel.outputs.OPENRUN_CHANNEL }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 0
           persist-credentials: false
+      # Checks the tag against internal/types/CHANNEL and the branch it is on
+      # (Tip from main, Pro from a pro-X.Y branch that is not on main), then
+      # sets GORELEASER_CURRENT_TAG and GORELEASER_PREVIOUS_TAG for the
+      # goreleaser steps below
+      - name: Validate release tag and channel
+        id: channel
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          deploy/release_channel.sh ci-env "$TAG" > "$RUNNER_TEMP/release.env"
+          cat "$RUNNER_TEMP/release.env"
+          cat "$RUNNER_TEMP/release.env" >> "$GITHUB_ENV"
+          cat "$RUNNER_TEMP/release.env" >> "$GITHUB_OUTPUT"
+          # .goreleaser.yaml with the package license set for the channel
+          deploy/release_channel.sh goreleaser-config "$RUNNER_TEMP/goreleaser.yaml"
       - name: Set up Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
@@ -116,8 +151,8 @@ jobs:
         with:
           # either 'goreleaser' (default) or 'goreleaser-pro'
           distribution: goreleaser
-          version: "v2.12.7"
-          args: release --clean
+          version: "v2.13.3"
+          args: release --clean --config ${{ runner.temp }}/goreleaser.yaml
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           # PAT with push access to the openrundev/winget-pkgs fork, used to
@@ -130,6 +165,8 @@ jobs:
   obs:
     name: Publish to Open Build Service
     needs: goreleaser
+    # The OBS package is the Tip openrun package, there is no openrun-pro one
+    if: needs.goreleaser.outputs.channel == 'tip'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/x509"
 	"database/sql"
+	_ "embed"
 	"encoding/base64"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -24,24 +25,41 @@ import (
 var (
 	gitCommit  string // gitCommit is the git commit that was compiled
 	gitVersion string // gitVersion is the build tag
-	gitChannel string // gitChannel is the release channel, tip or pro
-	gitLicense string // gitLicense is the SPDX identifier of the license the build is released under
+	gitChannel string // gitChannel overrides the release channel from the CHANNEL file
+	gitLicense string // gitLicense overrides the license derived from the channel
 )
 
+// channelFile is the release channel of this source tree, tip or pro. It is
+// tip on main and pro on the Pro maintenance branches. The file is embedded
+// so that every build of a branch (goreleaser, OBS, go build) reports the
+// same channel without needing ldflags. The release tooling reads the same file
+//
+//go:embed CHANNEL
+var channelFile string
+
 const (
-	CHANNEL_TIP     = "tip"
-	LICENSE_DEFAULT = "Apache-2.0"
+	CHANNEL_TIP = "tip"
+	CHANNEL_PRO = "pro"
+	LICENSE_TIP = "Apache-2.0"
+	// LICENSE_PRO is not on the SPDX license list, so it uses the LicenseRef form
+	LICENSE_PRO = "LicenseRef-PolyForm-Free-Trial-1.0.0"
 )
 
 // GetChannel returns the release channel of this build. Versions are only
 // comparable within one channel
 func GetChannel() string {
-	return cmp.Or(gitChannel, CHANNEL_TIP)
+	return cmp.Or(gitChannel, strings.TrimSpace(channelFile), CHANNEL_TIP)
 }
 
 // GetLicense returns the SPDX identifier of the license this build is released under
 func GetLicense() string {
-	return cmp.Or(gitLicense, LICENSE_DEFAULT)
+	if gitLicense != "" {
+		return gitLicense
+	}
+	if GetChannel() == CHANNEL_PRO {
+		return LICENSE_PRO
+	}
+	return LICENSE_TIP
 }
 
 func GetVersion() string {

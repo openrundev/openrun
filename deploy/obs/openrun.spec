@@ -16,6 +16,8 @@ License:        Apache-2.0
 URL:            https://openrun.dev/
 Source0:        openrun-%{version}.tar.gz
 Source1:        openrun.sysusers
+# The Pro channel package installs the same binary
+Conflicts:      openrun-pro
 BuildRequires:  systemd-rpm-macros
 %if 0%{?suse_version}
 BuildRequires:  go >= 1.26

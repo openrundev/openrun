@@ -53,7 +53,11 @@ tests:
   basic054: # server version reports the server build version
     command: ../openrun server version
     stdout:
-      exactly: "openrun_server dev (dev_build, tip, Apache-2.0)" # test binary is built without version ldflags
+      # test binary is built without version ldflags. The channel and license
+      # come from internal/types/CHANNEL and differ on a Pro branch
+      contains:
+        - "openrun_server dev (dev_build, "
+      line-count: 1
     exit-code: 0
 
   basic060: ## create test1 app with default of authentication enabled
@@ -247,7 +251,9 @@ tests:
   basic400: # check version command output
     command: ../openrun --version
     stdout:
-      exactly: "openrun_client dev (dev_build, tip, Apache-2.0)"
+      contains:
+        - "openrun_client dev (dev_build, "
+      line-count: 1
     stderr:
       line-count: 0
     exit-code: 0
@@ -255,9 +261,10 @@ tests:
   basic401: # client version flag prints the client version and then runs the command
     command: ../openrun --client-version server version
     stdout:
-      exactly: |-
-        openrun_client dev (dev_build, tip, Apache-2.0)
-        openrun_server dev (dev_build, tip, Apache-2.0)
+      contains:
+        - "openrun_client dev (dev_build, "
+        - "openrun_server dev (dev_build, "
+      line-count: 2
     stderr:
       line-count: 0
     exit-code: 0

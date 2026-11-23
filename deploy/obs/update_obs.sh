@@ -24,6 +24,12 @@ if [ -z "$VERSION" ]; then
     exit 1
 fi
 GIT_COMMIT=$(git -C "$REPO_ROOT" rev-parse --short HEAD)
+# The OBS package is the Tip openrun package. A Pro tree would be published
+# under that name with a Pro version
+if [ "$("$REPO_ROOT/deploy/release_channel.sh" channel)" != "tip" ]; then
+    echo "internal/types/CHANNEL is not tip, the OBS package is only updated from Tip releases" >&2
+    exit 1
+fi
 
 # macOS bsdtar embeds AppleDouble metadata that GNU tar extracts as ._ files,
 # which breaks dpkg-source on OBS. Strip all of it.

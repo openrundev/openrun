@@ -68,7 +68,7 @@ ifeq ($(origin .RECIPEPREFIX), undefined)
 endif
 .RECIPEPREFIX = >
 
-.PHONY: help test unit int testui testconsole covtest covtest-parallel covbuild covunit covint covui covclient covreport next-version release-sdk release fullrelease update-dep update-go int_single lint verify build-linux image tags docs-screenshots
+.PHONY: help test unit int testui testconsole covtest covtest-parallel covbuild covunit covint covui covclient covreport next-version pro-branch next-pro-version release-pro release-sdk release fullrelease update-dep update-go int_single lint verify build-linux image tags docs-screenshots
 
 help: ## Display this help section
 > @awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-38s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -292,8 +292,10 @@ update-go: ## Update the Go version in all modules and Actions workflows; args: 
 # appVersion is the server image tag, so push it after the OpenRun release
 # job has published the images.
 #
-# Pro channel tags (pro/vMAJOR.MINOR.PATCH, from maintenance branches) are not
-# handled here yet. The tip_* helpers below only look at v tags, so pro/ tags
+# Pro channel tags (vMAJOR.MINOR.PATCH with the minor from 0 to 999, from
+# pro-MAJOR.MINOR branches) are handled by deploy/release_channel.sh through
+# the pro-branch, next-pro-version and release-pro targets. The tip_* helpers
+# below only look at tags with a four digit minor (and v0.x), so Pro tags
 # can be added without affecting them.
 # ---------------------------------------------------------------------------
 
@@ -353,11 +355,21 @@ require_date() {
     return 1
   fi
 }
-# latest_server_version: print the highest vX.Y.Z server tag without the v
-# prefix, or nothing if there is none (run after fetching tags)
+# latest_server_version: print the highest Tip server tag without the v
+# prefix, or nothing if there is none (run after fetching tags). Tip tags
+# have a four digit minor (YYMM), and the v0.x tags from before the channels
+# count as Tip. Pro tags (minor 0 to 999, major 1 and up) share the v prefix
+# and are left out
 latest_server_version() {
-  git tag -l 'v[0-9]*' | { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$$' || true; } \
+  git tag -l 'v[0-9]*' | { grep -E '^v([0-9]+\.[0-9]{4}|0\.[0-9]+)\.[0-9]+$$' || true; } \
     | sed 's/^v//' | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1
+}
+# require_tip_channel: Tip releases are only made from a tree whose channel file says tip
+require_tip_channel() {
+  if [[ "$$(deploy/release_channel.sh channel)" != "tip" ]]; then
+    echo "Error: internal/types/CHANNEL is not tip, use make release-pro on a Pro branch" >&2
+    return 1
+  fi
 }
 # tip_version [<version>] [<YYMMDD>]: print the next Tip version,
 # MAJOR.YYMM.PATCH for today's UTC date. A version passed in must be exactly
@@ -478,6 +490,15 @@ next-version: ## Print the Tip version the next server release would get, tags n
 > version=$$(tip_version "$(INPUT)" "$${TIP_TODAY:-}")
 > echo "v$$version"
 
+pro-branch: ## Cut a Pro maintenance branch pro-<line> from main with its overlay commit (channel, base, license), not pushed; args: <line> as MAJOR.MINOR
+> @deploy/release_channel.sh pro-branch "$(INPUT)"
+
+next-pro-version: ## Print the Pro version the next release of this pro-X.Y branch would get, tags nothing; args: [<version> to validate]
+> @deploy/release_channel.sh pro-next "$(INPUT)"
+
+release-pro: ## Tag and push the next Pro release from this pro-X.Y branch; args: [<version>, default computed], RELEASE_NO_PUSH=1 to only tag
+> @deploy/release_channel.sh pro-release "$(INPUT)"
+
 release-sdk: ## Tag and push the pkg/binding and pkg/plugin SDK modules; args: <version>
 > @$(RELEASE_SH)
 > version=$$(version_arg version "$(INPUT)")
@@ -491,6 +512,7 @@ release-sdk: ## Tag and push the pkg/binding and pkg/plugin SDK modules; args: <
 release: ## Tag and push the OpenRun server (Tip channel), then create the Helm chart release commit; args: [<version>, default computed] [<helm_version>, default <version>]
 > @$(RELEASE_SH)
 > require_release_ready .
+> require_tip_channel
 > require_release_ready ../openrun-helm-charts
 > version=$$(tip_version "$(INPUT)")
 > helm_version=$$(version_arg helm_version "$(if $(INPUT2),$(INPUT2),$$version)")
@@ -507,6 +529,7 @@ fullrelease: ## Release everything: SDKs, server (Tip channel), every binding pr
 > sdk_version=$$(version_arg sdk_version "$(INPUT)")
 > bindings_version=$$(version_arg bindings_version "$(INPUT2)")
 > for repo in . ../bindings ../openrun-helm-charts; do require_release_ready "$$repo"; done
+> require_tip_channel
 > version=$$(tip_version "$(INPUT3)")
 > require_tip_ancestry
 > for tag in "v$$version" "pkg/binding/v$$sdk_version" "pkg/plugin/v$$sdk_version"; do require_no_tag . "$$tag"; done
